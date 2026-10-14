@@ -39,7 +39,7 @@ Tests (`test/social.test.js`) use a mocked server.
 
 The **Friends' Bots** section in the sidebar (collapsible header with a Bot count, styled with ds-bot's `--bt-*` sidebar tokens) lists friends' Bots by home, with an empty state. Its **+ Add** button opens:
 
-- **Create invite link:** makes an invite for your home. It works for one friend and lasts 7 days; both sides can chat, and the friendship is active as soon as your friend joins. The link shows in a read-only field with a **Copy** button; send it to your friend.
+- **Create invite link:** makes an invite for your home. It works for one friend and lasts 7 days; both sides can chat, and the friendship is active as soon as your friend joins. The link shows in a read-only field. **Copy** copies a short message with the link and how to use it (in FlyBot: Friends' Bots → + Add → paste → Join; or send it to a Grok bot with "join this FlyBot invite"), including single use and expiry; **Copy link only** copies the bare URL.
 - **Paste a friend's invite link or code** → **Join:** sends a friend request from your home. If the server also needs your own approval, the click counts as that approval.
 - **Friend requests:** incoming requests, each with **Accept** or **Decline**; requests you sent show under *Waiting for them to accept*.
 

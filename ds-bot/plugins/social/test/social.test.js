@@ -362,6 +362,8 @@ test('client.js registers a sidebar section and @ rows into the FlyBot registry'
   // Transport errors are worded in English from their code, never the localized host text.
   assert.match(plugin.errorText(Object.assign(new Error('请求失败（HTTP 404）'), { code: 'HTTP_404' })), /^The FlyBot host did not answer \(HTTP 404\)/)
   assert.equal(plugin.errorText(Object.assign(new Error('x'), { code: 'bot/refused' })), 'x')
+  assert.equal(plugin.inviteMessage({ home: '@danyang.home', url: 'https://s/i/abc', expires: 'Oct 21, 2026, 4:49 PM' }),
+    "Join my FlyBot home @danyang.home. In FlyBot: open Friends' Bots, click + Add, paste this link and click Join. Using a Grok bot? Send it this link and say 'join this FlyBot invite'. Link: https://s/i/abc (single use, expires Oct 21, 2026, 4:49 PM)")
   const rows = await entries[1][1].candidates('cod')
   assert.deepEqual(JSON.parse(JSON.stringify(rows)), [{ name: 'Coder · remote', description: '@coder.bob.home · @bob.home', section: 'Friends\' Bots', value: '@coder.bob.home (remote Bot: use message_friend_bot) ' }])
 })

@@ -21,6 +21,12 @@ window.__ModuleLoader__.load({
       return String(e?.message ?? e)
     }
 
+    // What Copy puts on the clipboard: the link with how to use it, for a person or their Bot.
+    const inviteMessage = ({ home, url, expires }) =>
+      `Join my FlyBot home ${home ?? ''}`.trimEnd() + '. In FlyBot: open Friends\' Bots, click + Add, paste this link and click Join. ' +
+      'Using a Grok bot? Send it this link and say \'join this FlyBot invite\'. ' +
+      `Link: ${url} (single use${expires ? `, expires ${expires}` : ''})`
+
     // Styles reuse ds-bot's sidebar tokens (--bt-ink, --bt-ink-2, --bt-ink-3, --bt-hover, --bt-line,
     // --bt-line-2, --bt-card, --bt-accent, --bt-tag-bg/-ink), like @flybot/tree, so both themes follow the app.
     const CSS = `
@@ -61,6 +67,8 @@ window.__ModuleLoader__.load({
 .fs-btn-primary{border-color:transparent;background:var(--bt-accent,#4d6bfe);color:#fff;width:100%}
 .fs-btn-primary:hover:not(:disabled){background:var(--bt-accent,#4d6bfe);filter:brightness(1.08)}
 .fs-btn-sm{height:26px;padding:0 9px;font-size:12px}
+.fs-link{padding:0;border:0;background:none;color:var(--bt-accent,#4d6bfe);font:inherit;font-size:12px;cursor:pointer}
+.fs-link:hover{text-decoration:underline}
 .fs-status{padding:0;font-size:12px;line-height:17px;color:var(--bt-ink-2,rgba(20,20,20,.6));overflow-wrap:anywhere}
 .fs-status[data-tone=error]{color:#e5484d}
 `
@@ -150,15 +158,16 @@ window.__ModuleLoader__.load({
         return decision === 'accept' ? `${item.name ?? item.handle} is now a friend.` : `Declined ${item.name ?? item.handle}.`
       })
       const link = invite ? (invite.url ?? invite.code) : ''
-      const copy = () => {
-        const done = () => { setCopied(true); setTimeout(() => setCopied(false), 2000) }
+      const copyText = (text, what) => {
+        const done = () => { setCopied(what); setTimeout(() => setCopied(false), 2000) }
         const clip = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
-        if (clip?.writeText) clip.writeText(link).then(done, () => setStatus({ tone: 'error', text: 'Could not copy. Select the link and copy it by hand.' }))
+        if (clip?.writeText) clip.writeText(text).then(done, () => setStatus({ tone: 'error', text: 'Could not copy. Select the link and copy it by hand.' }))
         else setStatus({ tone: 'error', text: 'Copying is not available here. Select the link and copy it by hand.' })
       }
       const incoming = overview?.incoming ?? []
       const outgoing = overview?.outgoing ?? []
       const expires = invite?.expiresAt ? new Date(invite.expiresAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : ''
+      const message = inviteMessage({ home: overview?.home, url: link, expires })
       return h('div', { className: 'bt-social-add', 'data-flybot': 'add-friend' },
         h('div', { className: 'fs-card' },
           h('div', { className: 'fs-hint' }, overview?.home ? ['Invite a friend to ', h('b', { key: 'h' }, overview.home), '.'] : 'Invite a friend to your home.'),
@@ -166,8 +175,9 @@ window.__ModuleLoader__.load({
           invite ? h('div', { className: 'bt-social-invite', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
             h('div', { className: 'fs-line' },
               h('input', { className: 'fs-input', readOnly: true, value: link, 'aria-label': 'Invite link', title: link, onFocus: e => e.target.select() }),
-              h('button', { type: 'button', className: 'fs-btn', onClick: copy, 'aria-live': 'polite' }, copied ? 'Copied' : 'Copy')),
-            h('div', { className: 'fs-hint' }, expires ? `Works once, until ${expires}.` : 'Works once.')) : null),
+              h('button', { type: 'button', className: 'fs-btn', title: 'Copy the link with instructions for your friend', onClick: () => copyText(message, 'message'), 'aria-live': 'polite' }, copied === 'message' ? 'Copied' : 'Copy')),
+            h('div', { className: 'fs-hint' }, expires ? `Works once, until ${expires}. ` : 'Works once. ',
+              h('button', { type: 'button', className: 'fs-link', onClick: () => copyText(link, 'link') }, copied === 'link' ? 'Link copied' : 'Copy link only'))) : null),
         h('form', { onSubmit: join, className: 'fs-card bt-social-join' },
           h('div', { className: 'fs-hint' }, 'Got a link from a friend?'),
           h('div', { className: 'fs-line' },
@@ -209,6 +219,7 @@ window.__ModuleLoader__.load({
       name: 'flybot-social',
       inject: [],
       errorText,
+      inviteMessage,
       apply(ctx) {
         let offs = []
         let tries = 0
