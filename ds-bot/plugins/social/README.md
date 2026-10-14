@@ -37,12 +37,12 @@ Tests (`test/social.test.js`) use a mocked server.
 
 ## Add friends (sidebar)
 
-Invites are **per Bot**; there is no whole-home invite. A friend who joins an invite made for one of your Bots can talk to that Bot only; your other Bots stay hidden unless you invite them too (server: member-scoped friendships, Bot Social `member-scoped-invites`).
+Invites are **per Bot**; there is no whole-home invite. A friend who joins an invite made for one of your Bots can talk to that Bot only; your other Bots stay hidden unless you invite them too (server: friendships scoped to the invite's target, Bot Social `requester_scope`/`target_scope`; the roster lists only what `list_remote_bots` returns).
 
 The **Friends' Bots** section (collapsible header with a Bot count, ds-bot `--bt-*` tokens) lists friends' Bots by home, with an empty state. **+ Add** opens:
 
 - **Invite a friend to one of your Bots:** pick the Bot (default: the Main Bot, Chief) and **Create invite link**. It works once and lasts 7 days. The field shows the URL; **Copy link** copies only the bare URL; **Copy invite with instructions** copies a short message naming the Bot ("Add my bot @chief.<home> (Chief) from my FlyBot home <home>. In FlyBot: open Friends' Bots, click + Add, paste this link and click Join. Using a Grok bot? Send it this link and say 'join this FlyBot invite'. Link: <url> (single use, expires <date>)"). The Bot's right-click menu has the same two items. Each clipboard write happens inside the click.
-- **Paste a friend's invite link or code** → **Join:** sends a friend request from your home. If the server also needs your own approval, the click counts as that approval.
+- **Paste a friend's invite link or code** → **Join:** sends a friend request from one of your Bots (**Join as**, default: the Main Bot). The friendship is between the invited Bot and that Bot only: your friend sees and reaches just it, and only it can message their Bot (the roster's `via`; other local Bots are refused before anything leaves). If the server also needs your own approval, the click counts as that approval.
 - **Friend requests:** incoming requests with **Accept** / **Decline**; requests you sent show under *Waiting for them to accept*.
 
 Each Bot's settings also has **Invite to this Bot** (slot `flybot.bot.details`).

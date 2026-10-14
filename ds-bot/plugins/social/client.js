@@ -144,8 +144,18 @@ window.__ModuleLoader__.load({
       const [code, setCode] = useState('')
       const [status, setStatus] = useState(null)
       const [busy, setBusy] = useState(false)
+      // Which of my Bots joins: the friend sees and reaches only that one (default: the Main Bot).
+      const [mine, setMine] = useState([])
+      const [joiner, setJoiner] = useState('')
       const refresh = () => call('social/overview', {}).then(setOverview, e => setStatus({ tone: 'error', text: errorText(e) }))
-      useEffect(() => { refresh() }, [])
+      useEffect(() => {
+        refresh()
+        call('social/status', {}).then(value => {
+          const bots = value?.bots ?? []
+          setMine(bots)
+          setJoiner(current => current || (bots.find(bot => bot.isMain) ?? bots[0])?.id || '')
+        }, () => {})
+      }, [])
       const run = async (label, fn) => {
         setBusy(true)
         setStatus(null)
@@ -163,9 +173,10 @@ window.__ModuleLoader__.load({
       const join = e => {
         e.preventDefault()
         return run('Joining', async () => {
-          const r = await call('social/join-invite', { code })
+          const r = await call('social/join-invite', { code, ...(joiner ? { botId: joiner } : {}) })
           setCode('')
-          return r.status === 'active' ? `You are now friends with ${r.inviterName ?? r.inviter}.` : `Request sent to ${r.inviterName ?? r.inviter}. They show up here once they accept.`
+          const as = r.joinedAs ? ` as ${r.joinedAs.botName}` : ''
+          return r.status === 'active' ? `You are now friends with ${r.inviterName ?? r.inviter}${as}.` : `Request sent to ${r.inviterName ?? r.inviter}${as}. They show up here once they accept.`
         })
       }
       const respond = (item, decision) => run(decision === 'accept' ? 'Accepting' : 'Declining', async () => {
@@ -180,7 +191,11 @@ window.__ModuleLoader__.load({
           h('div', { className: 'fs-hint' }, 'Got a link from a friend?'),
           h('div', { className: 'fs-line' },
             h('input', { className: 'fs-input', value: code, placeholder: 'Paste invite link or code', 'aria-label': 'Invite link or code', onChange: e => setCode(e.target.value) }),
-            h('button', { type: 'submit', className: 'fs-btn', disabled: busy || !code.trim() }, 'Join'))),
+            h('button', { type: 'submit', className: 'fs-btn', disabled: busy || !code.trim() }, 'Join')),
+          mine.length > 1 ? h('label', { className: 'fs-line fs-hint', 'data-flybot': 'join-as' }, 'Join as ',
+            h('select', { className: 'fs-input', value: joiner, 'aria-label': 'Which of your Bots joins', onChange: e => setJoiner(e.target.value) },
+              mine.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name))),
+            ' (your friend sees only this Bot)') : null),
         status ? h('div', { className: 'fs-status', role: 'status', 'data-tone': status.tone, style: { padding: '2px 10px' } }, status.text) : null,
         incoming.length ? h('div', { className: 'bt-social-requests' },
           h('div', { className: 'fs-label' }, 'Friend requests', h('span', { className: 'fs-count' }, String(incoming.length))),
