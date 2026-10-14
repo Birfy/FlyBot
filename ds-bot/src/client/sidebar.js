@@ -1,4 +1,4 @@
-import { FlyBotSections } from './flybot-slots.js'
+import { FlyBotSections, useSidebarStructure, botTree } from './flybot-slots.js'
 import { createElement as h, Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { FishLogo } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -38,7 +38,7 @@ const workKeys = text => (text === '' ? [] : text.split(',').map((key) => {
 }))
 const workLine = (lead, tool, more) => h(Shimmer, null, `${lead} · ${workPhrase(tool)}…${more > 0 ? ` +${more}` : ''}`)
 
-function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked }) {
+function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked, asRow = false }) {
   const id = bot.id
   const part = currentPart(bot)
   const preview = useSessions(list => previewOf(list, part, roster.exchangeTurns[part]))
@@ -47,7 +47,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const unread = useSessionStatus(map => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== undefined) || (marked && !active)
   useMarkedUnread(id, active, marked, actions)
   const main = isMainOf(roster, id)
-  const tile = roster.mainBotId === id
+  const tile = roster.mainBotId === id && !asRow
   const approval = useApproval(useWork, entry => entry.botId === id)
   const alert = roster.questions?.[part] !== undefined || approval
   const doing = useActivity(map => map[id])
@@ -236,6 +236,19 @@ function useListGlide(listRef, layout, key) {
   }, [layout, key])
 }
 
+// One Bot of the sidebar tree: its usual row, indented by depth, with a toggle when it has children.
+function TreeNode({ node, rowProps, markedUnread, collapsed, toggle }) {
+  const { bot, depth, children } = node
+  const closed = collapsed[bot.id] === true
+  return h(Fragment, null,
+    h('div', { className: 'bt-tree-item', 'data-depth': depth, style: { paddingLeft: `${depth * 16}px` } },
+      children.length
+        ? h('button', { type: 'button', className: 'bt-tree-toggle', 'aria-expanded': !closed, 'aria-label': `${closed ? t('Expand') : t('Collapse')} ${bot.name}`, onClick: () => toggle(bot.id) }, '▾')
+        : h('span', { className: 'bt-tree-toggle bt-tree-leaf', 'aria-hidden': true }),
+      h(BotRow, { ...rowProps, bot, asRow: true, marked: markedUnread[bot.id] === true })),
+    closed ? null : children.map(child => h(TreeNode, { key: child.bot.id, node: child, rowProps, markedUnread, collapsed, toggle })))
+}
+
 export function TeamSidebar(props) {
   const { wide, useRoster, useUi, useSessions, actions } = props
   const listRef = useRef(null)
@@ -258,6 +271,11 @@ export function TeamSidebar(props) {
     return entries.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at)
   }, [roster, updated])
   const main = roster.byId[roster.mainBotId]
+  // A plugin (the tree) may give the Bots a structure: the list then is one tree under the Main Bot.
+  const structure = useSidebarStructure()
+  const [collapsed, setCollapsed] = useState({})
+  const toggle = id => setCollapsed(value => ({ ...value, [id]: !value[id] }))
+  const tree = structure && wide && main ? botTree([main, ...order.filter(entry => entry.kind === 'bot').map(entry => entry.item)], main.id, id => structure.parentOf(id)) : null
   useListGlide(listRef, wide, order.map(entry => entry.item.id).join(','))
   useLandOnMainBot(roster, useSessions, actions)
   const rowProps = { roster, actions, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, wide }
@@ -279,8 +297,9 @@ export function TeamSidebar(props) {
           h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon))),
     wide && roster.readOnly ? h('div', { className: 'bt-hint bt-read-only', role: 'status' }, hostText(roster.readOnly)) : null,
     h('div', { ref: listRef, className: 'bt-list', role: 'region', 'aria-label': t('Bot list') },
-      main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, t('Setting up your Main Bot…')),
-      order.map(entry => (entry.kind === 'bot'
+      tree ? h('div', { className: 'bt-tree', role: 'group', 'aria-label': t('Bot tree') }, tree.map(node => h(TreeNode, { key: node.bot.id, node, rowProps, markedUnread, collapsed, toggle })))
+        : main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, t('Setting up your Main Bot…')),
+      order.filter(entry => !(tree && entry.kind === 'bot')).map(entry => (entry.kind === 'bot'
         ? h(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true })
         : entry.kind === 'room'
           ? h(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true })

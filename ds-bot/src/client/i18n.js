@@ -53,6 +53,9 @@ const ZH = {
 
   // Sidebar and account menu
   'Bot list': 'Bot 列表',
+  'Bot tree': 'Bot 树',
+  'Expand': '展开',
+  'Collapse': '收起',
   'Setting up your Main Bot…': '正在设置你的主 Bot…',
   'Connect plugins': '连接插件',
   'Plugin compatibility is not fully verified.': '插件兼容性未完全验证',

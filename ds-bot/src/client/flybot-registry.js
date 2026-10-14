@@ -1,6 +1,6 @@
 // The FlyBot slot registry, free of React so the "@" menu and tests can use it.
 // See flybot-slots.js for what each slot carries.
-export const SLOTS = ['flybot.sidebar.section', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals']
+export const SLOTS = ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals']
 
 export function createRegistry() {
   const entries = new Map(SLOTS.map(name => [name, []]))
@@ -132,4 +132,39 @@ export function remoteMessageText(text) {
   const value = String(text ?? '')
   const match = value.match(/<untrusted-message from="[^"]*">\n?([\s\S]*?)\n?<\/untrusted-message>/)
   return match ? match[1] : value
+}
+
+// The sidebar Bot list as a tree. A 'flybot.sidebar.structure' entry gives each Bot's parent:
+// { id, order, parentOf(botId) -> parent Bot id | null | undefined }. The first entry wins.
+// Every Bot whose parent is missing, unknown, itself or would make a cycle goes under the Main
+// Bot, which is the root. Siblings keep the order they come in. Returns [{ bot, depth, children }].
+export function botTree(bots, mainId, parentOf) {
+  const byId = new Map(bots.map(bot => [bot.id, bot]))
+  const main = byId.get(mainId)
+  if (main === undefined) return []
+  const parent = (id) => {
+    if (id === mainId) return null
+    let p
+    try { p = parentOf(id) } catch { p = undefined }
+    if (typeof p !== 'string' || p === id || !byId.has(p)) return mainId
+    // Walk up: a cycle that never reaches the Main Bot puts the Bot under it.
+    const seen = new Set([id])
+    for (let at = p; at !== mainId; ) {
+      if (seen.has(at)) return mainId
+      seen.add(at)
+      let up
+      try { up = parentOf(at) } catch { up = undefined }
+      at = typeof up === 'string' && byId.has(up) && up !== at ? up : mainId
+    }
+    return p
+  }
+  const kids = new Map()
+  for (const bot of bots) {
+    if (bot.id === mainId) continue
+    const p = parent(bot.id)
+    if (!kids.has(p)) kids.set(p, [])
+    kids.get(p).push(bot)
+  }
+  const walk = (bot, depth) => ({ bot, depth, children: (kids.get(bot.id) ?? []).map(child => walk(child, depth + 1)) })
+  return [walk(main, 0)]
 }

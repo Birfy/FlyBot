@@ -89,6 +89,9 @@ var ZH = {
   "New Bot": "新 Bot",
   // Sidebar and account menu
   "Bot list": "Bot 列表",
+  "Bot tree": "Bot 树",
+  "Expand": "展开",
+  "Collapse": "收起",
   "Setting up your Main Bot…": "正在设置你的主 Bot…",
   "Connect plugins": "连接插件",
   "Plugin compatibility is not fully verified.": "插件兼容性未完全验证",
@@ -1098,7 +1101,7 @@ var call = async (endpoint, payload, signal) => {
 };
 
 // src/client/flybot-registry.js
-var SLOTS = ["flybot.sidebar.section", "flybot.composer.mention", "flybot.bot.details", "flybot.approvals"];
+var SLOTS = ["flybot.sidebar.section", "flybot.sidebar.structure", "flybot.composer.mention", "flybot.bot.details", "flybot.approvals"];
 function createRegistry() {
   const entries2 = new Map(SLOTS.map((name) => [name, []]));
   const listeners2 = /* @__PURE__ */ new Set();
@@ -1209,6 +1212,43 @@ function remoteMessageText(text) {
   const match = value.match(/<untrusted-message from="[^"]*">\n?([\s\S]*?)\n?<\/untrusted-message>/);
   return match ? match[1] : value;
 }
+function botTree(bots, mainId, parentOf) {
+  const byId = new Map(bots.map((bot) => [bot.id, bot]));
+  const main = byId.get(mainId);
+  if (main === void 0) return [];
+  const parent = (id) => {
+    if (id === mainId) return null;
+    let p;
+    try {
+      p = parentOf(id);
+    } catch {
+      p = void 0;
+    }
+    if (typeof p !== "string" || p === id || !byId.has(p)) return mainId;
+    const seen = /* @__PURE__ */ new Set([id]);
+    for (let at = p; at !== mainId; ) {
+      if (seen.has(at)) return mainId;
+      seen.add(at);
+      let up;
+      try {
+        up = parentOf(at);
+      } catch {
+        up = void 0;
+      }
+      at = typeof up === "string" && byId.has(up) && up !== at ? up : mainId;
+    }
+    return p;
+  };
+  const kids = /* @__PURE__ */ new Map();
+  for (const bot of bots) {
+    if (bot.id === mainId) continue;
+    const p = parent(bot.id);
+    if (!kids.has(p)) kids.set(p, []);
+    kids.get(p).push(bot);
+  }
+  const walk = (bot, depth) => ({ bot, depth, children: (kids.get(bot.id) ?? []).map((child) => walk(child, depth + 1)) });
+  return [walk(main, 0)];
+}
 
 // src/client/flybot-slots.js
 var import_react = require("react");
@@ -1301,6 +1341,9 @@ function RemoteCompose({ bot, roster, onDone }) {
     (0, import_react.createElement)("button", { type: "submit", disabled: !from || !text.trim() && files.length === 0 }, "Send"),
     status ? (0, import_react.createElement)("div", { role: "status" }, status) : null
   );
+}
+function useSidebarStructure() {
+  return useSlot("flybot.sidebar.structure")[0];
 }
 function FlyBotSections({ roster, actions }) {
   const shell = (actions.flybotSlotEntries?.("flybot.sidebar.section") ?? []).map((entry, index) => ({ id: entry.id ?? `slot-${index}`, order: entry.order ?? 0, component: entry.component }));
@@ -2143,6 +2186,11 @@ body[data-bt-motion=lively] .bt-mark[data-live][data-state=idle][data-fidget=loo
 @keyframes bt-fidget-look{0%,22%,100%{transform:none}3%,9%{transform:translateX(-14%)}12%,19%{transform:translateX(14%)}}
 body[data-bt-motion=lively] .bt-badge-alert{right:auto;bottom:auto;left:50%;top:calc(var(--bt-size,36px) * -.14);translate:-50% 0;animation:bt-q-ride 1.3s cubic-bezier(.3,.7,.4,1) infinite}
 body[data-bt-motion=lively] :is(.bt-row,.bt-tile)>.bt-mark:hover .bt-badge-alert{animation:none}
+.bt-tree-item{position:relative;display:flex;align-items:center;min-width:0}
+.bt-tree-item>.bt-row{flex:1 1 auto;min-width:0}
+.bt-tree-toggle{flex:none;display:inline-flex;align-items:center;justify-content:center;width:16px;height:36px;padding:0;border:0;background:transparent;color:var(--bt-ink-3);font-size:10px;cursor:pointer;transition:transform .12s ease}
+.bt-tree-toggle[aria-expanded=false]{transform:rotate(-90deg)}
+.bt-tree-leaf{cursor:default}
 @keyframes bt-q-ride{0%,55%,100%{transform:translateY(0)}20%{transform:translateY(calc(var(--bt-size,36px) * -.14))}40%{transform:translateY(0)}}
 /* Petting: with the pointer on a sidebar avatar or just around it (a ring a fifth of its
    size wide), a resting mark leans into the pointer and keeps nuzzling it, its eyes
@@ -5087,7 +5135,7 @@ var workKeys = (text) => text === "" ? [] : text.split(",").map((key) => {
   return { id, tool: tool || void 0 };
 });
 var workLine = (lead, tool, more) => (0, import_react9.createElement)(Shimmer, null, `${lead} · ${workPhrase(tool)}…${more > 0 ? ` +${more}` : ""}`);
-function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked }) {
+function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked, asRow = false }) {
   const id = bot.id;
   const part = currentPart(bot);
   const preview = useSessions((list) => previewOf(list, part, roster.exchangeTurns[part]));
@@ -5096,7 +5144,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const unread = useSessionStatus((map) => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== void 0) || marked && !active;
   useMarkedUnread(id, active, marked, actions);
   const main = isMainOf(roster, id);
-  const tile = roster.mainBotId === id;
+  const tile = roster.mainBotId === id && !asRow;
   const approval = useApproval(useWork, (entry) => entry.botId === id);
   const alert = roster.questions?.[part] !== void 0 || approval;
   const doing = useActivity((map) => map[id]);
@@ -5353,6 +5401,21 @@ function useListGlide(listRef, layout, key) {
     tops.current = { layout, map: next };
   }, [layout, key]);
 }
+function TreeNode({ node, rowProps, markedUnread, collapsed, toggle }) {
+  const { bot, depth, children } = node;
+  const closed = collapsed[bot.id] === true;
+  return (0, import_react9.createElement)(
+    import_react9.Fragment,
+    null,
+    (0, import_react9.createElement)(
+      "div",
+      { className: "bt-tree-item", "data-depth": depth, style: { paddingLeft: `${depth * 16}px` } },
+      children.length ? (0, import_react9.createElement)("button", { type: "button", className: "bt-tree-toggle", "aria-expanded": !closed, "aria-label": `${closed ? t("Expand") : t("Collapse")} ${bot.name}`, onClick: () => toggle(bot.id) }, "▾") : (0, import_react9.createElement)("span", { className: "bt-tree-toggle bt-tree-leaf", "aria-hidden": true }),
+      (0, import_react9.createElement)(BotRow, { ...rowProps, bot, asRow: true, marked: markedUnread[bot.id] === true })
+    ),
+    closed ? null : children.map((child) => (0, import_react9.createElement)(TreeNode, { key: child.bot.id, node: child, rowProps, markedUnread, collapsed, toggle }))
+  );
+}
 function TeamSidebar(props) {
   const { wide, useRoster, useUi, useSessions, actions } = props;
   const listRef = (0, import_react9.useRef)(null);
@@ -5375,6 +5438,10 @@ function TeamSidebar(props) {
     return entries2.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at);
   }, [roster, updated]);
   const main = roster.byId[roster.mainBotId];
+  const structure = useSidebarStructure();
+  const [collapsed, setCollapsed] = (0, import_react9.useState)({});
+  const toggle = (id) => setCollapsed((value) => ({ ...value, [id]: !value[id] }));
+  const tree = structure && wide && main ? botTree([main, ...order.filter((entry) => entry.kind === "bot").map((entry) => entry.item)], main.id, (id) => structure.parentOf(id)) : null;
   useListGlide(listRef, wide, order.map((entry) => entry.item.id).join(","));
   useLandOnMainBot(roster, useSessions, actions);
   const rowProps = { roster, actions, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, wide };
@@ -5404,8 +5471,8 @@ function TeamSidebar(props) {
     (0, import_react9.createElement)(
       "div",
       { ref: listRef, className: "bt-list", role: "region", "aria-label": t("Bot list") },
-      main ? (0, import_react9.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react9.createElement)("div", { className: "bt-hint" }, t("Setting up your Main Bot…")),
-      order.map((entry) => entry.kind === "bot" ? (0, import_react9.createElement)(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }) : entry.kind === "room" ? (0, import_react9.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true }) : (0, import_react9.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true })),
+      tree ? (0, import_react9.createElement)("div", { className: "bt-tree", role: "group", "aria-label": t("Bot tree") }, tree.map((node) => (0, import_react9.createElement)(TreeNode, { key: node.bot.id, node, rowProps, markedUnread, collapsed, toggle }))) : main ? (0, import_react9.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react9.createElement)("div", { className: "bt-hint" }, t("Setting up your Main Bot…")),
+      order.filter((entry) => !(tree && entry.kind === "bot")).map((entry) => entry.kind === "bot" ? (0, import_react9.createElement)(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }) : entry.kind === "room" ? (0, import_react9.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true }) : (0, import_react9.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true })),
       wide ? (0, import_react9.createElement)(FlyBotSections, { roster, actions }) : null
     )
   );

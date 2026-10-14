@@ -4,6 +4,7 @@
 // ds-bot's own components render whatever is registered:
 //
 //   flybot.sidebar.section  { id, order, component({ roster, actions, call }) }   below the Bot list
+//   flybot.sidebar.structure { id, order, parentOf(botId) }   the Bot list becomes one tree under the Main Bot
 //   flybot.composer.mention { id, order, candidates(query, { sessionId, roster, call }) → rows }   rows in the "@" menu
 //   flybot.bot.details      { id, order, component({ bot, roster, call }) }        in a Bot's settings
 //   flybot.approvals        { id, order, component({ approval, decide, call }) }   custom card for a held send
@@ -15,7 +16,7 @@ import { registry as baseRegistry, remoteMembersByHome } from './flybot-registry
 
 import { createClientApi as createClientApiWith } from './flybot-registry.js'
 
-export { SLOTS, createRegistry, mentionCandidates } from './flybot-registry.js'
+export { SLOTS, createRegistry, mentionCandidates, botTree } from './flybot-registry.js'
 
 // Calls a FlyBot endpoint on the host: "approvals", "decide", or a plugin's "social/...".
 export const call = (endpoint, payload) => callHost(`flybot/${endpoint}`, payload)
@@ -101,6 +102,11 @@ export function RemoteCompose({ bot, roster, onDone }) {
     files.length ? h('div', null, files.map(file => `${file.name} · ${fileSize(file.size)}`).join(', ')) : null,
     h('button', { type: 'submit', disabled: !from || (!text.trim() && files.length === 0) }, 'Send'),
     status ? h('div', { role: 'status' }, status) : null)
+}
+
+// The first 'flybot.sidebar.structure' entry, or undefined: the sidebar then lists Bots flat.
+export function useSidebarStructure() {
+  return useSlot('flybot.sidebar.structure')[0]
 }
 
 export function FlyBotSections({ roster, actions }) {

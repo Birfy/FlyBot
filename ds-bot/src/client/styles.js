@@ -38,6 +38,11 @@ body[data-bt-motion=lively] .bt-mark[data-live][data-state=idle][data-fidget=loo
 @keyframes bt-fidget-look{0%,22%,100%{transform:none}3%,9%{transform:translateX(-14%)}12%,19%{transform:translateX(14%)}}
 body[data-bt-motion=lively] .bt-badge-alert{right:auto;bottom:auto;left:50%;top:calc(var(--bt-size,36px) * -.14);translate:-50% 0;animation:bt-q-ride 1.3s cubic-bezier(.3,.7,.4,1) infinite}
 body[data-bt-motion=lively] :is(.bt-row,.bt-tile)>.bt-mark:hover .bt-badge-alert{animation:none}
+.bt-tree-item{position:relative;display:flex;align-items:center;min-width:0}
+.bt-tree-item>.bt-row{flex:1 1 auto;min-width:0}
+.bt-tree-toggle{flex:none;display:inline-flex;align-items:center;justify-content:center;width:16px;height:36px;padding:0;border:0;background:transparent;color:var(--bt-ink-3);font-size:10px;cursor:pointer;transition:transform .12s ease}
+.bt-tree-toggle[aria-expanded=false]{transform:rotate(-90deg)}
+.bt-tree-leaf{cursor:default}
 @keyframes bt-q-ride{0%,55%,100%{transform:translateY(0)}20%{transform:translateY(calc(var(--bt-size,36px) * -.14))}40%{transform:translateY(0)}}
 /* Petting: with the pointer on a sidebar avatar or just around it (a ring a fifth of its
    size wide), a resting mark leans into the pointer and keeps nuzzling it, its eyes
