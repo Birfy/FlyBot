@@ -259,8 +259,9 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   let fetchedAt = 0
   async function remoteBots({ fresh = false } = {}) {
     if (!fresh && now() - fetchedAt < REMOTE_TTL_MS) return remote
+    let result
     if (home) {
-      const result = await client.callTool('list_remote_bots', { home: home.id })
+      result = await client.callTool('list_remote_bots', { home: home.id })
       remote = {
         homes: (result?.homes ?? []).map(entry => ({
           home: norm(entry.home.handle),
@@ -280,6 +281,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       }
     }
     fetchedAt = now()
+    if (home) void syncServerAutoApprove((result?.homes ?? []))
     // Friends' Bots become chat members (remote badge) through the FlyBot registry.
     flybot.remote?.publish(remote.homes.flatMap(entry => entry.bots.map(bot => ({ handle: bot.handle, name: bot.name, home: entry.home, homeName: entry.name, owner: entry.owner }))))
     return remote
@@ -609,7 +611,28 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   async function serverAutoApprove(relationshipId, on) {
     try {
       await confirmedCall('set_auto_approve', { relationship_id: relationshipId, auto_approve_chat: on })
-    } catch (error) { warn('auto-approve on Bot Social not set', error) }
+      return true
+    } catch (error) { warn('auto-approve on Bot Social not set', error); return false }
+  }
+  // A friendship made after Auto-accept was turned on (a friend joining another Bot's invite)
+  // gets the same server auto-approve; otherwise this side's replies wait for approval there.
+  const approving = new Set()
+  async function syncServerAutoApprove(entries) {
+    settings.serverAutoApproved ??= []
+    for (const entry of entries) {
+      const key = norm(entry?.home?.handle)
+      if (settings.autoAccept[key] !== true) continue
+      const ids = [...new Set([...(entry.relationship_ids ?? []), ...(entry.relationship_id ? [entry.relationship_id] : [])])]
+      for (const id of ids) {
+        if (settings.serverAutoApproved.includes(id) || approving.has(id)) continue
+        approving.add(id)
+        try {
+          if (!(await serverAutoApprove(id, true))) continue
+          settings.serverAutoApproved.push(id)
+          saveSettings()
+        } finally { approving.delete(id) }
+      }
+    }
   }
   const homeOfPeer = peerHandle => { const parts = norm(peerHandle).slice(1).split('.'); return parts.length > 2 ? `@${parts.slice(1).join('.')}` : norm(peerHandle) }
   async function setAutoAccept(friendHome, on) {
