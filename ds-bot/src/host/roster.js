@@ -203,6 +203,8 @@ export function install(rt) {
       if (avatar) bot.avatar = avatar
       else delete bot.avatar
     }
+    // A friend's Bot always runs on its relay route; its model is not the user's to change.
+    if (bot.remote !== undefined) { delete patch.model; delete patch.effort }
     if (patch.model !== undefined) {
       if (patch.model === null || patch.model === '') delete bot.model
       else bot.model = await rt.resolveModel(patch.model)

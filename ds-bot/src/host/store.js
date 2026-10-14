@@ -122,6 +122,11 @@ export function install(rt) {
         bot.color = currentColor(bot.color)
         migrated = true
       }
+      // A friend's Bot whose model was changed by mistake goes back to its relay route.
+      if (bot.remote?.handle && bot.model !== `flybot-remote/${bot.remote.handle}`) {
+        bot.model = `flybot-remote/${bot.remote.handle}`
+        migrated = true
+      }
       // LEGACY: Bots saved with a lab ran on that lab's default model; the model they
       // last ran on becomes their own, so dropping the lab changes nothing for them.
       if ('lab' in bot) {

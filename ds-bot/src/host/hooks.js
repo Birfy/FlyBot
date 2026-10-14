@@ -443,6 +443,10 @@ export function install(rt) {
   // The user's "@handle" of a remote member in a Bot's chat or a group goes out through
   // bot.send (so the social middleware still decides), from that Bot or the group's admin.
   const MENTION = /(^|[^a-z0-9_./@])@([a-z0-9][a-z0-9._-]*[a-z0-9])/gi
+  const SESSION_CHIP = /@\[((?:\\.|[^\]\\])*)\]\(dsh-session:([A-Za-z0-9_-]+)\)/g
+  const decodeChip = payload => {
+    try { return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) } catch { return undefined }
+  }
   const seenUserMessages = new Set()
   async function sendUserMentions(sessionId, text, key) {
     if (seenUserMessages.has(key)) return []
@@ -458,10 +462,20 @@ export function install(rt) {
       const handle = `@${match[2].toLowerCase()}`
       if (known.has(handle)) handles.add(handle)
     }
+    // The "@" menu's chip for a friend's Bot names its chat (a dsh-session mention), and a
+    // typed "@Name" names it too; both reach the friend's Bot, without the markup.
+    for (const match of text.matchAll(SESSION_CHIP)) {
+      const handle = rt.botOf(decodeChip(match[2]))?.remote?.handle
+      if (handle && known.has(handle)) handles.add(handle)
+    }
+    for (const bot of Object.values(state.bots)) {
+      if (bot.remote?.handle && known.has(bot.remote.handle) && bot.name && text.includes(`@${bot.name}`)) handles.add(bot.remote.handle)
+    }
+    const plain = text.replace(SESSION_CHIP, (_, label) => `@${label.replace(/\\([\\\]])/g, '$1')}`).trim()
     const results = []
     for (const handle of handles) {
       try {
-        results.push({ handle, ...(await send({ from, to: handle, text, via: 'user-mention', meta: { sessionId } })) })
+        results.push({ handle, ...(await send({ from, to: handle, text: plain, via: 'user-mention', meta: { sessionId } })) })
       } catch (error) {
         warn('flybot: sending to %s failed: %s', handle, error)
         results.push({ handle, action: 'deny', reason: error?.message ?? String(error) })
@@ -477,6 +491,12 @@ export function install(rt) {
     const id = session?.id
     if (id === undefined || (!rt.isBotSession(id) && !rt.roomOf(id))) return
     void sendUserMentions(id, textOfContent(event.data?.content), `${id}:${event.seq ?? event.id ?? textOfContent(event.data?.content)}`)
+      .then(async results => {
+        // A message the user addressed to a friend's Bot is that Bot's to answer; its
+        // reply comes back into this chat. The local Bot does not answer it itself.
+        if (!results.some(result => result.action !== 'deny') || rt.roomOf(id)) return
+        try { (await rt.resolveAgent(id)).cancel({ kind: 'user' }) } catch {}
+      })
       .catch(error => warn('flybot: user mention failed: %s', error))
   })
 
@@ -552,5 +572,5 @@ export function install(rt) {
   // A local Bot's answer to a friend's Bot (turns.js): back through bot.send, so the
   // plugin's middleware still decides (auto-accept, or the approval hold).
   const replyRemote = ({ from, handle, home, text, replyTo }) => send({ from, to: { kind: 'remote', handle, ...(home ? { home } : {}) }, text, role: 'reply', via: 'auto-reply', meta: { replyTo } })
-  Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSendUserMentions: sendUserMentions })
+  Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSendUserMentions: sendUserMentions, flybotSend: send })
 }

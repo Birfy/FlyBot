@@ -6914,6 +6914,7 @@ function useAnchoredMenu() {
   return { isOpen: place !== null, shownPlace, leaving, button, menu, open, close };
 }
 function ModelMenu({ bot, roster, actions, run, wide = false, onPick, onPickEffort }) {
+  if (bot?.remote !== void 0) return null;
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu();
   const shown = modelOf(bot, roster);
   const current = bot.model ?? bot.appliedModel;

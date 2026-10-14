@@ -92,6 +92,7 @@ export function install(rt) {
   // A Bot with no model yet waits for the user to pick one and changes nothing. A
   // model that is no longer served falls back to the last one it ran on, then the default.
   async function desiredModel(bot) {
+    if (bot.remote?.handle) return `flybot-remote/${bot.remote.handle}`
     if (!bot.model) return undefined
     const entries = await catalog()
     const served = new Set(entries.map(entry => entry.ref))

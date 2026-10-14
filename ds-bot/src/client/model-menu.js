@@ -139,6 +139,8 @@ export function useAnchoredMenu() {
 // levels of the shown model when it has them.
 // `onPick`/`onPickEffort` replace saving to the Bot, for a Bot that does not exist yet.
 export function ModelMenu({ bot, roster, actions, run, wide = false, onPick, onPickEffort }) {
+  // A friend's Bot runs on its relay route; there is no model to pick.
+  if (bot?.remote !== undefined) return null
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu()
   const shown = modelOf(bot, roster)
   const current = bot.model ?? bot.appliedModel

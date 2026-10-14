@@ -25,3 +25,10 @@ test('remote chats are recognised by their remote field', () => {
     assert.equal(isRemoteChat({ name: 'x' }), false);
     assert.equal(REMOTE_PROVIDER, 'flybot-remote');
 });
+
+test('roster and model guards keep a friend\'s Bot on its relay route', async () => {
+    const { readFileSync } = await import('node:fs')
+    const src = f => readFileSync(new URL('../src/host/' + f, import.meta.url), 'utf8')
+    assert.match(src('models.js'), /bot\.remote\?\.handle\) return `flybot-remote\//)
+    assert.match(src('roster.js'), /bot\.remote !== undefined\) \{ delete patch\.model/)
+})
