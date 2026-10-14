@@ -6,8 +6,9 @@
 //   the credentials file (never in state.json).
 // - Every local Bot is a member identity @<bot>.<home>, keys custodied by the server.
 //   Bots are registered on start and on 'bot.created', revoked on 'bot.removed'.
-// - Friendship is home-to-home: once a friend home is accepted, every local Bot can
-//   message every Bot of that home, and those remote Bots show in the roster (grouped by
+// - Friendship is Bot-to-Bot: an invite names one local Bot and the friend joins as one of
+//   theirs; each side sees and reaches only the Bots the friendship covers (the server's
+//   list_remote_bots, with `via` naming the local Bots allowed to talk), shown in the roster (grouped by
 //   home, never in bot.list()).
 // - Middleware 'social': remote targets must belong to a friend home; then approval:
 //   the friend home's setting (config.approval.homes[home] / default), overridden per
@@ -268,6 +269,9 @@ export function createSocial(service, config = {}, { client: given, home: givenH
           name: cleanText(entry.home.display_name),
           owner: cleanText(entry.home.owner_display_name),
           bots: entry.bots.map(bot => ({ handle: norm(bot.handle), name: cleanText(bot.display_name, norm(bot.handle)), home: norm(entry.home.handle), remote: true })),
+          // The friendship covers only these local members (an invite made for one Bot, or joined
+          // as one Bot); empty when it covers this whole home. Only they can talk to this friend.
+          via: (entry.via ?? []).map(norm),
         })),
       }
     } else {
@@ -287,6 +291,9 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     return remote
   }
   const remoteBot = async handle => (await remoteBots()).homes.flatMap(entry => entry.bots).find(bot => bot.handle === norm(handle))
+  const friendEntry = async friendHome => (await remoteBots()).homes.find(entry => entry.home === norm(friendHome))
+  // Whether this local Bot is one the friendship with that friend home covers.
+  const covered = (entry, botId) => !entry?.via?.length || entry.via.includes(norm(memberOf(botId)?.handle ?? ''))
 
   // ------------------------------------------------------------ approval policy
   const approvalFor = (fromBotId, friendHome) => {
@@ -307,6 +314,9 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       if (msg.target?.remote !== true || (msg.to?.transport ?? 'bot-social') !== 'bot-social') return undefined
       const bot = await remoteBot(msg.target.handle)
       if (bot === undefined) return { action: 'deny', reason: `${msg.target.handle} is not a Bot of a friend on Bot Social` }
+      if (home && typeof msg.from === 'string' && !covered(await friendEntry(bot.home), msg.from)) {
+        return { action: 'deny', reason: `${flybot.bot.get(msg.from)?.name ?? 'this Bot'} is not friends with ${bot.home}: that friendship is with ${(await friendEntry(bot.home)).via.join(', ')} only` }
+      }
       // A Bot's files are always shown to the user first, whatever auto-accept says;
       // files the user picked in the composer are the user's own send.
       if (msg.attachments?.length && msg.via !== 'composer') return { action: 'hold', reason: 'a Bot attaches files: check them before they leave' }
@@ -359,7 +369,9 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     if (!home) throw new Error('Bot Social is not connected')
     const target = norm(handle)
     const team = flybot.bot.list()
-    const order = [team.find(bot => bot.id === settings.via[target]), team.find(bot => bot.isMain), ...team].filter(Boolean)
+    // Only the Bots the friendship covers can sign; the one used before goes first.
+    const entry = (await remoteBots()).homes.find(item => item.bots.some(bot => bot.handle === target))
+    const order = [team.find(bot => bot.id === settings.via[target]), team.find(bot => bot.isMain), ...team].filter(bot => bot && covered(entry, bot.id))
     const tried = new Set()
     let lastError
     for (const bot of order) {
@@ -567,10 +579,23 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   }), { read: true }))
   // Joining a friend's invite (code or link). If the server asks this owner to approve
   // the request too, the click counts as that approval.
-  disposers.push(flybot.api.handle('social/join-invite', async ({ code } = {}) => {
+  // The friendship is between the invited Bot and the Bot that joins (botId, else the Main
+  // Bot): the friend sees and reaches only that one of this home's Bots.
+  disposers.push(flybot.api.handle('social/join-invite', async ({ code, botId } = {}) => {
     const value = String(code ?? '').trim()
     if (!value) throw new Error('paste an invite link or code')
-    const joined = await client.callTool('join_invite', { code: value.replace(/^.*\/i\//, '').replace(/[?#].*$/, ''), ...(home ? { from_bot_id: home.id } : config.botId ? { from_bot_id: config.botId } : {}) })
+    let from = config.botId ? { from_bot_id: config.botId } : {}
+    let joinedAs
+    if (home) {
+      const team = flybot.bot.list()
+      const bot = typeof botId === 'string' && botId ? flybot.bot.get(botId) : team.find(item => item.isMain) ?? team[0]
+      if (!bot) throw new Error('Choose which of your Bots joins')
+      const member = await register(bot)
+      if (!member) throw new Error(`${bot.name} has no Bot Social identity yet`)
+      from = { from_bot_id: member.bot_id }
+      joinedAs = { botId: bot.id, botName: bot.name, handle: norm(member.handle) }
+    }
+    const joined = await client.callTool('join_invite', { code: value.replace(/^.*\/i\//, '').replace(/[?#].*$/, ''), ...from })
     let status = joined.status
     if (joined.awaiting === 'your_owner_approval' && joined.approval_id) {
       await confirmedCall('decide_approval', { approval_id: joined.approval_id, decision: 'approved' })
@@ -581,7 +606,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     // A new friendship starts with auto-accept on (switchable per friend in Friends' Bots).
     const inviterHome = joined.inviter?.handle ? homeOfPeer(joined.inviter.handle) : undefined
     if (joined.relationship_id && (inviterHome === undefined || autoAcceptOf(inviterHome))) await serverAutoApprove(joined.relationship_id, true)
-    return { relationshipId: joined.relationship_id, status, inviter: joined.inviter?.handle ? norm(joined.inviter.handle) : undefined, inviterName: joined.inviter?.display_name }
+    return { relationshipId: joined.relationship_id, status, inviter: joined.inviter?.handle ? norm(joined.inviter.handle) : undefined, inviterName: joined.inviter?.display_name, ...(joinedAs ? { joinedAs } : {}) }
   }))
   disposers.push(flybot.api.handle('social/respond', async ({ relationshipId, decision } = {}) => {
     if (decision !== 'accept' && decision !== 'decline') throw new Error('decision is accept or decline')

@@ -336,10 +336,17 @@ test('add friend from the UI: invite link, join by link, and answer requests (ow
   const status = (await call('flybot/social/status', {})).value
   assert.equal(status.connected, true)
   assert.deepEqual(status.bots.map(b => [b.id, b.isMain]), [['a', true], ['b', false]])
-  // Joining by full link: the code is taken from it and the request comes from the home.
+  // Joining by full link: the code is taken from it and the request comes from one Bot (the
+  // Main Bot by default), never the whole home: the friend sees only that Bot.
+  const chiefId = [...server.members.values()].find(m => m.handle === '@chief.danyang.home').bot_id
+  const writerId = [...server.members.values()].find(m => m.handle === '@writer.danyang.home').bot_id
   const joined = (await call('flybot/social/join-invite', { code: ' https://other.example/i/ABC?x=1 ' })).value
-  assert.deepEqual(joined, { relationshipId: 'r8', status: 'active', inviter: '@bob.home', inviterName: 'Bob' })
-  assert.deepEqual(server.calls.find(c => c.name === 'join_invite').args, { code: 'ABC', from_bot_id: 'h1' })
+  assert.deepEqual(joined, { relationshipId: 'r8', status: 'active', inviter: '@bob.home', inviterName: 'Bob', joinedAs: { botId: 'a', botName: 'Chief', handle: '@chief.danyang.home' } })
+  assert.deepEqual(server.calls.find(c => c.name === 'join_invite').args, { code: 'ABC', from_bot_id: chiefId })
+  const asWriter = (await call('flybot/social/join-invite', { code: 'DEF', botId: 'b' })).value
+  assert.equal(asWriter.joinedAs.handle, '@writer.danyang.home')
+  assert.deepEqual(server.calls.filter(c => c.name === 'join_invite').at(-1).args, { code: 'DEF', from_bot_id: writerId })
+  assert.notEqual(server.calls.filter(c => c.name === 'join_invite').at(-1).args.from_bot_id, 'h1')
   // A join the server wants this owner to approve is approved by the same click.
   const pending = (await call('flybot/social/join-invite', { code: 'NEEDSOK' })).value
   assert.equal(pending.status, 'pending_target')
@@ -664,4 +671,30 @@ test('a friendship made after Auto-accept was turned on gets server auto-approve
   await settle()
   const confirmed = server.calls.filter(c => c.name === 'set_auto_approve' && c.args.confirm_code === 'C0DE03')
   assert.deepEqual(confirmed.map(c => [c.args.relationship_id, c.args.auto_approve_chat]), [['r1', true], ['r7', true]])
+})
+
+test('a friendship scoped to one Bot: the roster shows only the granted Bots and only the covered local Bot may send', async (t) => {
+  const { ctx, tool, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  // Bob invited us to Coder only and we joined as Chief: Bob's Writer is not listed by the server.
+  server.tools.list_remote_bots = () => ({ homes: [{ relationship_id: 'r1', home: { bot_id: 'h2', handle: '@bob.home', display_name: 'Bob', owner_display_name: 'Bob' }, bots: [{ bot_id: 'x1', handle: '@coder.bob.home', display_name: 'Coder' }], scope: 'member', via: ['@chief.danyang.home'] }] })
+  const social = createSocial(ctx.flybot, { inboxPollMs: 0 }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const listed = await tool('list_friend_bots', {}, 'a')
+  assert.match(listed, /@coder\.bob\.home/)
+  assert.doesNotMatch(listed, /@writer\.bob\.home/)
+  // Writer is not part of that friendship: refused locally, nothing reaches the server.
+  const before = server.calls.filter(c => c.name === 'send_as_member').length
+  const refused = await ctx.flybot.bot.send({ from: 'b', to: '@coder.bob.home', text: 'hello from writer' })
+  assert.equal(refused.action, 'deny')
+  assert.match(refused.reason, /Writer is not friends with @bob\.home.*@chief\.danyang\.home/)
+  assert.equal(server.calls.filter(c => c.name === 'send_as_member').length, before)
+  // A Bot the server does not list is not reachable at all.
+  assert.equal((await ctx.flybot.bot.send({ from: 'a', to: '@writer.bob.home', text: 'hi' })).action, 'deny')
+  // Chief, the covered Bot, goes through.
+  assert.equal((await ctx.flybot.bot.send({ from: 'a', to: '@coder.bob.home', text: 'hello from chief' })).action, 'allow')
+  const chiefId = [...server.members.values()].find(m => m.handle === '@chief.danyang.home').bot_id
+  assert.deepEqual(server.calls.filter(c => c.name === 'send_as_member').at(-1).args, { from_bot_id: chiefId, to: '@coder.bob.home', text: 'hello from chief' })
 })
