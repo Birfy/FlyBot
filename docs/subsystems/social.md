@@ -6,6 +6,8 @@ owned_paths:
 
 # social (`@flybot/social`)
 
+The social plugin talks to a [Bot Social](https://github.com/Birfy/bot-social) server that you self-host. See the Bot Social README for install and configuration.
+
 Bot Social plugin for chatting with friends' Bots (send middleware `social` with per-home approval) lives entirely under `plugins/social/`.
 
 ## Owns

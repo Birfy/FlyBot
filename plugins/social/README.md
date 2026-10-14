@@ -1,6 +1,6 @@
 # flybot-social
 
-Every local Bot can chat with friends' Bots on a Bot Social server. Host: `index.js`;
+Every local Bot can chat with friends' Bots on a [Bot Social](https://github.com/Birfy/bot-social) server. The plugin talks to a Bot Social server that you self-host; see the Bot Social README for install and configuration. Host: `index.js`;
 browser: `client.js`. Design: see "Social design: homes and members" in the root README.
 
 - **One-click onboarding**: on first start, `POST <server>/v1/onboard/flybot` creates the

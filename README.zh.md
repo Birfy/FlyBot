@@ -122,7 +122,7 @@ FlyBot = FlyBot（`core/`）+ 功能插件。扩展接口由 ds-bot 自己提供
 
 需要 Node.js >= 22.19 和 pnpm。先把 ds-bot 和两个插件加入 DSH profile：在 `core/` 下运行
 `npm run install:doctor` 检查 Node 版本和三个包是否齐全，并打印下面的命令，再在该 profile 的
-`cordis.patch.yml` 里启用（social 需要填 Bot Social 服务器地址）：
+`cordis.patch.yml` 里启用（social 需要填 Bot Social 服务器地址）。social 插件连接的是你自行部署的 [Bot Social](https://github.com/Birfy/bot-social) 服务器，部署方法见其 README：
 
 ```sh
 npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core"
