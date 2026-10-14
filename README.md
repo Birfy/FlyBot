@@ -53,7 +53,7 @@ DSH keeps plugins per profile, under `$DSH_HOME/profiles/<name>` (`~/.dsh/profil
 
 ```sh
 npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core"
-npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core/plugins/social"
+npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/plugins/social"
 npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/plugins/tree"
 ```
 
@@ -191,7 +191,7 @@ Agent and maintainer loop: see [AGENTS.md](AGENTS.md), [LESSONS.md](LESSONS.md),
 
 ## Development
 
-The core lives in [`core/`](core/) and the plugins in [`core/plugins/`](core/plugins/).
+The core lives in [`core/`](core/) and the peer plugins in [`plugins/`](plugins/).
 See [`core/README.md`](core/README.md) for options and internals, [CONTRIBUTING.md](CONTRIBUTING.md)
 for development, and [CHANGELOG.md](CHANGELOG.md) for history. CI
 ([`.github/workflows/test.yml`](.github/workflows/test.yml)) runs the tests of the core and every
@@ -264,7 +264,7 @@ plugins never patch it.
   `flybot.bot.details`, `flybot.approvals` (`core/src/client/flybot-slots.js`). Each
   plugin component renders inside an error boundary.
 - Types: `core/types/flybot.d.ts`.
-- Plugins: `core/plugins/social` (friends' Bots via Bot Social) and repo-root `plugins/tree`
+- Plugins: `plugins/social` (friends' Bots via Bot Social) and `plugins/tree`
   (recursive Bot tree, maintained by recursive-bot; own `npm test` against `core/`).
 
 CI (`.github/workflows/test.yml`) runs ds-bot's tests, which include every plugin's tests,

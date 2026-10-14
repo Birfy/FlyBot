@@ -72,7 +72,7 @@ index cf729a43d0df36ed1a68eb7eed15521f600d7601..2d21fc7269754a7c8a73f61bdc15c5ec
  }
 diff --git a/scripts/local-ci.sh b/scripts/local-ci.sh
 new file mode 100755
-index 0000000000000000000000000000000000000000..b3cd4ef358ae241dafa7482cde34ebc3ebce3e83
+index 0000000000000000000000000000000000000000..cc835536427afd006f162a5818e958a176fecf3b
 --- /dev/null
 +++ b/scripts/local-ci.sh
 @@ -0,0 +1,59 @@
@@ -130,7 +130,7 @@ index 0000000000000000000000000000000000000000..b3cd4ef358ae241dafa7482cde34ebc3
 +
 +step="plugin tests (social)"
 +echo "=== $step ==="
-+(cd plugins/social && node --import ../../test/harness-resolve.mjs --test "test/*.test.js")
++(cd ../plugins/social && npm test)
 +
 +step="plugin tests (tree)"
 +echo "=== $step ==="

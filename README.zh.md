@@ -116,7 +116,7 @@ FlyBot = FlyBot（`core/`）+ 功能插件。扩展接口由 ds-bot 自己提供
 
 ```sh
 npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core"
-npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core/plugins/social"
+npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/plugins/social"
 npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/plugins/tree"
 ```
 
@@ -149,7 +149,7 @@ npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&p
   `flybot.bot.details`、`flybot.approvals` 等界面位置（`core/src/client/flybot-slots.js`），
   每个插件组件都包在错误边界里。
 - 类型：`core/types/flybot.d.ts`。
-- 插件（`core/plugins/`）：`social`（通过 Bot Social 连接好友的 Bot）和 `tree`
+- 插件（`plugins/`）：`social`（通过 Bot Social 连接好友的 Bot）和 `tree`
   （递归 Bot 树，由 recursive-bot 维护）。
 
 CI（`.github/workflows/test.yml`）运行 ds-bot 的测试（包含每个插件的测试）、客户端构建检查和 lint。

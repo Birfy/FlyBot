@@ -1005,7 +1005,7 @@ index 62fed26b0f4449349b2a06e219c18324109c7993..58fcd80ea8ad0ec119377f728853a977
        const dispose = execute()
 diff --git a/test/flybot.test.js b/test/flybot.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb70c94f03bbe8afe635ee23ba3f5153f6821f22
+index 0000000000000000000000000000000000000000..d028d0428526024667c25ad0e0d9b0b719f57f0b
 --- /dev/null
 +++ b/test/flybot.test.js
 @@ -0,0 +1,418 @@
@@ -1209,12 +1209,12 @@ index 0000000000000000000000000000000000000000..fb70c94f03bbe8afe635ee23ba3f5153
 +  await stop()
 +})
 +
-+test('middleware order follows before/after; bypass works only when config enables it', async () => {
++test('middleware order follows priority and before/after; bypass works only when config enables it', async () => {
 +  for (const enabled of [false, true]) {
 +    const { fb, received, stop } = await start(enabled ? { flybot: { bypass: { tree: ['social'] } } } : {})
 +    const order = []
-+    fb.bot.send.use({ name: 'social', handle: () => { order.push('social'); return { action: 'hold', reason: 'owner must approve' } } })
-+    fb.bot.send.use({ name: 'tree', before: ['social'], handle: () => { order.push('tree'); return { action: 'allow', bypass: ['social'] } } })
++    fb.bot.send.use({ name: 'social', priority: fb.bot.send.priority.APPROVAL, handle: () => { order.push('social'); return { action: 'hold', reason: 'owner must approve' } } })
++    fb.bot.send.use({ name: 'tree', priority: fb.bot.send.priority.ROUTING, handle: () => { order.push('tree'); return { action: 'allow', bypass: ['social'] } } })
 +    fb.bot.send.use({ name: 'audit', after: ['social'], handle: () => { order.push('audit') } })
 +    assert.deepEqual(fb.bot.send.list().map(m => m.name), ['tree', 'social', 'audit'])
 +    const result = await fb.bot.send({ from: 'a', to: 'b', text: 'y' })

@@ -5,7 +5,7 @@ FlyBot's core is **pristine upstream ds-bot plus this ordered patch series** (#3
 - `ds-bot/` is byte-identical to `Fei2411/DeepSeek-Bot` at the commit in `ds-bot.pin.json`
   (checked by git tree hash). Never edit it.
 - `core/` is what ships and what the tests run on: `ds-bot/` with these patches applied in
-  order. It is committed, so Git installs (`path:/core`, `path:/core/plugins/*`) need no build.
+  order. It is committed, so Git installs (`path:/core`; the plugins install from `path:/plugins/*`) need no build.
 - CI (`Test` → `package` job) runs `node scripts/ds-bot-patches.mjs check`: `ds-bot/` matches
   the pin, every patch applies cleanly in order, and the result equals the committed `core/`.
 
@@ -16,9 +16,10 @@ FlyBot's core is **pristine upstream ds-bot plus this ordered patch series** (#3
 | `0003-flybot-api-client` | The browser `flybot` service and slots (`flybot-registry.js`, `flybot-slots.js`) and their render sites |
 | `0004-flybot-api-types` | `types/flybot.d.ts`, the plugin contract (host and browser) |
 | `0005-social-seams` | Remote chats and the transport/delivery seams that `@flybot/social` uses |
-| `0006-flybot-plugins` | `plugins/social` and its test runner (moves to the repo root in PR 2; `@flybot/tree` already lives at repo-root `plugins/tree`) |
 | `0007-version-and-tooling` | Version `0.1.5-flybot.1`, `package.json`/lockfile, `scripts/local-ci.sh` |
 | `0008-client-bundle` | The generated `client.js` (rebuild with `npm run build` in `core/`) |
+
+`0006` is retired: its files (`plugins/social` and its tests) moved out of `core/` to the peer plugin `plugins/social` (#34 PR 2), so no patch carries them. The numbers are not reused.
 
 `topics.json` maps each changed file to one patch (a file belongs to exactly one patch).
 
