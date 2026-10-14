@@ -171,6 +171,8 @@ export interface FlyBot {
   plugin: string
   /** The same API with fields/events/sends attributed to `plugin`. */
   scope(plugin: string): FlyBot
+  /** Resolves once ds-bot has loaded its saved team (bot.list() is complete). */
+  ready(): Promise<void>
   on: On
   fields: BotFields
   bot: {

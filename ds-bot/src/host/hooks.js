@@ -545,6 +545,8 @@ export function install(rt) {
       send: Object.assign((msg) => send({ via: plugin, ...msg }), { use, list: send.list }),
     },
     fields,
+    // Resolves once ds-bot's saved team is loaded, so bot.list() has every Bot.
+    ready: () => rt.load().then(() => undefined),
     on: onFor(plugin),
     transports: { add: addTransport },
     remote: {

@@ -485,3 +485,33 @@ test('files (#10): private paths refused before any card, Bot files held under a
   await ctx.flybot.approvals.decide(id, 'reject')
   assert.equal(staged(), 0, 'rejected: staging empty')
 })
+
+test('identity (#11): credentials bound to their server, Unicode names get distinct handles, one registration per Bot, failed start leaves nothing', async (t) => {
+  const { slug } = await import('../src/social.js')
+  assert.notEqual(slug('研究员', 'id1'), slug('助手', 'id2'))
+  assert.match(slug('研究员', 'id1'), /^bot-[0-9a-f]{8}$/)
+  assert.equal(slug('Chief', 'x'), 'chief')
+  const { ctx, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const credentialsPath = join(home, 'flybot-social.json')
+  writeFileSync(credentialsPath, JSON.stringify({ token: 'old-token', home: { id: 'h1', handle: '@danyang.home' }, server: 'https://old.example' }))
+  const seen = []
+  const spy = async (url, init) => { seen.push([url, init.headers?.authorization]); return server.fetch(url, init) }
+  const social = await startSocial(ctx.flybot, { server: 'https://social.test', credentialsPath, fetch: spy, inboxPollMs: 0 })
+  t.after(() => social.dispose())
+  // A new server: onboarded afresh, the old token never sent there.
+  assert.equal(server.onboarded(), 1)
+  assert.equal(seen.filter(([, auth]) => auth === 'Bearer old-token').length, 0)
+  assert.ok(readdirSync(home).some(f => f.startsWith('flybot-social.json.')), 'old credentials kept aside')
+  assert.equal(JSON.parse(readFileSync(credentialsPath, 'utf8')).server, 'https://social.test')
+  // Concurrent registrations of one Bot make one member.
+  const before = server.calls.filter(c => c.name === 'add_home_member').length
+  ctx.flybot.scope('social').fields.set('a', 'member', undefined)
+  await Promise.all([social.registerAll(), social.registerAll()])
+  assert.equal(server.calls.filter(c => c.name === 'add_home_member').length, before + 1)
+  // A start that cannot onboard throws and leaves no timer behind.
+  let timers = 0
+  await assert.rejects(startSocial(ctx.flybot, { server: 'https://down.test', credentialsPath: join(home, 'none.json'), fetch: async () => new Response('', { status: 500 }), inboxPollMs: 5, setInterval: () => { timers += 1 } }), /onboarding failed/)
+  assert.equal(timers, 0)
+})

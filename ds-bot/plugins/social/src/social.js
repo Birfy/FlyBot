@@ -57,7 +57,13 @@ export function inviteText({ handle, name, home, url, expiresAt }) {
     "Using a Grok bot? Send it this link and say 'join this FlyBot invite'. " +
     `Link: ${url} (single use${expires ? `, expires ${expires}` : ''})`
 }
-const slug = name => String(name ?? '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'bot'
+// A handle part from a Bot's name. A name with no ASCII letters or digits (研究员, 助手)
+// gets a stable one from its id, so two such Bots never share @bot.<home>.
+export const slug = (name, id = '') => {
+  const ascii = String(name ?? '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32)
+  return ascii || `bot-${sha256(String(id || name)).slice(0, 8)}`
+}
+const serverKey = url => String(url ?? '').trim().replace(/\/+$/, '').toLowerCase()
 
 // One call to the server's FlyBot onboarding; returns { token, home } to keep.
 export async function onboard({ server, displayName, webhookUrl, fetch: fetchImpl = globalThis.fetch }) {
@@ -185,14 +191,40 @@ export function createSocial(service, config = {}, { client: given, home: givenH
 
   // ------------------------------------------------------------ members
   const memberOf = botId => flybot.fields.get(botId, 'member')
-  async function register(bot) {
-    if (!home || memberOf(bot.id)) return memberOf(bot.id)
-    const member = await client.callTool('add_home_member', { home: home.id, name: slug(bot.name), display_name: bot.name })
+  // One registration per Bot at a time; a taken handle retries with the Bot's id suffix;
+  // a Bot removed while it was registering has its new identity revoked.
+  const registering = new Map()
+  function register(bot) {
+    if (!home || memberOf(bot.id)) return Promise.resolve(memberOf(bot.id))
+    if (!registering.has(bot.id)) {
+      registering.set(bot.id, registerOnce(bot).finally(() => registering.delete(bot.id)))
+    }
+    return registering.get(bot.id)
+  }
+  async function registerOnce(bot) {
+    let member
+    try {
+      member = await client.callTool('add_home_member', { home: home.id, name: slug(bot.name, bot.id), display_name: bot.name })
+    } catch (error) {
+      if (!/taken|exists|conflict|duplicate|in use/i.test(String(error?.message ?? error))) throw error
+      member = await client.callTool('add_home_member', { home: home.id, name: `${slug(bot.name, bot.id)}-${sha256(String(bot.id)).slice(0, 6)}`, display_name: bot.name })
+    }
+    if (flybot.bot.get(bot.id) === undefined) {
+      await client.callTool('remove_home_member', { home: home.id, member: member.bot_id }).catch(error => warn('revoke failed', error))
+      return undefined
+    }
     flybot.fields.set(bot.id, 'member', { bot_id: member.bot_id, handle: member.handle })
     return memberOf(bot.id)
   }
+  // Every Bot at startup, once ds-bot's team is loaded (saved Bots fire no bot.created).
   async function registerAll() {
-    for (const bot of flybot.bot.list()) await register(bot)
+    await flybot.ready?.()
+    for (const bot of flybot.bot.list()) {
+      try { await register(bot) } catch (error) {
+        if (/401|403|token|unauthori[sz]ed/i.test(String(error?.message ?? error))) throw error
+        warn(`${bot.name} not registered`, error)
+      }
+    }
   }
   disposers.push(flybot.on('bot.created', bot => { void register(bot).catch(error => warn('register failed', error)) }))
   disposers.push(flybot.on('bot.removed', ({ bot }) => {
@@ -595,13 +627,38 @@ export function createSocial(service, config = {}, { client: given, home: givenH
 
 // Plugin start: onboard once (credentials file), then build the social layer.
 export async function startSocial(service, config = {}) {
+  // Saved credentials belong to the server they came from: they are used only for that
+  // server (a file from before this check is bound to the configured server on first
+  // use), and an explicit token (config or FLYBOT_SOCIAL_TOKEN) always wins.
+  const explicit = config.token ?? process.env.FLYBOT_SOCIAL_TOKEN
   let credentials = config.credentialsPath ? readCredentials(config.credentialsPath) : undefined
-  if (credentials === undefined && config.token === undefined && process.env.FLYBOT_SOCIAL_TOKEN === undefined && config.server && config.onboard !== false) {
-    credentials = await onboard({ server: config.server, displayName: config.displayName ?? 'FlyBot', webhookUrl: config.webhookUrl, fetch: config.fetch })
-    if (config.credentialsPath) writeCredentials(config.credentialsPath, credentials)
+  if (credentials && config.server) {
+    if (credentials.server === undefined) {
+      credentials = { ...credentials, server: serverKey(config.server) }
+      writeCredentials(config.credentialsPath, credentials)
+    } else if (serverKey(credentials.server) !== serverKey(config.server)) {
+      credentials = undefined
+    }
   }
-  const social = createSocial(service, { ...config, token: credentials?.token ?? config.token, home: credentials?.home ?? config.home })
-  if (social.home) await social.registerAll()
+  if (credentials === undefined && explicit === undefined && config.server && config.onboard !== false) {
+    credentials = { ...(await onboard({ server: config.server, displayName: config.displayName ?? 'FlyBot', webhookUrl: config.webhookUrl, fetch: config.fetch })), server: serverKey(config.server) }
+    if (config.credentialsPath) {
+      // Another server's credentials stay, under their server, for switching back.
+      const previous = readCredentials(config.credentialsPath)
+      if (previous?.token && previous.server && serverKey(previous.server) !== serverKey(config.server)) {
+        writeCredentials(`${config.credentialsPath}.${createHash('sha256').update(serverKey(previous.server)).digest('hex').slice(0, 8)}`, previous)
+      }
+      writeCredentials(config.credentialsPath, credentials)
+    }
+  }
+  const social = createSocial(service, { ...config, token: explicit ?? credentials?.token, home: explicit !== undefined ? config.home : credentials?.home ?? config.home })
+  try {
+    if (social.home) await social.registerAll()
+  } catch (error) {
+    // A failed start leaves nothing running.
+    social.dispose()
+    throw error
+  }
   // Friends' Bots show as chat members from the start.
   void social.remoteBots({ fresh: true }).catch(() => {})
   return social
