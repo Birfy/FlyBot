@@ -27,6 +27,7 @@ export function install(rt) {
     const resolved = await ctx.sessionController.resolveAgent(sessionId)
     if ('error' in resolved) throw new Error(resolved.error?.message ?? 'Session unavailable')
     rt.hideBlockingQuestion(resolved.agent)
+    rt.flybotHideTools?.(resolved.agent)
     return resolved.agent
   }
 

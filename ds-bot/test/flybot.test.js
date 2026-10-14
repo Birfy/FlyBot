@@ -352,3 +352,24 @@ test('send edge cases (#20): a bogus middleware verdict denies; a remote send wi
   off()
   await assert.rejects(fb.bot.send({ from: 'a', to: '@nobody.home', text: 'x' }), /no transport/)
 })
+
+test('tools (#4): a tool visibleTo hides is taken out of that Bot\'s tool list, and comes back when visible', async (t) => {
+  const { ctx, fb, stop } = await start()
+  t.after(stop)
+  let allowed = false
+  fb.tools.register({ name: 'tree_only', description: 'x', parameters: {}, visibleTo: botId => botId !== 'c' || allowed, execute: () => 'ok' })
+  ctx.tools.schemas = () => [{ name: 'tree_only' }]
+  const masks = []
+  const agentFor = id => ({ id, session: { id }, ctx: { effect: () => {}, on: () => {}, tools: { restrict: (filter) => { masks.push([id, filter.deny]); return () => masks.push([id, 'lifted']) } } } })
+  const c = agentFor('c')
+  ctx.emit('agent/created', { agent: c })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.deepEqual(masks, [['c', ['tree_only']]])
+  ctx.emit('agent/created', { agent: agentFor('b') })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(masks.length, 1, 'visible to b: no mask')
+  allowed = true
+  ctx.emit('agent/created', { agent: c })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.deepEqual(masks.at(-1), ['c', 'lifted'])
+})

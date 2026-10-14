@@ -452,12 +452,38 @@ export function install(rt) {
           return typeof result === 'string' ? result : JSON.stringify(result)
         },
       }))
+      if (typeof visibleTo === 'function') gatedTools.set(def.name, def)
       return () => {
+        gatedTools.delete(def.name)
         disposeTool?.()
         disposeGuard?.()
       }
     },
   }
+
+  // A tool whose visibleTo says no is taken out of that Bot's tool list, not only
+  // refused when called. Each Agent's mask is recomputed when it is resolved, so a
+  // Bot that joins (or leaves) a plugin's scope gets (or loses) the tool next turn.
+  const gatedTools = new Map()
+  const masks = new WeakMap()
+  function hidePluginTools(agent) {
+    if (agent === undefined || typeof agent.ctx?.tools?.restrict !== 'function') return
+    const bot = rt.botOf(rt.selfOf(agent.session?.id ?? agent.id))
+    if (bot === undefined) return
+    let known
+    try { known = new Set(ctx.tools.schemas(agent).map(schema => schema.name)) } catch { return }
+    const deny = [...gatedTools.values()].filter(def => known.has(def.name) && !visible(def, bot.id)).map(def => def.name).sort()
+    const key = deny.join(',')
+    const current = masks.get(agent)
+    if ((current?.key ?? '') === key) return
+    try {
+      current?.dispose?.()
+      masks.set(agent, { key, dispose: deny.length ? agent.ctx.tools.restrict({ deny }) : undefined })
+    } catch (error) {
+      warn('flybot: tools stay listed for %s: %s', bot.name, error)
+    }
+  }
+  ctx.on('agent/created', ({ agent }) => { void rt.load().then(() => hidePluginTools(agent)).catch(() => {}) })
 
   // ---------------------------------------------------------------- remote members
   // Remote Bots a plugin can reach (social: friends' Bots). They are chat members the
@@ -638,5 +664,5 @@ export function install(rt) {
   // A local Bot's answer to a friend's Bot (turns.js): back through bot.send, so the
   // plugin's middleware still decides (auto-accept, or the approval hold).
   const replyRemote = ({ from, handle, home, text, replyTo }) => send({ from, to: { kind: 'remote', handle, ...(home ? { home } : {}) }, text, role: 'reply', via: 'auto-reply', meta: { replyTo } })
-  Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSend: send, flybotIsRead: isReadEndpoint })
+  Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSend: send, flybotIsRead: isReadEndpoint, flybotHideTools: hidePluginTools })
 }
