@@ -19,6 +19,9 @@ const BOT_TO_BOT_ROLES = new Set(['request', 'reply', 'stopped', 'report'])
 const ACTIONS = new Set(['allow', 'deny', 'hold'])
 const MAX_ATTACHMENTS = 5
 const APPROVALS_KEPT = 200
+const PENDING_MAX = 100
+const MAX_SEND_TEXT = 20_000
+class HoldFull extends Error {}
 const CHANGES_KEPT = 500
 const NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/i
 
@@ -201,9 +204,13 @@ export function install(rt) {
     chain = orderMiddleware([...chain, middleware])
     return () => { chain = chain.filter(m => m !== middleware) }
   }
-  const evaluate = async (msg) => {
+  // `after`: the middleware that held this message; an approved hold resumes the chain
+  // just after it, so later policies (audit, leak prevention) still run.
+  const evaluate = async (msg, { after } = {}) => {
     const skip = new Set()
+    let resumed = after === undefined || !chain.some(m => m.name === after)
     for (const middleware of chain) {
+      if (!resumed) { if (middleware.name === after) resumed = true; continue }
       if (skip.has(middleware.name)) continue
       let verdict
       try {
@@ -262,8 +269,11 @@ export function install(rt) {
 
   const hold = async (msg, verdict) => {
     await rt.load()
-    const approval = { id: randomUUID(), status: 'pending', reason: verdict.reason, by: verdict.by, createdAt: Date.now(), request: clone(msg) }
     const all = store()
+    if (Object.values(all).filter(a => a.status === 'pending').length >= PENDING_MAX) {
+      throw new HoldFull(`${PENDING_MAX} messages already wait for approval; decide those first`)
+    }
+    const approval = { id: randomUUID(), status: 'pending', reason: verdict.reason, by: verdict.by, createdAt: Date.now(), request: clone(msg) }
     all[approval.id] = approval
     const done = Object.values(all).filter(a => a.status !== 'pending').sort((a, b) => a.createdAt - b.createdAt)
     for (const old of done.slice(0, Math.max(0, Object.keys(all).length - APPROVALS_KEPT))) delete all[old.id]
@@ -272,27 +282,57 @@ export function install(rt) {
     return approval
   }
 
+  // An approved hold: the rest of the chain decides (a later deny or hold still counts),
+  // then it is dispatched; a failed dispatch stays visible for Retry.
+  const release = async (approval) => {
+    let verdict
+    try { verdict = await evaluate(approval.request, { after: approval.by }) } catch (error) { verdict = { action: 'deny', reason: error?.message ?? String(error) } }
+    if (verdict.action === 'deny') {
+      approval.status = 'denied'
+      approval.error = verdict.reason
+      return
+    }
+    if (verdict.action === 'hold') {
+      try {
+        const next = await hold(approval.request, verdict)
+        approval.next = next.id
+      } catch (error) {
+        approval.status = 'failed'
+        approval.error = error?.message ?? String(error)
+      }
+      return
+    }
+    try {
+      approval.exchangeId = await dispatch(approval.request)
+    } catch (error) {
+      approval.status = 'failed'
+      approval.error = error?.message ?? String(error)
+    }
+  }
+
   const approvals = {
-    list: ({ status = 'pending' } = {}) => Object.values(store()).filter(a => status === 'all' || a.status === status).sort((a, b) => a.createdAt - b.createdAt).map(clone),
+    list: ({ status = 'pending' } = {}) => Object.values(store()).filter(a => status === 'all' || (Array.isArray(status) ? status.includes(a.status) : a.status === status)).sort((a, b) => a.createdAt - b.createdAt).map(clone),
     get: id => clone(store()[id]),
     // Owner only: reachable from the UI route, never a model tool.
     async decide(id, decision, { note } = {}) {
       await rt.load()
       const approval = store()[id]
       if (approval === undefined) throw new Error(`flybot: no approval ${id}`)
+      if (decision === 'retry') {
+        if (approval.status !== 'failed') throw new Error(`flybot: only a failed send can be retried (${id} is ${approval.status})`)
+        approval.status = 'approved'
+        delete approval.error
+        await release(approval)
+        await rt.save()
+        approvalsChanged(approval)
+        return clone(approval)
+      }
       if (approval.status !== 'pending') throw new Error(`flybot: approval ${id} is already ${approval.status}`)
       if (decision !== 'approve' && decision !== 'reject') throw new Error('flybot: decision is approve or reject')
       approval.status = decision === 'approve' ? 'approved' : 'rejected'
       approval.decidedAt = Date.now()
       if (note) approval.note = String(note)
-      if (decision === 'approve') {
-        try {
-          approval.exchangeId = await dispatch(approval.request)
-        } catch (error) {
-          approval.status = 'failed'
-          approval.error = error?.message ?? String(error)
-        }
-      }
+      if (decision === 'approve') await release(approval)
       await rt.save()
       approvalsChanged(approval)
       return clone(approval)
@@ -313,7 +353,11 @@ export function install(rt) {
     const verdict = await evaluate(msg)
     if (verdict.action === 'deny') return { action: 'deny', reason: verdict.reason, by: verdict.by }
     if (verdict.action === 'hold') {
-      const approval = await hold(msg, verdict)
+      let approval
+      try { approval = await hold(msg, verdict) } catch (error) {
+        if (error instanceof HoldFull) return { action: 'deny', reason: error.message, by: verdict.by }
+        throw error
+      }
       return { action: 'hold', approvalId: approval.id, reason: verdict.reason, by: verdict.by }
     }
     return { action: 'allow', exchangeId: await dispatch(msg) }
@@ -341,6 +385,7 @@ export function install(rt) {
   async function send({ from, to, text, role = 'request', hop = 0, via = SHARED, meta, attachments } = {}) {
     await rt.load()
     if (typeof text !== 'string' || text.trim() === '') throw new Error('flybot: send needs text')
+    if (text.length > MAX_SEND_TEXT) throw new Error(`flybot: a message is at most ${MAX_SEND_TEXT} characters`)
     if (role !== 'request' && role !== 'reply') throw new Error(`flybot: unsupported role ${role}`)
     if (!isRemote(from) && rt.botOf(from) === undefined) throw new Error(`flybot: unknown sender ${from}`)
     if (!isRemote(to) && rt.botOf(to) === undefined) throw new Error(`flybot: unknown Bot ${to}`)

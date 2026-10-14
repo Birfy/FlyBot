@@ -206,6 +206,7 @@ export interface FlyBot {
     get(id: string): Approval | undefined
     /** Owner only: exposed to the UI route, never as a model tool. */
     decide(id: string, decision: 'approve' | 'reject', options?: { note?: string }): Promise<Approval>
+    /** 'retry' re-sends a failed approval; an approve resumes the chain after the holder. */
     onChange(listener: (approval: Approval) => void): () => void
   }
   tools: { register(tool: FlyBotTool): () => void }

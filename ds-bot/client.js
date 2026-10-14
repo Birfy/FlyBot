@@ -1385,7 +1385,7 @@ function FlyBotApprovals() {
   const entries2 = useSlot("flybot.approvals");
   const [pending, setPending] = (0, import_react.useState)([]);
   const [busy, setBusy] = (0, import_react.useState)("");
-  const refresh = () => call2("approvals").then((list) => setPending(Array.isArray(list) ? list : [])).catch(() => {
+  const refresh = () => call2("approvals", { status: ["pending", "failed"] }).then((list) => setPending(Array.isArray(list) ? list : [])).catch(() => {
   });
   (0, import_react.useEffect)(() => {
     void refresh();
@@ -1393,10 +1393,14 @@ function FlyBotApprovals() {
     return () => clearInterval(timer);
   }, []);
   if (pending.length === 0) return null;
+  const [error, setError] = (0, import_react.useState)("");
   const decide = async (id, decision) => {
     setBusy(id);
+    setError("");
     try {
       await call2("decide", { id, decision });
+    } catch (failure) {
+      setError(failure?.message ?? String(failure));
     } finally {
       setBusy("");
       await refresh();
@@ -1412,17 +1416,19 @@ function FlyBotApprovals() {
       return (0, import_react.createElement)(
         "div",
         { key: approval.id, className: "bt-flybot-approval" },
-        (0, import_react.createElement)("div", { className: "bt-flybot-approval-head" }, `Message to ${to} · ${approval.reason}`),
+        (0, import_react.createElement)("div", { className: "bt-flybot-approval-head" }, approval.status === "failed" ? `Not sent to ${to} · ${approval.error ?? "failed"}` : `Message to ${to} · ${approval.reason}`),
         (0, import_react.createElement)("div", { className: "bt-flybot-approval-text" }, approval.request.text),
         approval.request.attachments?.length ? (0, import_react.createElement)("ul", { className: "bt-flybot-approval-files", "aria-label": "Attached files" }, approval.request.attachments.map((file, index) => (0, import_react.createElement)("li", { key: index, title: file.path ?? file.name }, `${file.name} · ${fileSize(file.size)}`, file.path ? (0, import_react.createElement)("div", { className: "bt-flybot-approval-path" }, file.path) : null))) : null,
         (0, import_react.createElement)(
           "div",
           { className: "bt-flybot-approval-actions" },
-          (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "approve") }, "Approve"),
-          (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "reject") }, "Reject")
+          approval.status === "failed" ? (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "retry") }, "Retry") : null,
+          approval.status === "failed" ? null : (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "approve") }, "Approve"),
+          approval.status === "failed" ? null : (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "reject") }, "Reject")
         )
       );
-    })
+    }),
+    error ? (0, import_react.createElement)("div", { className: "bt-flybot-approval-error", role: "alert" }, error) : null
   );
 }
 var fileSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;

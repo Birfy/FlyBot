@@ -263,3 +263,35 @@ test('the flybot service is provided the Cordis 4 way: provide first, never a ba
   provideFlyBot(plain, { version: 3 })
   assert.deepEqual(plain.flybot, { version: 3 })
 })
+
+test('approvals (#12): an approved hold resumes the chain, a later deny wins, failures retry, limits hold', async (t) => {
+  const { fb, received, stop } = await start()
+  t.after(stop)
+  let block = true
+  fb.bot.send.use({ name: 'hold-all', handle: () => ({ action: 'hold', reason: 'check' }) })
+  fb.bot.send.use({ name: 'leak-guard', after: ['hold-all'], handle: m => (block && /secret/.test(m.text) ? { action: 'deny', reason: 'leak' } : undefined) })
+  const sent = await fb.bot.send({ from: 'a', to: 'b', text: 'the secret' })
+  assert.equal(sent.action, 'hold')
+  const decided = await fb.approvals.decide(sent.approvalId, 'approve')
+  assert.equal(decided.status, 'denied')
+  assert.match(decided.error, /leak/)
+  assert.deepEqual(received('b'), [])
+  // A failed dispatch is listed and can be retried.
+  let down = true
+  fb.transports.add('bot-social', { send: async () => { if (down) throw new Error('offline'); return { exchangeId: 'r1' } } })
+  const remote = await fb.bot.send({ from: 'a', to: '@bob.bot', text: 'hi' })
+  const failed = await fb.approvals.decide(remote.approvalId, 'approve')
+  assert.equal(failed.status, 'failed')
+  assert.equal(fb.approvals.list({ status: ['pending', 'failed'] }).length, 1)
+  down = false
+  const retried = await fb.approvals.decide(remote.approvalId, 'retry')
+  assert.equal(retried.status, 'approved')
+  assert.equal(retried.exchangeId, 'r1')
+  // Text size and the number of pending holds are capped.
+  await assert.rejects(fb.bot.send({ from: 'a', to: 'b', text: 'x'.repeat(20_001) }), /at most/)
+  block = false
+  for (let i = 0; i < 100; i++) assert.equal((await fb.bot.send({ from: 'a', to: 'b', text: `m${i}` })).action, 'hold')
+  const over = await fb.bot.send({ from: 'a', to: 'b', text: 'one more' })
+  assert.equal(over.action, 'deny')
+  assert.match(over.reason, /already wait/)
+})

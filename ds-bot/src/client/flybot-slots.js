@@ -140,17 +140,21 @@ export function FlyBotApprovals() {
   const entries = useSlot('flybot.approvals')
   const [pending, setPending] = useState([])
   const [busy, setBusy] = useState('')
-  const refresh = () => call('approvals').then(list => setPending(Array.isArray(list) ? list : [])).catch(() => {})
+  const refresh = () => call('approvals', { status: ['pending', 'failed'] }).then(list => setPending(Array.isArray(list) ? list : [])).catch(() => {})
   useEffect(() => {
     void refresh()
     const timer = setInterval(refresh, POLL_MS)
     return () => clearInterval(timer)
   }, [])
   if (pending.length === 0) return null
+  const [error, setError] = useState('')
   const decide = async (id, decision) => {
     setBusy(id)
+    setError('')
     try {
       await call('decide', { id, decision })
+    } catch (failure) {
+      setError(failure?.message ?? String(failure))
     } finally {
       setBusy('')
       await refresh()
@@ -162,16 +166,18 @@ export function FlyBotApprovals() {
       if (custom) return h('div', { key: approval.id }, h(Safe, { entry: custom, props: { approval, decide: decision => decide(approval.id, decision), call } }))
       const to = typeof approval.request.to === 'object' ? approval.request.to.handle : approval.request.to
       return h('div', { key: approval.id, className: 'bt-flybot-approval' },
-        h('div', { className: 'bt-flybot-approval-head' }, `Message to ${to} · ${approval.reason}`),
+        h('div', { className: 'bt-flybot-approval-head' }, approval.status === 'failed' ? `Not sent to ${to} · ${approval.error ?? 'failed'}` : `Message to ${to} · ${approval.reason}`),
         h('div', { className: 'bt-flybot-approval-text' }, approval.request.text),
         approval.request.attachments?.length
           ? h('ul', { className: 'bt-flybot-approval-files', 'aria-label': 'Attached files' }, approval.request.attachments.map((file, index) =>
             h('li', { key: index, title: file.path ?? file.name }, `${file.name} · ${fileSize(file.size)}`, file.path ? h('div', { className: 'bt-flybot-approval-path' }, file.path) : null)))
           : null,
         h('div', { className: 'bt-flybot-approval-actions' },
-          h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'approve') }, 'Approve'),
-          h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'reject') }, 'Reject')))
-    }))
+          approval.status === 'failed' ? h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'retry') }, 'Retry') : null,
+          approval.status === 'failed' ? null : h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'approve') }, 'Approve'),
+          approval.status === 'failed' ? null : h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'reject') }, 'Reject')))
+    }),
+    error ? h('div', { className: 'bt-flybot-approval-error', role: 'alert' }, error) : null)
 }
 
 export const fileSize = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`)
