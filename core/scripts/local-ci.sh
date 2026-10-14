@@ -56,4 +56,4 @@ echo "=== $step ==="
 
 step="plugin tests (tree)"
 echo "=== $step ==="
-(cd plugins/tree && node --test "test/*.test.js")
+(cd ../plugins/tree && npm test)

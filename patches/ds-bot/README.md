@@ -16,7 +16,7 @@ FlyBot's core is **pristine upstream ds-bot plus this ordered patch series** (#3
 | `0003-flybot-api-client` | The browser `flybot` service and slots (`flybot-registry.js`, `flybot-slots.js`) and their render sites |
 | `0004-flybot-api-types` | `types/flybot.d.ts`, the plugin contract (host and browser) |
 | `0005-social-seams` | Remote chats and the transport/delivery seams that `@flybot/social` uses |
-| `0006-flybot-plugins` | `plugins/social`, `plugins/tree` and their test runners (moves to the repo root in PR 2) |
+| `0006-flybot-plugins` | `plugins/social` and its test runner (moves to the repo root in PR 2; `@flybot/tree` already lives at repo-root `plugins/tree`) |
 | `0007-version-and-tooling` | Version `0.1.5-flybot.1`, `package.json`/lockfile, `scripts/local-ci.sh` |
 | `0008-client-bundle` | The generated `client.js` (rebuild with `npm run build` in `core/`) |
 

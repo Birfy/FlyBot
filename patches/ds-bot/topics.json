@@ -54,8 +54,6 @@
   "0006-flybot-plugins": [
     "plugins/",
     "test/social-plugin.test.js",
-    "test/tree-plugin.test.js",
-    "test/tree-host.test.js",
     "scripts/lint.mjs"
   ],
   "0007-version-and-tooling": [

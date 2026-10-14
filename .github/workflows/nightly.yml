@@ -107,8 +107,8 @@ jobs:
         working-directory: core/plugins/social
         run: node --import ../../test/harness-resolve.mjs --test "test/*.test.js"
       - name: Plugin tests (tree)
-        working-directory: core/plugins/tree
-        run: node --test "test/*.test.js"
+        working-directory: plugins/tree
+        run: npm test
 
   weekly:
     name: compat · ${{ matrix.os }} · Node ${{ matrix.node }} · DSH ${{ matrix.dsh }}
@@ -152,5 +152,5 @@ jobs:
         working-directory: core/plugins/social
         run: node --import ../../test/harness-resolve.mjs --test "test/*.test.js"
       - name: Plugin tests (tree)
-        working-directory: core/plugins/tree
-        run: node --test "test/*.test.js"
+        working-directory: plugins/tree
+        run: npm test

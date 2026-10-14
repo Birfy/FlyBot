@@ -26,7 +26,7 @@ function loadClient(dir) {
   return modules
 }
 
-test('the social and tree web entries activate under real Cordis once ds-bot provides flybot', async (t) => {
+test('the social web entry activate under real Cordis once ds-bot provides flybot', async (t) => {
   const cordis = await loadCordis()
   if (!cordis) return t.skip('Cordis 4 not installed (set CORDIS_PATH or install the DSH harness)')
   const registry = createRegistry()
@@ -34,8 +34,8 @@ test('the social and tree web entries activate under real Cordis once ds-bot pro
   t.after(() => { delete globalThis.__flybot__ })
   const root = new cordis.Context()
   const failures = []
-  const plugins = [...loadClient('plugins/social'), ...loadClient('plugins/tree')]
-  assert.deepEqual(plugins.map(([id]) => id), ['@flybot/social', '@flybot/tree'])
+  const plugins = [...loadClient('plugins/social')] // @flybot/tree tests its own web entry (repo-root plugins/tree, #34)
+  assert.deepEqual(plugins.map(([id]) => id), ['@flybot/social'])
   for (const [id, mod] of plugins) {
     root.plugin({ name: id, inject: mod.inject, apply: (ctx) => { try { return mod.apply(ctx) } catch (error) { failures.push([id, error.message]); throw error } } })
   }
@@ -44,9 +44,5 @@ test('the social and tree web entries activate under real Cordis once ds-bot pro
   root.plugin({ name: 'ds-bot', apply: ctx => ctx.provide('flybot', flybot) })
   await new Promise(resolve => setTimeout(resolve, 100))
   assert.deepEqual(failures, [])
-  // The tree is drawn by ds-bot's Bot list: tree registers no separate section by default,
-  // but it activated and exposed its synchronous helper.
   assert.deepEqual(registry.entries('flybot.sidebar.section').map(entry => entry.id).sort(), ['social'])
-  assert.equal(typeof flybot.tree?.forest, 'function')
-  assert.equal(typeof globalThis.__flybot__.tree?.forest, 'function')
 })

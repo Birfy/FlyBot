@@ -54,7 +54,7 @@ DSH keeps plugins per profile, under `$DSH_HOME/profiles/<name>` (`~/.dsh/profil
 ```sh
 npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core"
 npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core/plugins/social"
-npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core/plugins/tree"
+npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/plugins/tree"
 ```
 
 The first line is FlyBot itself (package `ds-bot`); the plugins are optional. Each one is added
@@ -264,8 +264,8 @@ plugins never patch it.
   `flybot.bot.details`, `flybot.approvals` (`core/src/client/flybot-slots.js`). Each
   plugin component renders inside an error boundary.
 - Types: `core/types/flybot.d.ts`.
-- Plugins (`core/plugins/`): `social` (friends' Bots via Bot Social) and `tree`
-  (recursive Bot tree, maintained by recursive-bot).
+- Plugins: `core/plugins/social` (friends' Bots via Bot Social) and repo-root `plugins/tree`
+  (recursive Bot tree, maintained by recursive-bot; own `npm test` against `core/`).
 
 CI (`.github/workflows/test.yml`) runs ds-bot's tests, which include every plugin's tests,
 plus the client build check and lint.

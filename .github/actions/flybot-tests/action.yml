@@ -42,8 +42,8 @@ runs:
       shell: bash
       working-directory: core
       run: node scripts/build-client.mjs --check
-    # ds-bot's suite (incl. tree-host / tree-plugin / bot-tree: the tree plugin on a real
-    # ds-bot), then each plugin's own suite (social; tree's test/tree.test.js).
+    # ds-bot's suite (incl. bot-tree: the public flybot.sidebar.structure slot), then each
+    # plugin's own suite (social; tree at repo-root plugins/tree, incl. its host test on core/).
     - name: Unit tests
       if: inputs.coverage != 'true'
       shell: bash
@@ -57,8 +57,8 @@ runs:
     - name: Plugin tests (tree)
       if: inputs.coverage != 'true'
       shell: bash
-      working-directory: core/plugins/tree
-      run: node --test "test/*.test.js"
+      working-directory: plugins/tree
+      run: npm test
     # The same three suites in one run, so coverage spans ds-bot and both plugins.
     - name: Unit and plugin tests with coverage
       if: inputs.coverage == 'true'
@@ -69,10 +69,10 @@ runs:
         DSH: ${{ inputs.dsh }}
       run: |
         set -o pipefail
-        node --import ./test/harness-resolve.mjs --test --experimental-test-coverage \
+        node --import ./test/harness-resolve.mjs --import ../plugins/tree/test/resolve.mjs --test --experimental-test-coverage \
           --test-reporter=spec --test-reporter-destination=stdout \
           --test-reporter=lcov --test-reporter-destination=lcov.info \
-          "test/*.test.js" "plugins/social/test/*.test.js" "plugins/tree/test/*.test.js" | tee test-output.txt
+          "test/*.test.js" "plugins/social/test/*.test.js" "../plugins/tree/test/*.test.js" | tee test-output.txt
         {
           echo "### Coverage: ds-bot + social + tree (Node $NODE_V, DSH $DSH)"
           echo '```'
