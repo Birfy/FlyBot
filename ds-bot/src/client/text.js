@@ -64,7 +64,7 @@ export function reminderPrompts(text) {
 export const stripHeader = text => text.replace(HEADER, '')
 // A reply's leading delegation trace ("Chief → 助手", "user → 助手"): routing the tree
 // prompt asks for, not content. Display only; the model's own text is unchanged.
-const TRACE = /^[ \t]*[^\n→]{1,60}(?:[ \t]*→[ \t]*[^\n→]{1,60})+[ \t]*(?:\n+|$)/
+const TRACE = /^[ \t]*[^\n→]{1,60}(?:[ \t]*→[ \t]*[^\n→]{1,60})+[ \t]*\n+/
 export function stripTrace(text) {
   if (typeof text !== 'string') return text
   const line = text.match(TRACE)?.[0]
@@ -216,7 +216,8 @@ export function previewOf(list, id, hiddenTurns = []) {
     const entry = outline[index]
     if (hiddenTurns.includes(entry.turn)) continue
     const text = entry.response || entry.prompt || ''
-    if (text !== '') return stripTrace(stripHeader(text)).replace(/\s+/g, ' ').trim()
+    // The outline flattens a reply to one line, so its trace ends at a space there.
+    if (text !== '') return stripTrace(stripHeader(text)).replace(/\s+/g, ' ').trim().replace(/^[^\s→]{1,40}(?: → [^\s→]{1,40})+ (?=\S)/, '')
   }
   return ''
 }

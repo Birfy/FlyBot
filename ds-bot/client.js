@@ -1796,7 +1796,7 @@ function reminderPrompts(text) {
   }
 }
 var stripHeader = (text) => text.replace(HEADER, "");
-var TRACE = /^[ \t]*[^\n→]{1,60}(?:[ \t]*→[ \t]*[^\n→]{1,60})+[ \t]*(?:\n+|$)/;
+var TRACE = /^[ \t]*[^\n→]{1,60}(?:[ \t]*→[ \t]*[^\n→]{1,60})+[ \t]*\n+/;
 function stripTrace(text) {
   if (typeof text !== "string") return text;
   const line = text.match(TRACE)?.[0];
@@ -1913,7 +1913,7 @@ function previewOf(list, id, hiddenTurns = []) {
     const entry = outline[index];
     if (hiddenTurns.includes(entry.turn)) continue;
     const text = entry.response || entry.prompt || "";
-    if (text !== "") return stripTrace(stripHeader(text)).replace(/\s+/g, " ").trim();
+    if (text !== "") return stripTrace(stripHeader(text)).replace(/\s+/g, " ").trim().replace(/^[^\s→]{1,40}(?: → [^\s→]{1,40})+ (?=\S)/, "");
   }
   return "";
 }

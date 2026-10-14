@@ -31,7 +31,7 @@ test('a reply opening with a delegation trace shows without it', () => {
   assert.equal(stripTrace('Chief → 助手\n\nHi Chief! Good to hear from you.'), 'Hi Chief! Good to hear from you.')
   assert.equal(stripTrace('user → 助手\nHi!'), 'Hi!')
   assert.equal(stripTrace('Chief → 程序员 → 后端\n\nDone.'), 'Done.')
-  assert.equal(stripTrace('Chief → 助手'), '')
+  assert.equal(stripTrace('Use Settings → Models first'), 'Use Settings → Models first')
 })
 
 test('ordinary text that merely mentions an arrow is left alone', () => {
@@ -42,8 +42,12 @@ test('ordinary text that merely mentions an arrow is left alone', () => {
 })
 
 test('the sidebar preview drops the trace too', () => {
-  const list = { byId: { s: { projectionValues: { turnOutline: [{ turn: 1, prompt: 'hi', response: 'Chief → 助手 Hi there' }, { turn: 2, prompt: '', response: 'Chief → 助手\n\nHi Chief!' }] } } } }
+  const list = { byId: { s: { projectionValues: { turnOutline: [{ turn: 2, prompt: '', response: 'Chief → 助手\n\nHi Chief!' }] } } } }
   assert.equal(previewOf(list, 's'), 'Hi Chief!')
+  const flat = { byId: { s: { projectionValues: { turnOutline: [{ turn: 1, prompt: '', response: 'Chief → 助手 Hi! Message received.' }] } } } }
+  assert.equal(previewOf(flat, 's'), 'Hi! Message received.')
+  const plain = { byId: { s: { projectionValues: { turnOutline: [{ turn: 1, prompt: '', response: 'Use Settings → Models first' }] } } } }
+  assert.equal(previewOf(plain, 's'), 'Use Settings → Models first')
 })
 
 test("an inbound friend's message uses the friend's sidebar Bot (avatar, name), else a stable look from its handle", () => {
