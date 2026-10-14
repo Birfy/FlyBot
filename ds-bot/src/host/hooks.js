@@ -154,9 +154,20 @@ export function install(rt) {
     rt.deleteBot = async (id, ...rest) => {
       // Fires after removal; the payload keeps the Bot's last record, fields included.
       const last = view(rt.botOf(id))
-      const remoteChat = rt.botOf(id)?.remote !== undefined
+      const remote = rt.botOf(id)?.remote
+      const remoteChat = remote !== undefined
       const result = await deleteBot(id, ...rest)
       if (!remoteChat) fire('bot.removed', { ...last, botId: id, bot: last })
+      // Deleting a friend's Bot's chat clears it; the friend's Bot is still there, so it gets a
+      // fresh, empty chat at once. Otherwise its row waits ("opening its chat…") until the
+      // plugin next publishes its roster, which may be hours or the next restart.
+      else if (typeof remote?.handle === 'string' && typeof remote.plugin === 'string') {
+        const published = (state.flybot?.remote?.[remote.plugin] ?? []).find(bot => bot.handle === remote.handle)
+        if (published !== undefined) {
+          await rt.remoteChats?.open({ handle: published.handle, name: published.name, home: published.home, homeName: published.homeName, plugin: remote.plugin })
+            .catch(error => warn('flybot: chat for %s not reopened: %s', remote.handle, error))
+        }
+      }
       return result
     }
   }
