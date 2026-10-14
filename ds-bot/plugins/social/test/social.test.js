@@ -102,7 +102,14 @@ async function team() {
   await tool('list_bots', {}, 'a')
   const stop = async () => {
     await ctx.dispose()
-    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+    // A plugin disposed after this hook (t.after runs in order) may still be writing its
+    // settings or cache into home: retry until the directory stays empty.
+    for (let attempt = 0; ; attempt++) {
+      try { rmSync(home, { recursive: true, force: true, maxRetries: 5 }); return } catch (error) {
+        if (error?.code !== 'ENOTEMPTY' || attempt >= 20) throw error
+        await new Promise(resolve => setTimeout(resolve, 25))
+      }
+    }
   }
   const call = async (endpoint, payload) => (await ctx.__route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   return { ctx, tool, call, received, home, stop }
@@ -638,4 +645,23 @@ test('a name whose handle another local Bot holds registers with its own suffixe
   await settle()
   assert.equal(fields.get('a', 'member').bot_id, 'm0')
   assert.notEqual(fields.get('b', 'member').bot_id, 'm0')
+})
+
+test('a friendship made after Auto-accept was turned on gets server auto-approve once', async (t) => {
+  const { ctx, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  server.tools.set_auto_approve = a => (a.confirm_code === undefined ? { status: 'confirmation_required', confirm_code: 'C0DE03' } : { relationship_id: a.relationship_id, auto_approve_chat: a.auto_approve_chat })
+  const settingsPath = join(home, 'flybot-social-settings.json')
+  writeFileSync(settingsPath, JSON.stringify({ autoAccept: { '@bob.home': true }, via: {} }))
+  const social = await startSocial(ctx.flybot, { server: 'https://social.test', credentialsPath: join(home, 'flybot-social.json'), settingsPath, fetch: server.fetch, inboxPollMs: 0 })
+  t.after(() => social.dispose())
+  // A friend joins another Bot's invite: a new relationship shows up in the roster.
+  server.tools.list_remote_bots = () => ({ homes: [{ relationship_ids: ['r1', 'r7'], home: { bot_id: 'h2', handle: '@bob.home', display_name: 'Bob' }, bots: [{ bot_id: 'x1', handle: '@coder.bob.home', display_name: 'Coder' }] }] })
+  await social.remoteBots({ fresh: true })
+  await settle()
+  await social.remoteBots({ fresh: true })
+  await settle()
+  const confirmed = server.calls.filter(c => c.name === 'set_auto_approve' && c.args.confirm_code === 'C0DE03')
+  assert.deepEqual(confirmed.map(c => [c.args.relationship_id, c.args.auto_approve_chat]), [['r1', true], ['r7', true]])
 })
