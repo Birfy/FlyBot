@@ -335,7 +335,7 @@ export function install(rt) {
   }
 
   // An exact Fetch route on the shared /api channel; the browser authenticates with its session cookie.
-  ctx.effect(() => ctx.connection.fetch.register({
+  const route = {
     path: ROUTE,
     methods: ['POST'],
     requestBody: 'buffered',
@@ -345,10 +345,41 @@ export function install(rt) {
       const result = await handle(String(body?.endpoint ?? ''), body?.payload, request.signal)
       return new Response(JSON.stringify(result), { status: 200, headers: { 'content-type': 'application/json' } })
     },
-  }), 'ds-bot: api route')
-
+  }
+  ctx.effect(() => registerRoute(ctx, route, rt.warn), 'ds-bot: api route')
   ctx.effect(() => {
     void rt.load()
     return () => {}
   }, 'ds-bot: load state')
+}
+
+// Registers the exact Fetch route, surviving a hot reload. When the plugin manager reloads
+// ds-bot in a running DSH, the new instance can start before the old one is disposed; the
+// connection then refuses the duplicate path ("already registered") and that refusal used to
+// fail the whole apply, so once the old instance went away nothing served /api/bot and every
+// browser call (Friends' Bots "Create invite link" included) got HTTP 404 until a restart.
+// Here a taken path is retried until the old owner lets go.
+export function registerRoute(ctx, route, warn = () => {}, { every = 100, tries = 600 } = {}) {
+  let dispose
+  let timer
+  let stopped = false
+  const attempt = (left) => {
+    if (stopped) return
+    try {
+      dispose = ctx.connection.fetch.register(route)
+    } catch (error) {
+      if (!/already registered/i.test(String(error?.message ?? error)) || left <= 0) throw error
+      if (left === tries) warn('ds-bot: %s is still held by the previous instance; waiting for it', route.path)
+      timer = setTimeout(() => {
+        try { attempt(left - 1) } catch (failure) { warn('ds-bot: could not register %s: %s', route.path, failure) }
+      }, every)
+      timer.unref?.()
+    }
+  }
+  attempt(tries)
+  return () => {
+    stopped = true
+    clearTimeout(timer)
+    dispose?.()
+  }
 }
