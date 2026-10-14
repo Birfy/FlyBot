@@ -102,7 +102,14 @@ async function team() {
   await tool('list_bots', {}, 'a')
   const stop = async () => {
     await ctx.dispose()
-    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+    // A plugin disposed after this hook (t.after runs in order) may still be writing its
+    // settings or cache into home: retry until the directory stays empty.
+    for (let attempt = 0; ; attempt++) {
+      try { rmSync(home, { recursive: true, force: true, maxRetries: 5 }); return } catch (error) {
+        if (error?.code !== 'ENOTEMPTY' || attempt >= 20) throw error
+        await new Promise(resolve => setTimeout(resolve, 25))
+      }
+    }
   }
   const call = async (endpoint, payload) => (await ctx.__route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   return { ctx, tool, call, received, home, stop }
