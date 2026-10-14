@@ -118,7 +118,11 @@ export function install(rt) {
       const toUser = args.reply_to === 'user'
       const working = rt.live.get(chat)?.turn !== undefined
       const steer = args.when !== 'queue' && !toUser
-      await rt.deliver({ fromId: sender.id, toId: target.id, text: args.message, role: 'request', hop, steer, ...(toUser ? { audience: 'user' } : callerRoom(exec)) })
+      const exchangeId = await rt.deliver({ fromId: sender.id, toId: target.id, text: args.message, role: 'request', hop, steer, ...(toUser ? { audience: 'user' } : callerRoom(exec)) })
+      // FlyBot send policies (flybot.js) may hold the message for the owner or refuse it.
+      const outcome = rt.flybot?.outcomeOf(exchangeId)
+      if (outcome?.action === 'deny') refuse(`Not sent to ${target.name}: ${outcome.reason}`)
+      if (outcome?.action === 'hold') return `Held for the user's approval before it reaches ${target.name} (${outcome.reason}). Do not resend; it is delivered once the user approves.`
       const sent = toUser
         ? `Delivered to ${target.name}. It will answer the user in its own chat; nothing comes back to you, so point the user to ${target.name}'s chat instead of relaying.`
         : working && steer

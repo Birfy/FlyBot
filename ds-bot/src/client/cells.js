@@ -8,6 +8,7 @@ import { colorOf, toolState, BotMark, RoomAvatar } from './mark.js'
 import { AnsweredCell, SettledQuestion, PendingQuestion } from './questions.js'
 import { SecretToolCell } from './secret-card.js'
 import { dateLocale, t } from './i18n.js'
+import { remoteMessageText } from './flybot-registry.js'
 import { failureLabel } from './diagnostics.js'
 import { turnReasoning } from './turn-reasoning.js'
 
@@ -180,6 +181,18 @@ function GroupMessage({ bot, text, room, roster, actions, msgKey, useUi }) {
     h(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room?.id, msgKey, useUi, lead }))
 }
 
+// A friend's remote Bot speaking in this chat: its own bubble with a remote badge. The
+// words are shown as data; the Bot reading them still gets them fenced as untrusted.
+function RemoteMessage({ source, text, roster, actions, sessionId, msgKey, useUi }) {
+  const member = (roster.remoteBots ?? []).find(bot => bot.handle === source.remote.handle)
+  const bot = { id: `remote:${source.remote.handle}`, name: member?.name ?? source.senderName ?? source.remote.handle, color: 'gray' }
+  const lead = h('span', { className: 'bt-lead', title: source.remote.handle }, h(BotMark, { bot, size: 22 }))
+  return h('div', { className: 'bt-group-msg bt-remote-msg', 'data-remote': source.remote.handle },
+    h('span', { className: 'bt-group-name' }, bot.name,
+      h('span', { className: 'bt-group-role bt-remote-badge', title: source.remote.home ?? source.remote.handle }, 'remote')),
+    h(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead }))
+}
+
 // A centered event line that names a group chat and opens it.
 function GroupEvent({ prefix, room, name, roster, actions }) {
   return h('div', { className: 'bt-event' },
@@ -331,6 +344,9 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
     : body
 
   function triggerBody() {
+    if (source.remote?.handle) {
+      return h(RemoteMessage, { source, text: remoteMessageText(stripHeader(contentText(data.content))), roster, actions, sessionId, msgKey: `${sessionId}:${data.turn}:remote`, useUi })
+    }
     if (source.kind === 'bot') {
       // A part opens with its handoff package, so the earlier parts go right above it.
       if (source.handoff === true) return roster.roomsById[sessionId] ? null : h(EarlierParts, { sessionId, roster, actions })

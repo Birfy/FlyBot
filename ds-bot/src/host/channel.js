@@ -47,6 +47,8 @@ export function install(rt) {
     }),
     exchangeTurns: state.exchangeTurns,
     questions: state.questions,
+    // FlyBot: friends' remote Bots, chat members with a remote badge (not team Bots).
+    remoteBots: rt.flybotRemoteMembers?.() ?? [],
     // The team's DSH Agent (at most one): plain dsh Sessions, not Bots.
     agents: Object.values(state.agents),
     // Key names and who may use them; values never leave the host.
@@ -320,6 +322,8 @@ export function install(rt) {
           await rt.diagnostics.clear()
           return ok(true)
         default:
+          // FlyBot plugins' endpoints (src/host/flybot.js).
+          if (endpoint.startsWith('flybot/')) return ok(await rt.flybotEndpoint(endpoint.slice('flybot/'.length), body))
           return fail(`Unknown endpoint ${endpoint}`, 'bot/not-found')
       }
     } catch (error) {
