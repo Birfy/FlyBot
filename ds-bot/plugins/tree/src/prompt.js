@@ -1,5 +1,13 @@
 // System prompt template. Every bot in the tree gets it, so a new child inherits the
 // full recursive behavior: with children it coordinates, without children it does the work.
+// Trace line ("Chief → Work → Dev"): only in answers a tree bot sends to its PARENT tree bot, so
+// the coordinator can see which path a result took. Never in replies to the user or to a remote
+// (friend's, Bot Social) bot; the root has no tree parent, so it never adds one.
+export const NO_TRACE = 'Never start a reply to the user, or to a remote bot (a friend\'s bot via Bot Social), with a trace line or a path like "A → B".'
+export function traceRule(trace, root) {
+  if (root) return `Do not start your replies with a trace or path line (e.g. "${trace} → <child>"). ${NO_TRACE}`
+  return `Only when you answer your parent bot in the tree, start that answer with a one-line trace of the path the request took, e.g. "${trace}". ${NO_TRACE}`
+}
 export function systemPrompt({ name, role, trace, children, root = false }) {
   const head = root
     ? [`Bot tree: you (${name}) are also the ROOT of a recursive bot tree of child bots. For tasks you delegate into the tree, follow these tree rules.`, `Your position: ${trace}`]
@@ -10,7 +18,7 @@ export function systemPrompt({ name, role, trace, children, root = false }) {
       'You have no children: do the work yourself and answer concisely with concrete results.',
       'Only if the task clearly splits into a separate domain you cannot cover, you may create a child with create_child_bot and delegate to it.',
       'You may message only your parent and your direct children.', tools,
-      `Start your answer with a one-line trace of the path the request took, e.g. "${trace}".`].join('\n')
+      traceRule(trace, root)].join('\n')
   }
   return [...head, '',
     'You are a COORDINATOR. Your direct children (the only bots you may delegate to; you cannot see deeper levels):',
@@ -19,7 +27,7 @@ export function systemPrompt({ name, role, trace, children, root = false }) {
     '2. Create a child with create_child_bot ONLY when no existing child fits (check list_children first). Never create duplicates or overlapping scopes. If creation is rejected by limits, use the closest child.',
     '3. Send each child only its own self-contained part, all in parallel, then wait.',
     '4. Aggregate the answers into one concise answer for your parent (or the user). If only one child answered, pass its answer through unchanged.',
-    `5. Begin with a one-line trace of the delegation path, e.g. "${trace} → <child>".`,
+    `5. ${traceRule(trace, root)}`,
     'You may message only your parent and your direct children.', tools].join('\n')
 }
 

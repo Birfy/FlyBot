@@ -749,3 +749,22 @@ test('issue 6: concurrent ensureRoot() calls create a single root', async () => 
   assert.equal(new Set(ids).size, 1)
   assert.equal(m.flybot.bot.list().filter(b => b.name === 'Root').length, 1)
 })
+
+test('trace line: only in answers to the parent tree bot; never to the user or remote bots; root never', async () => {
+  const { systemPrompt } = await import('../src/prompt.js')
+  const leaf = systemPrompt({ name: 'Dev', role: 'code', trace: 'Chief → Work → Dev', children: [] })
+  const mid = systemPrompt({ name: 'Work', role: 'w', trace: 'Chief → Work', children: [{ name: 'Dev', role: 'code' }] })
+  const root = systemPrompt({ name: 'Chief', role: 'root', trace: 'Chief', children: [{ name: 'Work', role: 'w' }], root: true })
+  for (const p of [leaf, mid, root]) {
+    assert.doesNotMatch(p, /^(Start your answer|Begin with)/m)
+    assert.match(p, /Never start a reply to the user, or to a remote bot/)
+  }
+  assert.match(leaf, /Only when you answer your parent bot in the tree, start that answer with a one-line trace[^\n]*"Chief → Work → Dev"/)
+  assert.match(mid, /Only when you answer your parent bot in the tree/)
+  assert.match(root, /Do not start your replies with a trace/)
+  assert.doesNotMatch(root, /Only when you answer your parent/)
+  const m = await setup()
+  const work = await make(m, m.root, 'Work')
+  assert.match(sp(m, m.root), /Do not start your replies with a trace/)
+  assert.match(sp(m, work), /Only when you answer your parent bot/)
+})
