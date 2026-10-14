@@ -13606,7 +13606,9 @@ function apply(ctx) {
   const flybot = createClientApi2();
   globalThis.__flybot__.api = flybot;
   try {
-    if (typeof ctx.set === "function") ctx.set("flybot", flybot);
+    if (typeof ctx.provide === "function") ctx.provide("flybot", flybot);
+    else if (typeof ctx.reflect?.provide === "function") ctx.reflect.provide("flybot", flybot);
+    else if (typeof ctx.set === "function") ctx.set("flybot", flybot);
   } catch {
   }
   ctx.effect(() => installLocale(ctx.get("locale")), "ds-bot: interface copy");

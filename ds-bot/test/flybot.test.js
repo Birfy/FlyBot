@@ -249,3 +249,17 @@ test('tools.register accepts a JSON Schema object for parameters', async (t) => 
   fb.tools.register({ name: 'echo', description: 'x', parameters: { type: 'object', properties: { word: { type: 'string', maxLength: 10 } }, required: ['word'], additionalProperties: false }, execute: ({ word }) => word })
   assert.equal(await tool('echo', { word: 'hi' }, 'a'), 'hi')
 })
+
+test('the flybot service is provided the Cordis 4 way: provide first, never a bare set', async () => {
+  const { provideFlyBot } = await import('../index.js')
+  const provided = []
+  const strict = { provide: (name, value) => provided.push([name, value]), set() { throw new Error('cannot set property "flybot" without provide') } }
+  provideFlyBot(strict, { version: 1 })
+  assert.deepEqual(provided, [['flybot', { version: 1 }]])
+  const viaReflect = { reflect: { provide: (name, value) => provided.push([name, value]) } }
+  provideFlyBot(viaReflect, { version: 2 })
+  assert.deepEqual(provided.at(-1), ['flybot', { version: 2 }])
+  const plain = {}
+  provideFlyBot(plain, { version: 3 })
+  assert.deepEqual(plain.flybot, { version: 3 })
+})

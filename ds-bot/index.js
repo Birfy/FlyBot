@@ -49,9 +49,15 @@ export function apply(ctx, config = {}) {
   provideFlyBot(ctx, rt.flybot)
 }
 
-// Registers rt.flybot as the Cordis service `flybot` where the context supports it
-// (ctx.set), else leaves it on ctx directly for plain test contexts.
+// Registers rt.flybot as the Cordis service `flybot`: ctx.provide where the context has it
+// (Cordis 4 requires a provide before a service exists), else ctx.set, else a plain
+// property for test contexts.
 export function provideFlyBot(ctx, flybot) {
+  const provide = typeof ctx.provide === 'function' ? ctx.provide.bind(ctx) : typeof ctx.reflect?.provide === 'function' ? ctx.reflect.provide.bind(ctx.reflect) : undefined
+  if (provide) {
+    provide('flybot', flybot)
+    return
+  }
   if (typeof ctx.set === 'function') {
     try {
       ctx.set('flybot', flybot)
