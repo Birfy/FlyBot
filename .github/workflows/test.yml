@@ -2,7 +2,7 @@ name: Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, flybot-plugins]
   pull_request:
 
 permissions:
@@ -33,9 +33,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: ds-bot/package-lock.json
       - run: npm ci --no-fund --no-audit
       - name: Install DSH ${{ matrix.dsh }}
         run: npm run harness -- --no-save "@deepseek-ai/dsh@${{ matrix.dsh }}"
       - run: npm test
-      - run: node scripts/build-client.mjs --check
+      - name: Build (client bundle is up to date)
+        run: node scripts/build-client.mjs --check
       - run: npm run lint
