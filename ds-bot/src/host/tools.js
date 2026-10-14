@@ -46,7 +46,7 @@ export function install(rt) {
     async execute(_args, exec) {
       await rt.load()
       const self = rt.selfOf(exec.agent?.id)
-      const lines = Object.values(state.bots).map(bot => {
+      const lines = Object.values(state.bots).filter(bot => bot.remote === undefined).map(bot => {
         const model = bot.appliedModel ?? bot.model
         const tags = [bot.role, model ? `model ${model}` : '', bot.workDir ? `works in ${bot.workDir}` : '', rt.isMain(bot.id) ? 'Main Bot' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
         const job = bot.instructions ? ` — ${bot.instructions.split('\n')[0].slice(0, 120)}` : ''
@@ -105,7 +105,7 @@ export function install(rt) {
       const sender = callerBot(exec)
       if (sender === undefined) return 'Only Bots on the team can use message_bot.'
       const target = rt.findBot(args.to)
-      if (target === undefined) return `No Bot named ${args.to}. Team: ${Object.values(state.bots).map(bot => bot.name).join(', ')}`
+      if (target === undefined) return `No Bot named ${args.to}. Team: ${Object.values(state.bots).filter(bot => bot.remote === undefined).map(bot => bot.name).join(', ')}`
       if (target.id === sender.id) return 'You cannot message yourself.'
       const turn = rt.live.get(exec.agent?.id)
       const hop = Math.max(turn?.info?.hop ?? 0, ...(turn?.joined ?? []).map(joined => joined.info?.hop ?? 0))
@@ -157,7 +157,7 @@ export function install(rt) {
       const sender = callerBot(exec)
       if (sender === undefined || !rt.isMain(sender.id)) refuse('Only a Main Bot can stop other Bots.')
       const target = rt.findBot(args.bot)
-      if (target === undefined) refuse(`No Bot named ${args.bot}. Team: ${Object.values(state.bots).map(bot => bot.name).join(', ')}`)
+      if (target === undefined) refuse(`No Bot named ${args.bot}. Team: ${Object.values(state.bots).filter(bot => bot.remote === undefined).map(bot => bot.name).join(', ')}`)
       if (target.id === sender.id) refuse('You cannot stop yourself.')
       const { running } = activeSessions(target.id)
       if (running.length === 0) refuse(`${target.name} is not running right now, so there is nothing to stop. Use message_bot to reach it.`)
@@ -261,7 +261,7 @@ export function install(rt) {
     }
     return { bots, unknown }
   }
-  const teamNames = () => Object.values(state.bots).map(bot => bot.name).join(', ')
+  const teamNames = () => Object.values(state.bots).filter(bot => bot.remote === undefined).map(bot => bot.name).join(', ')
   const groupNames = self => visibleRooms(self).map(room => `"${room.name}"`).join(', ') || 'none'
   const pickRoom = (ref, self) => {
     const matches = rt.findRooms(ref).filter(room => visibleRooms(self).includes(room))

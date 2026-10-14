@@ -68,7 +68,9 @@ export function install(rt) {
   // The profile default model of DSH, when it is served; else the first served model.
   function pickDefault(entries) {
     const ref = defaultRef()
-    return entries.find(entry => entry.ref === ref)?.ref ?? entries[0]?.ref
+    // A friend's Bot's route (remote-chat.js) is never anyone's default model.
+    const models = entries.filter(entry => entry.provider !== 'flybot-remote')
+    return models.find(entry => entry.ref === ref)?.ref ?? models[0]?.ref
   }
   const defaultModel = async () => pickDefault(await catalog())
 

@@ -56,7 +56,8 @@ export function install(rt) {
     capabilities: rt.capabilityLibraryView(),
     secretRequests: state.secretRequests ?? {},
     colors: [...COLORS, ...EXTRA_COLORS],
-    models: rt.cachedCatalog(),
+    // Friends' Bots' routes are no model a Bot can pick.
+    models: rt.cachedCatalog().filter(entry => entry.provider !== 'flybot-remote'),
     defaultModel: rt.cachedDefault() ?? null,
     permissions: rt.permissionCatalog?.() ?? null,
     modelsKey: modelsKey(),

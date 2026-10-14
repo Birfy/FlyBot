@@ -54,6 +54,8 @@ const ZH = {
   // Sidebar and account menu
   'Bot list': 'Bot 列表',
   'Bot tree': 'Bot 树',
+  'no longer shared': '已不再共享',
+  "Friend's Bot": '好友的 Bot',
   'Expand': '展开',
   'Collapse': '收起',
   'Setting up your Main Bot…': '正在设置你的主 Bot…',

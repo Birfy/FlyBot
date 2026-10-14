@@ -376,6 +376,8 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
     : body
 
   function triggerBody() {
+    // A friend's message in its remote chat: the reply below shows it (remote-chat.js).
+    if (source.form === 'remote-chat') return null
     if (source.remote?.handle) {
       return h(RemoteMessage, { source, text: remoteMessageText(stripHeader(contentText(data.content))), roster, actions, sessionId, msgKey: `${sessionId}:${data.turn}:remote`, useUi })
     }

@@ -90,6 +90,8 @@ var ZH = {
   // Sidebar and account menu
   "Bot list": "Bot 列表",
   "Bot tree": "Bot 树",
+  "no longer shared": "已不再共享",
+  "Friend's Bot": "好友的 Bot",
   "Expand": "展开",
   "Collapse": "收起",
   "Setting up your Main Bot…": "正在设置你的主 Bot…",
@@ -1359,13 +1361,14 @@ function RemoteCompose({ bot, roster, onDone }) {
 function useSidebarStructure() {
   return useSlot("flybot.sidebar.structure")[0];
 }
-function FlyBotSections({ roster, actions }) {
+function FlyBotSections({ roster, actions, renderBot }) {
   const shell = (actions.flybotSlotEntries?.("flybot.sidebar.section") ?? []).map((entry, index) => ({ id: entry.id ?? `slot-${index}`, order: entry.order ?? 0, component: entry.component }));
   const entries2 = [...useSlot("flybot.sidebar.section"), ...shell].sort((a, b) => a.order - b.order);
-  return (0, import_react.createElement)(import_react.Fragment, null, (0, import_react.createElement)(RemoteMembers, { roster }), entries2.map((entry) => (0, import_react.createElement)(
+  const remoteChats = (roster.bots ?? []).filter((bot) => bot.remote);
+  return (0, import_react.createElement)(import_react.Fragment, null, entries2.map((entry) => (0, import_react.createElement)(
     "div",
     { key: entry.id, className: "bt-flybot-section", "data-flybot": entry.id },
-    (0, import_react.createElement)(Safe, { entry, props: { roster, actions, call: call2 } })
+    (0, import_react.createElement)(Safe, { entry, props: { roster, actions, call: call2, renderBot, remoteChats } })
   )));
 }
 function FlyBotDetails({ bot, roster }) {
@@ -2299,6 +2302,7 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-row-body{display:flex;flex-direction:column;min-width:0;flex:1 1 auto}
 .bt-row-name{display:flex;align-items:center;gap:6px;min-width:0;font-size:14px;line-height:20px;font-weight:400}
 .bt-row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-row-remote{flex:none;display:inline-flex;align-items:center;color:var(--bt-ink-3,rgba(20,20,20,.36))}
 .bt-tag{flex:none;max-width:96px;font-size:12px;line-height:16px;font-weight:400;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-row-preview{font-size:13px;line-height:18px;color:var(--bt-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-unread{width:8px;height:8px;border-radius:50%;background:#1084fe;flex:none;margin-right:2px;animation:bt-fade .13s cubic-bezier(.22,1,.36,1)}
@@ -4534,6 +4538,7 @@ function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnClock, us
   const body = triggerBody();
   return unreadOpening ? (0, import_react7.createElement)(import_react7.Fragment, null, (0, import_react7.createElement)("div", { className: "bt-open-new" }, (0, import_react7.createElement)(NewDivider), (0, import_react7.createElement)("div", { className: "bt-time-sep", role: "separator" }, unreadOpening)), body) : body;
   function triggerBody() {
+    if (source.form === "remote-chat") return null;
     if (source.remote?.handle) {
       return (0, import_react7.createElement)(RemoteMessage, { source, text: remoteMessageText(stripHeader(contentText(data.content))), roster, actions, sessionId, msgKey: `${sessionId}:${data.turn}:remote`, useUi });
     }
@@ -5207,10 +5212,22 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     wide ? (0, import_react9.createElement)(
       "span",
       { className: "bt-row-body" },
-      (0, import_react9.createElement)("span", { className: "bt-row-name" }, (0, import_react9.createElement)("span", { className: "bt-row-title" }, bot.name), pinned ? (0, import_react9.createElement)(PinMark) : null),
+      (0, import_react9.createElement)("span", { className: "bt-row-name" }, (0, import_react9.createElement)("span", { className: "bt-row-title" }, bot.name), bot.remote ? (0, import_react9.createElement)(RemoteMark, { remote: bot.remote }) : null, pinned ? (0, import_react9.createElement)(PinMark) : null),
       awayLine ? (0, import_react9.createElement)("span", { className: "bt-row-preview" }, awayLine) : preview ? (0, import_react9.createElement)("span", { className: "bt-row-preview" }, preview) : null
     ) : null,
     wide && unread && !active ? (0, import_react9.createElement)("span", { className: "bt-unread", "aria-hidden": true }) : null
+  );
+}
+function RemoteMark({ remote }) {
+  return (0, import_react9.createElement)(
+    "span",
+    { className: "bt-row-remote", title: remote.gone ? `${remote.handle} · ${t("no longer shared")}` : remote.handle, "aria-label": t("Friend's Bot") },
+    (0, import_react9.createElement)(
+      "svg",
+      { width: 11, height: 11, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", "aria-hidden": true },
+      (0, import_react9.createElement)("circle", { cx: 12, cy: 12, r: 9 }),
+      (0, import_react9.createElement)("path", { d: "M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" })
+    )
   );
 }
 function RoomRow({ room: room2, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, wide, marked }) {
@@ -5459,7 +5476,8 @@ function TeamSidebar(props) {
   const order = (0, import_react9.useMemo)(() => {
     const stamps = JSON.parse(updated);
     const entries2 = [
-      ...roster.bots.filter((bot) => bot.id !== roster.mainBotId).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
+      // Friends' Bots (remote chats) are listed by their plugin's section, not with the team.
+      ...roster.bots.filter((bot) => bot.id !== roster.mainBotId && !bot.remote).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
       ...roster.rooms.map((room2) => ({ kind: "room", item: room2, at: stamps[room2.id] ?? room2.createdAt })),
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map((agent) => ({ kind: "agent", item: agent, at: Math.max(0, ...agent.sessions.map((id) => stamps[id] ?? 0)) || agent.createdAt }))
@@ -5502,7 +5520,7 @@ function TeamSidebar(props) {
       { ref: listRef, className: "bt-list", role: "region", "aria-label": t("Bot list") },
       tree ? (0, import_react9.createElement)("div", { className: "bt-tree", role: "group", "aria-label": t("Bot tree") }, tree.map((node) => (0, import_react9.createElement)(TreeNode, { key: node.bot.id, node, rowProps, markedUnread, collapsed, toggle, actions: structure?.nodeActions }))) : main ? (0, import_react9.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react9.createElement)("div", { className: "bt-hint" }, t("Setting up your Main Bot…")),
       order.filter((entry) => !(tree && entry.kind === "bot")).map((entry) => entry.kind === "bot" ? (0, import_react9.createElement)(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }) : entry.kind === "room" ? (0, import_react9.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true }) : (0, import_react9.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true })),
-      wide ? (0, import_react9.createElement)(FlyBotSections, { roster, actions }) : null
+      wide ? (0, import_react9.createElement)(FlyBotSections, { roster, actions, renderBot: (bot) => (0, import_react9.createElement)(BotRow, { key: bot.id, ...rowProps, bot, asRow: true, marked: markedUnread[bot.id] === true }) }) : null
     )
   );
 }

@@ -104,6 +104,8 @@ export function install(rt) {
   }
 
   // ---------------------------------------------------------------- bots
+  // The team: every Bot but friends' Bots, which are chats of their own (remote-chat.js).
+  const team = () => Object.values(state.bots).filter(bot => bot.remote === undefined)
   const view = bot => (bot === undefined ? undefined : {
     id: bot.id, name: bot.name, role: bot.role, isMain: rt.isMain(bot.id), createdBy: bot.createdBy ?? null,
     systemPrompt: bot.systemPrompt ?? '', fields: clone(bot.fields ?? {}),
@@ -135,7 +137,7 @@ export function install(rt) {
   if (typeof createBot === 'function') {
     rt.createBot = async (...args) => {
       const bot = await createBot(...args)
-      if (bot?.id !== undefined) fire('bot.created', view(rt.botOf(bot.id)) ?? view(bot))
+      if (bot?.id !== undefined && bot.remote === undefined) fire('bot.created', view(rt.botOf(bot.id)) ?? view(bot))
       return bot
     }
   }
@@ -145,8 +147,9 @@ export function install(rt) {
     rt.deleteBot = async (id, ...rest) => {
       // Fires after removal; the payload keeps the Bot's last record, fields included.
       const last = view(rt.botOf(id))
+      const remoteChat = rt.botOf(id)?.remote !== undefined
       const result = await deleteBot(id, ...rest)
-      fire('bot.removed', { ...last, botId: id, bot: last })
+      if (!remoteChat) fire('bot.removed', { ...last, botId: id, bot: last })
       return result
     }
   }
@@ -181,7 +184,7 @@ export function install(rt) {
       },
       // Bots that have the key; with `value`, only those whose value deep-equals it.
       query(key, value) {
-        return Object.values(state.bots)
+        return team()
           .filter(bot => bot.fields?.[plugin] !== undefined && Object.hasOwn(bot.fields[plugin], key) && (value === undefined || same(bot.fields[plugin][key], value)))
           .map(view)
       },
@@ -426,6 +429,8 @@ export function install(rt) {
       checkName('plugin', plugin)
       const next = (list ?? []).filter(bot => typeof bot?.handle === 'string').map(bot => cleanRemote(plugin, bot))
       const all = remoteStore()
+      // Every published Bot gets a chat of its own (remote-chat.js).
+      void rt.remoteChats?.sync(plugin, next).catch(error => warn('flybot: remote chats not synced: %s', error))
       if (same(all[plugin] ?? [], next)) return
       if (next.length === 0) delete all[plugin]
       else all[plugin] = next
@@ -488,7 +493,7 @@ export function install(rt) {
     await rt.load()
     const body = payload ?? {}
     switch (name) {
-      case 'bots': return Object.values(state.bots).map(view)
+      case 'bots': return team().map(view)
       case 'remote-members': return remoteMembers.list()
       case 'changes': return { seq: changeSeq, changes: changes.filter(change => change.seq > Number(body.since ?? 0)) }
       case 'approvals': return approvals.list(body)
@@ -509,7 +514,7 @@ export function install(rt) {
     scope: build,
     bot: {
       get: id => view(rt.botOf(id)),
-      list: () => Object.values(state.bots).map(view),
+      list: () => team().map(view),
       find: name => view(rt.findBot?.(name)),
       isRemote,
       of: sessionId => view(rt.botOf(rt.selfOf(sessionId))),
@@ -522,7 +527,21 @@ export function install(rt) {
     fields,
     on: onFor(plugin),
     transports: { add: addTransport },
-    remote: { publish: list => remoteMembers.publish(plugin, list), list: remoteMembers.list, get: remoteMembers.get },
+    remote: {
+      publish: list => remoteMembers.publish(plugin, list),
+      list: remoteMembers.list,
+      get: remoteMembers.get,
+      // Remote chats: a friend's Bot as a chat of its own (remote-chat.js).
+      // chats.onSend(fn({ handle, text, botId, remote })) sends what the user types there;
+      // chats.deliver({ handle, text, name?, home? }) posts the friend's message into it.
+      chats: {
+        onSend: fn => rt.remoteChats.onSend(plugin, fn),
+        deliver: msg => rt.remoteChats.deliver({ ...msg, plugin }),
+        open: member => rt.remoteChats.open({ ...member, plugin }),
+        list: () => rt.remoteChats.list(),
+        of: handle => rt.remoteChats.of(toRemote(handle)?.handle),
+      },
+    },
     approvals,
     tools,
     api,
@@ -530,5 +549,8 @@ export function install(rt) {
     }
   }
   const flybot = build(SHARED)
-  Object.assign(rt, { flybot, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSendUserMentions: sendUserMentions })
+  // A local Bot's answer to a friend's Bot (turns.js): back through bot.send, so the
+  // plugin's middleware still decides (auto-accept, or the approval hold).
+  const replyRemote = ({ from, handle, home, text, replyTo }) => send({ from, to: { kind: 'remote', handle, ...(home ? { home } : {}) }, text, role: 'reply', via: 'auto-reply', meta: { replyTo } })
+  Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSendUserMentions: sendUserMentions })
 }

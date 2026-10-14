@@ -39,8 +39,15 @@ window.__ModuleLoader__.load({
 .fs-empty,.fs-hint{padding:4px 10px;font-size:12px;line-height:17px;color:var(--bt-ink-2,rgba(20,20,20,.6));overflow-wrap:anywhere}
 .fs-empty{padding:6px 10px 8px;font-size:13px;line-height:18px}
 .fs-label{padding:8px 10px 2px;font-size:11px;line-height:14px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--bt-ink-3,rgba(20,20,20,.36));display:flex;align-items:center;gap:6px}
-.fs-home{padding:6px 10px 2px;display:flex;align-items:baseline;gap:6px;min-width:0;font-size:12px;line-height:16px;font-weight:600;color:var(--bt-ink-2,rgba(20,20,20,.6))}
-.fs-home span:last-child{font-weight:400;color:var(--bt-ink-3,rgba(20,20,20,.36));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.fs-home-head{display:flex;align-items:center;gap:4px;min-width:0;padding:2px 4px 0 0}
+.fs-home{display:flex;align-items:baseline;gap:6px;flex:1 1 auto;min-width:0;padding:4px 8px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:12px;line-height:16px;font-weight:500;color:var(--bt-ink-2,rgba(20,20,20,.6));text-align:left;cursor:pointer}
+.fs-home:hover{background:var(--bt-hover,rgba(119,119,119,.09))}
+.fs-home .fs-chev[data-closed]{transform:rotate(-90deg)}
+.fs-home-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.fs-home-handle{font-weight:400;color:var(--bt-ink-3,rgba(20,20,20,.36));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.fs-auto{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:11px;line-height:14px;color:var(--bt-ink-3,rgba(20,20,20,.36));cursor:pointer;white-space:nowrap}
+.fs-auto input{margin:0;accent-color:var(--bt-accent,#4d6bfe)}
+.bt-social-rows{display:flex;flex-direction:column}
 .fs-row{display:flex;align-items:center;gap:8px;min-width:0;padding:5px 8px 5px 10px;border-radius:8px;transition:background-color .12s ease}
 .fs-row:hover{background:var(--bt-hover,rgba(119,119,119,.09))}
 .fs-avatar{flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--bt-tag-bg,rgba(20,20,20,.06));color:var(--bt-ink-2,rgba(20,20,20,.6));font-size:12px;font-weight:600}
@@ -77,17 +84,27 @@ window.__ModuleLoader__.load({
     }
     const initial = name => (String(name ?? '?').replace(/^@/, '').trim()[0] ?? '?').toUpperCase()
 
-    // Friends' Bots grouped by their home, each with a "remote" tag; Add friend below the header.
-    function FriendsBots() {
+    // Friends' Bots grouped by their home (one collapsible group each). Each Bot is drawn by
+    // ds-bot's own Bot row (renderBot: avatar, preview, unread, click opens its chat).
+    function FriendsBots({ renderBot, remoteChats } = {}) {
       useStyles()
       const [data, setData] = useState(null)
       const [error, setError] = useState('')
       const [open, setOpen] = useState(true)
       const [adding, setAdding] = useState(false)
+      const [closed, setClosed] = useState({})
+      const [auto, setAuto] = useState({})
+      const [saving, setSaving] = useState('')
       const load = () => call('social/remote-bots', { fresh: true }).then(value => { setData(value); setError('') }, e => setError(errorText(e)))
-      useEffect(() => { load() }, [])
+      const loadSettings = () => call('social/settings', {}).then(value => setAuto(value?.autoAccept ?? {}), () => {})
+      useEffect(() => { load().then(loadSettings) }, [])
       const homes = data?.homes ?? []
       const count = homes.reduce((n, entry) => n + entry.bots.length, 0)
+      const chats = remoteChats ?? []
+      const toggleAuto = async (home, on) => {
+        setSaving(home)
+        try { const r = await call('social/auto-accept', { home, on }); setAuto(value => ({ ...value, [home]: r.autoAccept })) } catch (e) { setError(errorText(e)) } finally { setSaving('') }
+      }
       return h('section', { className: 'fs bt-social', 'aria-label': 'Friends\' Bots' },
         h('div', { className: 'fs-head' },
           h('button', { type: 'button', className: 'fs-head-main', 'aria-expanded': open, onClick: () => setOpen(!open) },
@@ -96,19 +113,26 @@ window.__ModuleLoader__.load({
             data ? h('span', { className: 'fs-count', title: `${count} ${count === 1 ? 'Bot' : 'Bots'}` }, String(count)) : null),
           h('button', { type: 'button', className: 'fs-icon', 'aria-expanded': adding, title: 'Add a friend', onClick: () => { setAdding(!adding); setOpen(true) } }, adding ? 'Done' : '+ Add')),
         open ? h('div', { className: 'fs-body' },
-          adding ? h(AddFriend, { onChange: load }) : null,
+          adding ? h(AddFriend, { onChange: () => load().then(loadSettings) }) : null,
           error ? h('div', { className: 'fs-status', 'data-tone': 'error', style: { padding: '4px 10px' } }, error) : null,
           data === null && !error ? h('div', { className: 'fs-hint' }, 'Loading…') : null,
-          homes.map(entry => h('div', { key: entry.home, className: 'bt-social-home' },
-            h('div', { className: 'fs-home', title: entry.owner ? `Owned by ${entry.owner}` : entry.home },
-              h('span', null, entry.name ?? entry.home), entry.name ? h('span', null, entry.home) : null),
-            entry.bots.length === 0 ? h('div', { className: 'fs-hint' }, 'No Bots shared yet') : null,
-            entry.bots.map(bot => h('div', { key: bot.handle, className: 'fs-row bt-social-row', 'data-remote': 'true', title: bot.handle },
-              h('span', { className: 'fs-avatar', 'aria-hidden': true }, initial(bot.name)),
-              h('span', { className: 'fs-text' },
-                h('span', { className: 'fs-name' }, bot.name),
-                h('span', { className: 'fs-sub' }, bot.handle)),
-              h('span', { className: 'fs-tag bt-social-badge' }, 'remote'))))),
+          homes.map(entry => {
+            const shut = closed[entry.home] === true
+            const rows = entry.bots.map(bot => ({ bot, chat: chats.find(chat => chat.remote?.handle === bot.handle) }))
+            return h('div', { key: entry.home, className: 'bt-social-home', 'data-home': entry.home },
+              h('div', { className: 'fs-home-head' },
+                h('button', { type: 'button', className: 'fs-home', 'aria-expanded': !shut, title: entry.owner ? `${entry.home} · owned by ${entry.owner}` : entry.home, onClick: () => setClosed(value => ({ ...value, [entry.home]: !shut })) },
+                  h('span', { className: 'fs-chev', 'aria-hidden': true, 'data-closed': shut || undefined }, '▾'),
+                  h('span', { className: 'fs-home-name' }, entry.name ?? entry.home),
+                  entry.name ? h('span', { className: 'fs-home-handle' }, entry.home) : null),
+                h('label', { className: 'fs-auto', title: 'Auto-accept: messages with this friend go through without your approval. Off: what your Bots send on their own waits for you.' },
+                  h('input', { type: 'checkbox', checked: auto[entry.home] !== false, disabled: saving === entry.home, onChange: e => toggleAuto(entry.home, e.target.checked) }),
+                  'Auto-accept')),
+              shut ? null : entry.bots.length === 0 ? h('div', { className: 'fs-hint' }, 'No Bots shared yet') : null,
+              shut ? null : h('div', { className: 'bt-social-rows' }, rows.map(({ bot, chat }) => (chat && typeof renderBot === 'function'
+                ? renderBot(chat)
+                : h('div', { key: bot.handle, className: 'fs-hint', title: bot.handle }, `${bot.name} · opening its chat…`)))))
+          }),
           data && homes.length === 0 && !adding
             ? h('div', { className: 'fs-empty' }, 'No friends yet. Right-click one of your Bots and choose ', h('b', null, 'Copy invite link'), ', or use ', h('b', null, '+ Add'), ' to join a friend\'s invite.')
             : null) : null)

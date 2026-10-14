@@ -112,13 +112,17 @@ export function useSidebarStructure() {
   return useSlot('flybot.sidebar.structure')[0]
 }
 
-export function FlyBotSections({ roster, actions }) {
+// Sections get { roster, actions, call, renderBot, remoteChats }: renderBot(bot) draws a
+// Bot row exactly like the team's (avatar, preview, unread, click to open); remoteChats
+// are the friends' Bots that have a chat here (bot.remote: { handle, home, homeName }).
+export function FlyBotSections({ roster, actions, renderBot }) {
   // Entries from the FlyBot registry plus any a plugin put in DSH's own slot of that name.
   const shell = (actions.flybotSlotEntries?.('flybot.sidebar.section') ?? [])
     .map((entry, index) => ({ id: entry.id ?? `slot-${index}`, order: entry.order ?? 0, component: entry.component }))
   const entries = [...useSlot('flybot.sidebar.section'), ...shell].sort((a, b) => a.order - b.order)
-  return h(Fragment, null, h(RemoteMembers, { roster }), entries.map(entry => h('div', { key: entry.id, className: 'bt-flybot-section', 'data-flybot': entry.id },
-    h(Safe, { entry, props: { roster, actions, call } }))))
+  const remoteChats = (roster.bots ?? []).filter(bot => bot.remote)
+  return h(Fragment, null, entries.map(entry => h('div', { key: entry.id, className: 'bt-flybot-section', 'data-flybot': entry.id },
+    h(Safe, { entry, props: { roster, actions, call, renderBot, remoteChats } }))))
 }
 
 export function FlyBotDetails({ bot, roster }) {

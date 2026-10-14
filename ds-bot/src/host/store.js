@@ -337,9 +337,10 @@ export function install(rt) {
   }
   const findBot = (ref) => {
     if (ref === undefined) return undefined
-    if (state.bots[ref]) return state.bots[ref]
+    if (state.bots[ref]) return state.bots[ref].remote === undefined ? state.bots[ref] : undefined
     const wanted = normalize(ref).replace(/^@/, '')
-    return Object.values(state.bots).find(bot => normalize(bot.name) === wanted)
+    // A friend's Bot (remote chat) is no team member, so a name never finds it.
+    return Object.values(state.bots).find(bot => bot.remote === undefined && normalize(bot.name) === wanted)
   }
   // Every group chat whose id or name matches; callers refuse an ambiguous name.
   const findRooms = (ref) => {

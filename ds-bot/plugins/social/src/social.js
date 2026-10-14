@@ -122,6 +122,17 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     return refs
   }
 
+  // ------------------------------------------------------------ settings (per friend home)
+  // autoAccept[home]: messages with that friend go through without the approval hold
+  // (default on for every friendship). via[handle]: the local Bot whose Bot Social
+  // identity carries the user's own chat with that friend's Bot.
+  const settingsPath = config.settingsPath ?? (config.credentialsPath ? join(dirname(config.credentialsPath), 'flybot-social-settings.json') : undefined)
+  let settings = { autoAccept: {}, via: {} }
+  try { if (settingsPath) settings = { autoAccept: {}, via: {}, ...JSON.parse(readFileSync(settingsPath, 'utf8')) } } catch { /* none yet */ }
+  const saveSettings = () => { if (settingsPath) { try { writeCredentials(settingsPath, settings) } catch (error) { warn('settings not saved', error) } } }
+  // Unset: on (config.autoAccept: false makes it opt-in instead).
+  const autoAcceptOf = friendHome => settings.autoAccept[norm(friendHome)] ?? (config.approval?.homes?.[norm(friendHome)] ? config.approval.homes[norm(friendHome)] === 'auto' : config.autoAccept !== false)
+
   // ------------------------------------------------------------ members
   const memberOf = botId => flybot.fields.get(botId, 'member')
   async function register(bot) {
@@ -176,6 +187,8 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     const override = typeof fromBotId === 'string' ? flybot.fields.get(fromBotId, 'autoApprove')?.[friendHome] : undefined
     if (override === true) return 'auto'
     if (override === false) return 'hold'
+    // Auto-accept (on unless the owner switched it off for this friend in the Friends panel).
+    if (autoAcceptOf(friendHome)) return 'auto'
     const homeSetting = config.approval?.homes?.[friendHome]
     if (homeSetting) return homeSetting
     if (config.requireApproval === false) return 'auto'
@@ -223,6 +236,36 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     },
   }))
 
+  // ------------------------------------------------------------ remote chats
+  // What the user types in a friend's Bot's chat goes out directly: no approval hold, it
+  // is the user's own message. It is signed by one of this home's members: the one used
+  // before for that Bot, else the Main Bot, else any member the friendship covers.
+  async function sendChat({ handle, text }) {
+    if (!home) throw new Error('Bot Social is not connected')
+    const target = norm(handle)
+    const team = flybot.bot.list()
+    const order = [team.find(bot => bot.id === settings.via[target]), team.find(bot => bot.isMain), ...team].filter(Boolean)
+    const tried = new Set()
+    let lastError
+    for (const bot of order) {
+      if (tried.has(bot.id)) continue
+      tried.add(bot.id)
+      const member = memberOf(bot.id) ?? await register(bot).catch(() => undefined)
+      if (!member) continue
+      try {
+        const sent = await client.callTool('send_as_member', { from_bot_id: member.bot_id, to: target, text })
+        if (settings.via[target] !== bot.id) { settings.via[target] = bot.id; saveSettings() }
+        if (sent?.message?.status === 'pending_approval') return `Sent, but Bot Social holds it until you approve it there: turn on Auto-accept for this friend in Friends' Bots.`
+        return ''
+      } catch (error) {
+        lastError = error
+        if (!/no_relationship|no active relationship/i.test(String(error?.message ?? error))) throw error
+      }
+    }
+    throw lastError ?? new Error(`no Bot of yours is friends with ${target}`)
+  }
+  if (flybot.remote?.chats) disposers.push(flybot.remote.chats.onSend(sendChat))
+
   // ------------------------------------------------------------ inbound
   const cursors = new Map()
   async function pollInbox() {
@@ -245,6 +288,14 @@ export function createSocial(service, config = {}, { client: given, home: givenH
           ? `${said}\n\nAttached files: ${files.map(file => `${safeName(file.name)} (${sizeLabel(Number(file.size) || 0)}, id ${file.id})`).join('; ')}`
           : said
         const handle = norm(event.from?.handle)
+        const fromHome = event.from?.home_handle ? norm(event.from.home_handle) : undefined
+        // The user's own chat with this friend's Bot (it went out from this Bot's identity):
+        // the answer lands in that chat, written back as the friend's Bot's reply.
+        if (settings.via[handle] === local.id && flybot.remote?.chats) {
+          await flybot.remote.chats.deliver({ handle, home: fromHome, name: event.from?.display_name ?? handle, text })
+          delivered += 1
+          continue
+        }
         await flybot.bot.send({
           from: { kind: 'remote', handle, home: event.from?.home_handle ? norm(event.from.home_handle) : undefined, name: `${event.from?.display_name ?? handle} (${handle}, Bot Social)` },
           to: local.id,
@@ -378,12 +429,18 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     }
     fetchedAt = 0
     void remoteBots({ fresh: true }).catch(() => {})
+    // A new friendship starts with auto-accept on (switchable per friend in Friends' Bots).
+    const inviterHome = joined.inviter?.handle ? homeOfPeer(joined.inviter.handle) : undefined
+    if (joined.relationship_id && (inviterHome === undefined || autoAcceptOf(inviterHome))) await serverAutoApprove(joined.relationship_id, true)
     return { relationshipId: joined.relationship_id, status, inviter: joined.inviter?.handle ? norm(joined.inviter.handle) : undefined, inviterName: joined.inviter?.display_name }
   }))
   disposers.push(flybot.api.handle('social/respond', async ({ relationshipId, decision } = {}) => {
     if (decision !== 'accept' && decision !== 'decline') throw new Error('decision is accept or decline')
     const result = await confirmedCall('respond_friend_request', { relationship_id: String(relationshipId ?? ''), decision, ...(decision === 'accept' ? { grant_capabilities: ['chat.public'] } : {}) })
-    if (decision === 'accept') void remoteBots({ fresh: true }).catch(() => {})
+    if (decision === 'accept') {
+      void remoteBots({ fresh: true }).catch(() => {})
+      await serverAutoApprove(String(relationshipId ?? ''), true)
+    }
     return { relationshipId, status: result?.status ?? (decision === 'accept' ? 'active' : 'declined') }
   }))
 
@@ -398,6 +455,35 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     flybot.fields.set(botId, 'autoApprove', { ...(flybot.fields.get(botId, 'autoApprove') ?? {}), [norm(friendHome)]: on === null ? undefined : Boolean(on) })
     return flybot.fields.get(botId, 'autoApprove')
   }))
+  // Auto-accept per friend home: FlyBot's own hold, and Bot Social's auto-approve for the
+  // friendship's chat messages (the owner's click is the consent, as for joining).
+  async function serverAutoApprove(relationshipId, on) {
+    try {
+      await confirmedCall('set_auto_approve', { relationship_id: relationshipId, auto_approve_chat: on })
+    } catch (error) { warn('auto-approve on Bot Social not set', error) }
+  }
+  const homeOfPeer = peerHandle => { const parts = norm(peerHandle).slice(1).split('.'); return parts.length > 2 ? `@${parts.slice(1).join('.')}` : norm(peerHandle) }
+  async function setAutoAccept(friendHome, on) {
+    const key = norm(friendHome)
+    settings.autoAccept[key] = Boolean(on)
+    saveSettings()
+    // A friendship may hang on the home or on one member (a per-Bot invite), so every identity is asked.
+    const identities = [homeArgs(), ...flybot.bot.list().map(bot => memberOf(bot.id)).filter(Boolean).map(member => ({ bot_id: member.bot_id }))]
+    const done = new Set()
+    for (const args of identities) {
+      const overview = await client.callTool('list_friends', args).catch(() => undefined)
+      for (const item of overview?.friends ?? []) {
+        if (item.status !== 'active' || !item.peer?.handle || done.has(item.relationship_id)) continue
+        if (norm(item.peer.handle) === key || homeOfPeer(item.peer.handle) === key) { done.add(item.relationship_id); await serverAutoApprove(item.relationship_id, Boolean(on)) }
+      }
+    }
+    return { home: key, autoAccept: autoAcceptOf(key) }
+  }
+  disposers.push(flybot.api.handle('social/auto-accept', async ({ home: friendHome, on } = {}) => {
+    if (typeof friendHome !== 'string' || !friendHome) throw new Error('which friend?')
+    return setAutoAccept(friendHome, on !== false)
+  }))
+  disposers.push(flybot.api.handle('social/settings', async () => ({ autoAccept: Object.fromEntries(remote.homes.map(entry => [entry.home, autoAcceptOf(entry.home)])) })))
   disposers.push(flybot.api.handle('social/poll', async () => ({ delivered: await pollInbox() })))
 
   return {
@@ -406,6 +492,8 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     remoteBots,
     pollInbox,
     approvalFor,
+    sendChat,
+    setAutoAccept,
     dispose() {
       for (const dispose of disposers.splice(0).reverse()) dispose?.()
     },
