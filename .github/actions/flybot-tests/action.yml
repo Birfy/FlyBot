@@ -1,8 +1,8 @@
 name: FlyBot tests
 description: >-
   Node, npm ci, the DSH harness, lint, the client bundle check, ds-bot's suite and the social
-  and tree plugin suites (optionally as one coverage run). Shared by Test (the PR gate) and
-  Compatibility (nightly/manual legs), so both run exactly the same checks.
+  and tree plugin suites (optionally as one coverage run). Used by Test (the PR gate); the
+  Compatibility legs (nightly.yml) can use it too, to run the same checks.
 inputs:
   node:
     description: Node.js version
