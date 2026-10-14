@@ -58,16 +58,11 @@ export function install(rt) {
 
   // `pickModel` leaves the model to the user: the chat opens on a model card, and the
   // greeting waits until a model is chosen. So does a Bot made when no model is served.
-  async function createBot({ name: botName, role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, systemPrompt, fields, remote }) {
+  async function createBot({ name: botName, role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false }) {
     const cleanName = String(botName ?? '').trim().slice(0, 40)
-    // A friend's Bot (remote-chat.js) keeps its own name: it is not a team member, so
-    // team names never clash with it and it gets no greeting.
-    const isRemote = typeof remote?.handle === 'string'
-    if (!isRemote) {
-      const problem = nameProblem(cleanName)
-      if (problem !== undefined) throw new Error(problem)
-      if (rt.findBot(cleanName)) throw new Error(`A Bot named ${cleanName} already exists`)
-    } else if (cleanName === '') throw new Error('A friend\'s Bot needs a name')
+    const problem = nameProblem(cleanName)
+    if (problem !== undefined) throw new Error(problem)
+    if (rt.findBot(cleanName)) throw new Error(`A Bot named ${cleanName} already exists`)
     const cleanAvatarValue = cleanAvatar(avatar)
     // The model is fixed at creation, so a later change of the DSH default leaves it alone.
     const modelRef = model ? await rt.resolveModel(model) : pickModel ? undefined : await rt.defaultModel()
@@ -89,10 +84,6 @@ export function install(rt) {
         createdAt: Date.now(),
         createdBy: createdBy ?? null,
         capabilities: [],
-        // FlyBot (hooks.js): extra system prompt text and per-plugin custom fields.
-        ...(typeof systemPrompt === 'string' && systemPrompt.trim() ? { systemPrompt: systemPrompt.trim() } : {}),
-        ...(fields && typeof fields === 'object' && Object.keys(fields).length > 0 ? { fields: JSON.parse(JSON.stringify(fields)) } : {}),
-        ...(isRemote ? { remote: JSON.parse(JSON.stringify(remote)) } : {}),
       }
       if (main) state.mainBotIds.push(id)
       const creator = rt.botOf(createdBy)
@@ -112,11 +103,6 @@ export function install(rt) {
       const opener = `${kickoff}\nWhere your instructions say otherwise, follow them.`
       const text = !main && language ? `${opener}\nWrite in ${language}.` : opener
       const bot = state.bots[id]
-      if (isRemote) {
-        await rt.save()
-        void rt.waitForModel(bot).then(() => rt.applyModel(bot)).catch(error => rt.warn('ds-bot: route for %s not applied: %s', cleanName, error))
-        return bot
-      }
       if (modelRef === undefined) {
         bot.kickoff = { text, from: createdBy ?? null, ...(main ? { main: true } : {}) }
         await rt.save()
@@ -203,8 +189,6 @@ export function install(rt) {
       if (avatar) bot.avatar = avatar
       else delete bot.avatar
     }
-    // A friend's Bot always runs on its relay route; its model is not the user's to change.
-    if (bot.remote !== undefined) { delete patch.model; delete patch.effort }
     if (patch.model !== undefined) {
       if (patch.model === null || patch.model === '') delete bot.model
       else bot.model = await rt.resolveModel(patch.model)

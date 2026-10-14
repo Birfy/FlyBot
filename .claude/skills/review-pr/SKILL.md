@@ -65,12 +65,12 @@ When the iteration loop is in use:
 
 - Patching DeepSeek Harness or depending on private install files.
 - Secrets, tokens, or user `DSH_HOME` / `~/.dsh` in the diff.
-- Hand-edited `ds-bot/client.js` without regenerating from `src/client/`.
+- Hand-edited `core/client.js` without regenerating from `src/client/`.
 - Tests pointed at the user’s real DSH data.
 
 ## Suggested local commands (code PRs)
 
-From `ds-bot/` when the diff warrants it:
+From `core/` when the diff warrants it:
 
 ```sh
 npm test

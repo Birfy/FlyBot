@@ -20,8 +20,6 @@ export function install(rt) {
     if (decision.kind === 'reject' || signal.aborted) return decision
     await rt.load()
     if (!rt.isBotSession(agent.id) || signal.aborted) return decision
-    // A friend's Bot's chat runs on no model: a clock there only gets in the way of the relay.
-    if (typeof rt.botOf?.(rt.selfOf?.(agent.id))?.remote?.handle === 'string') return decision
     // A loaded DSH clock covers every step itself. Its listener may run before or
     // after this one (a reload reorders them), so its presence is read from its
     // projection, not from the messages added so far.
