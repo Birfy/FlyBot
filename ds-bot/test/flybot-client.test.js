@@ -71,3 +71,17 @@ test('remote members: @ rows insert the handle, the sidebar groups by home, bubb
   assert.equal(remoteMessageText('<untrusted-message from="Coder">\nLGTM\n</untrusted-message>'), 'LGTM')
   assert.equal(remoteMembersByHome({}).length, 0)
 })
+
+test('every client bundle registers under its package name, as the DSH module loader looks it up', async () => {
+  const { readFileSync } = await import('node:fs')
+  for (const dir of ['.', 'plugins/social', 'plugins/tree']) {
+    const pkg = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8'))
+    const client = readFileSync(new URL(`../${dir}/client.js`, import.meta.url), 'utf8')
+    const id = client.match(/__ModuleLoader__\.load\(\{\s*id:\s*'([^']+)'/)?.[1]
+    assert.equal(id, pkg.name, `${dir}/client.js id`)
+    if (dir !== '.') {
+      assert.equal(pkg.dsh?.bundle?.patch, './cordis.patch.yml', `${dir} mounts itself as a bundle`)
+      assert.match(readFileSync(new URL(`../${dir}/cordis.patch.yml`, import.meta.url), 'utf8'), new RegExp(`name: '${pkg.name}'`))
+    }
+  }
+})

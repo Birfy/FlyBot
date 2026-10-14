@@ -210,7 +210,7 @@ test('field-change events reach tree subscribers; dispose unregisters', async ()
 
 test('client registers the sidebar slot and builds a forest', () => {
   let mod
-  globalThis.window = { __ModuleLoader__: { load: ({ id, factory }) => { assert.equal(id, 'flybot-tree'); mod = factory(() => ({ createElement() {}, useEffect() {}, useState() {}, useCallback() {} })) } } }
+  globalThis.window = { __ModuleLoader__: { load: ({ id, factory }) => { assert.equal(id, '@flybot/tree'); mod = factory(() => ({ createElement() {}, useEffect() {}, useState() {}, useCallback() {} })) } } }
   new Function(readFileSync(new URL('../client.js', import.meta.url), 'utf8'))()
   const reg = []
   mod.apply({ slots: { register: (o, c) => reg.push([o, c]) }, flybot: {} })

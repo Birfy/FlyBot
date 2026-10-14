@@ -2,7 +2,7 @@
 // (window.__ModuleLoader__.load, CJS factory, `require` resolves shell-provided react).
 // Hand-written (no build step). Registers a collapsible tree in the `flybot.sidebar.section` slot.
 window.__ModuleLoader__.load({
-  id: 'flybot-tree',
+  id: '@flybot/tree',
   factory: (require) => {
     const { createElement: h, useEffect, useState, useCallback } = require('react')
 

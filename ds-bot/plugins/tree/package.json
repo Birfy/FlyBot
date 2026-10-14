@@ -2,7 +2,13 @@
   "name": "@flybot/tree",
   "version": "0.1.0",
   "description": "FlyBot tree: recursive bot hierarchy (parent field, level-by-level delegation, create_child_bot) on top of @flybot/core",
-  "keywords": ["dsh-plugin", "deepseek-harness", "dsh", "ds-bot", "flybot"],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "ds-bot",
+    "flybot"
+  ],
   "license": "Apache-2.0",
   "type": "module",
   "main": "index.js",
@@ -11,14 +17,26 @@
     "./client": "./client.js",
     "./package.json": "./package.json"
   },
-  "files": ["index.js", "client.js", "src/", "limits.json", "README.md"],
+  "files": [
+    "index.js",
+    "client.js",
+    "src/",
+    "limits.json",
+    "README.md",
+    "cordis.patch.yml"
+  ],
   "scripts": {
     "test": "node --test \"test/*.test.js\""
   },
   "peerDependencies": {
-    "@flybot/core": "*"
+    "ds-bot": "*"
   },
   "dsh": {
-    "client": { "platform": "web" }
+    "client": {
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }

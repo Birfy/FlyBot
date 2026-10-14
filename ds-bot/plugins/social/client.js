@@ -1,7 +1,7 @@
 // flybot-social browser half: plain JS, loaded by DSH as a classic script. Registers
 // into the FlyBot slot registry that ds-bot's client renders (src/client/flybot-slots.js).
 window.__ModuleLoader__.load({
-  id: 'flybot-social',
+  id: '@flybot/social',
   factory(require) {
     const { createElement: h, useEffect, useState } = require('react')
     const slots = () => {
