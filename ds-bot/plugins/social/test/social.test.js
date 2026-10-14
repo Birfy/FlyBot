@@ -639,3 +639,22 @@ test('a name whose handle another local Bot holds registers with its own suffixe
   assert.equal(fields.get('a', 'member').bot_id, 'm0')
   assert.notEqual(fields.get('b', 'member').bot_id, 'm0')
 })
+
+test('a friendship made after Auto-accept was turned on gets server auto-approve once', async (t) => {
+  const { ctx, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  server.tools.set_auto_approve = a => (a.confirm_code === undefined ? { status: 'confirmation_required', confirm_code: 'C0DE03' } : { relationship_id: a.relationship_id, auto_approve_chat: a.auto_approve_chat })
+  const settingsPath = join(home, 'flybot-social-settings.json')
+  writeFileSync(settingsPath, JSON.stringify({ autoAccept: { '@bob.home': true }, via: {} }))
+  const social = await startSocial(ctx.flybot, { server: 'https://social.test', credentialsPath: join(home, 'flybot-social.json'), settingsPath, fetch: server.fetch, inboxPollMs: 0 })
+  t.after(() => social.dispose())
+  // A friend joins another Bot's invite: a new relationship shows up in the roster.
+  server.tools.list_remote_bots = () => ({ homes: [{ relationship_ids: ['r1', 'r7'], home: { bot_id: 'h2', handle: '@bob.home', display_name: 'Bob' }, bots: [{ bot_id: 'x1', handle: '@coder.bob.home', display_name: 'Coder' }] }] })
+  await social.remoteBots({ fresh: true })
+  await settle()
+  await social.remoteBots({ fresh: true })
+  await settle()
+  const confirmed = server.calls.filter(c => c.name === 'set_auto_approve' && c.args.confirm_code === 'C0DE03')
+  assert.deepEqual(confirmed.map(c => [c.args.relationship_id, c.args.auto_approve_chat]), [['r1', true], ['r7', true]])
+})
