@@ -99,6 +99,43 @@ export async function installSpecOf(ctx) {
 export const repoSlug = () =>
   /github\.com[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?$/i.exec(String(PKG.repository?.url ?? PKG.repository ?? ''))?.[1] ?? null
 
+// Where the project lived before it moved to ThinkFlowLab/FlyBot. An install pinned to
+// one of these is checked (and updated) against the current repository instead.
+export const LEGACY_REPOS = ['Fei2411/DeepSeek-Bot']
+const isLegacy = (owner, repo) => LEGACY_REPOS.some(slug => slug.toLowerCase() === `${owner}/${repo}`.toLowerCase())
+
+/** The GitHub owner and repo to ask for a git install, moved off a legacy repository. */
+export function releaseRepoOf(source) {
+  const current = repoSlug()
+  if (current && isLegacy(source.owner, source.repo)) {
+    const [owner, repo] = current.split('/')
+    return { owner, repo }
+  }
+  return { owner: source.owner, repo: source.repo }
+}
+
+/**
+ * The newest release of a GitHub repository: its latest published release, else (no
+ * releases yet, only tags) the highest version tag. `{ tag, version, htmlUrl }` or null.
+ */
+export async function latestGitHubRelease(owner, repo, headers = {}) {
+  const base = `https://api.github.com/repos/${owner}/${repo}`
+  try {
+    const release = await fetchJson(`${base}/releases/latest`, headers)
+    const version = cleanVersion(release?.tag_name)
+    if (version) return { tag: release.tag_name, version, htmlUrl: release.html_url ?? null }
+  } catch (error) {
+    if (!String(error?.message).endsWith(' answered 404')) throw error
+  }
+  const tags = await fetchJson(`${base}/tags?per_page=100`, headers)
+  let best = null
+  for (const tag of Array.isArray(tags) ? tags : []) {
+    const version = cleanVersion(tag?.name)
+    if (version && (best === null || newer(version, best.version))) best = { tag: tag.name, version, htmlUrl: null }
+  }
+  return best
+}
+
 const repoUrl = () => {
   const repo = repoSlug()
   return repo ? `https://github.com/${repo}` : null
@@ -158,15 +195,15 @@ export function install(rt) {
 
   async function newestFromGitHub(source) {
     if (!source.ref) return null
-    const release = await fetchJson(`https://api.github.com/repos/${source.owner}/${source.repo}/releases/latest`, { 'user-agent': `${PKG.name}/${PKG.version}` })
-    const version = cleanVersion(release?.tag_name)
-    if (!version) return null
+    const asked = releaseRepoOf(source)
+    const release = await latestGitHubRelease(asked.owner, asked.repo, { 'user-agent': `${PKG.name}/${PKG.version}` })
+    if (!release) return null
     // The API answers through redirects, so the release's html_url names the
     // repository's current address; the install moves to it.
-    const current = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/releases\//.exec(release.html_url ?? '')
-    const [owner, repo] = current ? [current[1], current[2]] : [source.owner, source.repo]
-    const fragment = [release.tag_name, ...source.rest].join('&')
-    return { version, spec: `github:${owner}/${repo}#${fragment}` }
+    const current = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/releases\//.exec(release.htmlUrl ?? '')
+    const [owner, repo] = current ? [current[1], current[2]] : [asked.owner, asked.repo]
+    const fragment = [release.tag, ...source.rest].join('&')
+    return { version: release.version, spec: `github:${owner}/${repo}#${fragment}` }
   }
 
   async function runCheck() {

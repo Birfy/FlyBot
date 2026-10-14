@@ -216,7 +216,7 @@ test('a failed group turn fails its waiter; a stopped one counts as no answer', 
 
 test('issueUrl fills the issue form, keeps the versions when the errors are too long, and falls back to the clipboard', async () => {
   const { issueUrl } = await import('../src/client/diagnostics.js')
-  const base = 'https://github.com/Fei2411/DeepSeek-Bot/issues/new'
+  const base = 'https://github.com/ThinkFlowLab/FlyBot/issues/new'
   const short = issueUrl(base, { what: 'Writer failed\nin the group', diagnostics: '| FlyBot | 0.1.0 |' })
   assert.equal(short.inline, true)
   const params = new URL(short.url).searchParams

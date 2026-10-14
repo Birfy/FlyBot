@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path'
 
 import {
   CHECK_TTL_MS, cleanVersion, encodeName, fetchJson, installSpecOf,
-  newer, registryPlan, repoSlug, sourceOf,
+  latestGitHubRelease, newer, registryPlan, repoSlug, sourceOf,
 } from './update.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
@@ -89,10 +89,10 @@ export function install(rt) {
     const repo = repoSlug()
     if (!repo) return null
     try {
-      const release = await fetchJson(`https://api.github.com/repos/${repo}/releases/latest`, { 'user-agent': `${PKG.name}/${PKG.version}` })
-      const tag = cleanVersion(release?.tag_name)
-      if (!tag) return null
-      const manifest = await fetchJson(`https://raw.githubusercontent.com/${repo}/${release.tag_name}/ds-bot/package.json`, { 'user-agent': `${PKG.name}/${PKG.version}` })
+      const [owner, name] = repo.split('/')
+      const release = await latestGitHubRelease(owner, name, { 'user-agent': `${PKG.name}/${PKG.version}` })
+      if (!release) return null
+      const manifest = await fetchJson(`https://raw.githubusercontent.com/${repo}/${release.tag}/ds-bot/package.json`, { 'user-agent': `${PKG.name}/${PKG.version}` })
       return manifest?.dsBot?.verifiedDsh ? manifest.dsBot : null
     } catch { return null }
   }
