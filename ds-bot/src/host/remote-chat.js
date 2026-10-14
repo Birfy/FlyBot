@@ -12,7 +12,7 @@
 import { randomUUID } from 'node:crypto'
 import { createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import { SOURCE_KIND } from './constants.js'
-import { fenceUntrusted } from './delivery.js'
+import { cleanName, fenceUntrusted } from './delivery.js'
 
 export const REMOTE_PROVIDER = 'flybot-remote'
 export const REMOTE_FORM = 'remote-chat'
@@ -152,9 +152,9 @@ export function install(rt) {
     const id = chatOfHandle(handle)?.id ?? await open({ handle, name: name ?? handle, home, plugin })
     const bot = rt.botOf(id)
     const agent = await rt.resolveAgent(rt.chatOf(id))
-    const shownName = bot?.name ?? name ?? handle
+    const shownName = cleanName(bot?.name ?? name ?? handle)
     agent.followup(createUserMessage({
-      content: [{ type: 'text', text: `[Message from ${shownName} (${handle})]\n${fenceUntrusted(shownName, text)}` }],
+      content: [{ type: 'text', text: `[Message from ${shownName} (${cleanName(handle)})]\n${fenceUntrusted(shownName, text)}` }],
       source: { kind: SOURCE_KIND, form: REMOTE_FORM, role: 'remote', exchangeId: randomUUID(), senderName: shownName, hop: 0, remote: { handle, ...(home ? { home } : {}) }, text: String(text) },
     }))
     await ctx.sessions.flush(agent.session)
