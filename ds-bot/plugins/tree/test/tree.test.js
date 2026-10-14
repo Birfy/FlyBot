@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import * as plugin from '../index.js'
 import { DEFAULT_LIMITS, resolveLimits, checkCreate } from '../src/limits.js'
 import { createMockFlybot } from './mock-flybot.js'
+import { reactStub, renderToString, findAll } from './render.js'
 
 async function setup(config = {}) {
   const m = createMockFlybot()
@@ -208,15 +209,19 @@ test('field-change events reach tree subscribers; dispose unregisters', async ()
   assert.equal(m.tools.size, 0); assert.equal(m.middlewares.length, 0)
 })
 
-test('client registers the sidebar slot and builds a forest', () => {
+test('client: injects flybot, registers into FlyBot slots (not the shell slots service)', () => {
   let mod
   globalThis.window = { __ModuleLoader__: { load: ({ id, factory }) => { assert.equal(id, '@flybot/tree'); mod = factory(() => ({ createElement() {}, useEffect() {}, useState() {}, useCallback() {} })) } } }
   new Function(readFileSync(new URL('../client.js', import.meta.url), 'utf8'))()
+  assert.deepEqual(mod.inject, ['flybot']) // the browser flybot service carries the FlyBot slots
+  assert.equal(mod.name, 'flybot-tree')
   const reg = []
-  assert.deepEqual(mod.inject, ['flybot'])
-  mod.apply({ flybot: { slots: { register: (name, entry) => { reg.push([name, entry]); return () => {} } } } })
+  const effects = []
+  const off = mod.apply({ flybot: { slots: { register: (name, entry) => { reg.push([name, entry]); return () => reg.splice(0) } } }, effect: fn => effects.push(fn) })
   assert.equal(reg[0][0], 'flybot.sidebar.section')
-  assert.equal(reg[0][1].id, 'flybot-tree')
+  assert.equal(reg[0][1].id, 'flybot-tree'); assert.equal(typeof reg[0][1].component, 'function')
+  assert.equal(effects.length, 1)
+  off(); assert.equal(reg.length, 0)
   const fo = mod.buildForest({ r: { id: 'r', name: 'Root', parent: null }, w: { id: 'w', name: 'Work', parent: 'r' }, d: { id: 'd', name: 'Dev', parent: 'w' } })
   assert.equal(fo[0].children[0].children[0].name, 'Dev')
 })
@@ -278,4 +283,79 @@ test('non-tree local sender: only the root is reachable; remote senders unchange
   assert.equal(h({ from: '@x.peer', to: a, target: { remote: false, id: a } }), undefined)
   assert.equal((await send(chief, await outsider(m, 'Other'))).action, 'allow')
   assert.equal((await send(a, '@coder.bob.home')).action, 'allow') // remote target
+})
+
+const loadClient = () => {
+  let mod
+  globalThis.window = { __ModuleLoader__: { load: ({ factory }) => { mod = factory(() => reactStub) } } }
+  new Function(readFileSync(new URL('../client.js', import.meta.url), 'utf8'))()
+  return mod
+}
+const sample = mod => mod.buildForest({
+  r: { id: 'r', name: 'Root', role: 'Top-level coordinator for everything.', parent: null },
+  w: { id: 'w', name: 'Work', role: 'Work tasks\nsecond line', parent: 'r' },
+  d: { id: 'd', name: 'Dev', role: 'x'.repeat(300), parent: 'w' },
+  l: { id: 'l', name: 'Life', role: '', parent: 'r' },
+})
+
+test('sidebar: header shows the node count; nodes render name, one-line role, guide lines', () => {
+  const mod = loadClient()
+  const html = renderToString(reactStub.createElement(mod.TreeView, { forest: sample(mod) }))
+  assert.match(html, /class="flybot-tree-head"[^>]*aria-expanded="true"/)
+  assert.match(html, /<span class="flybot-tree-title">Tree<\/span><span class="flybot-tree-count"[^>]*>4<\/span>/)
+  assert.match(html, /class="flybot-tree-name">Work</)
+  assert.match(html, /class="flybot-tree-role">Work tasks</) // first line only
+  assert.doesNotMatch(html, /second line/)
+  assert.match(html, /<ul class="flybot-tree-kids"/) // indented children with guide lines
+  assert.match(mod.CSS, /\.flybot-tree-role\{[^}]*text-overflow:ellipsis/)
+  assert.match(mod.CSS, /\.flybot-tree-kids::before\{[^}]*border-left/)
+  assert.match(mod.CSS, /var\(--bt-ink-2/) // ds-bot sidebar tokens, dark theme follows
+  assert.doesNotMatch(mod.CSS, /overflow:(auto|scroll)/) // no stray scrollbars
+  assert.equal(mod.countNodes(sample(mod)), 4)
+})
+
+test('sidebar: empty state (no tree bots, or no root) and collapsed header', () => {
+  const mod = loadClient()
+  const empty = renderToString(reactStub.createElement(mod.TreeView, { forest: [] }))
+  assert.match(empty, /No tree yet\. Ask Root to take on a task and it will create child bots\./)
+  assert.match(empty, /class="flybot-tree-count"[^>]*>0</)
+  const orphans = mod.buildForest({ a: { id: 'a', name: 'A', parent: 'gone' } }) // no root
+  assert.match(renderToString(reactStub.createElement(mod.TreeView, { forest: orphans })), /No tree yet/)
+  const closed = renderToString(reactStub.createElement(mod.TreeView, { forest: sample(mod), expanded: false }))
+  assert.match(closed, /aria-expanded="false"/)
+  assert.doesNotMatch(closed, /flybot-tree-name/)
+})
+
+test('sidebar: clicking a node opens its chat via actions.openSession; toggles collapse children', () => {
+  const mod = loadClient()
+  const opened = []
+  let entry
+  mod.apply({ flybot: { slots: { register: (n, e) => { entry = e; return () => {} } }, bots: async () => [], fields: { on: () => () => {} } } })
+  const Section = entry.component
+  const tree = reactStub.createElement(Section, { actions: { openSession: id => opened.push(id) } })
+  const buttons = findAll(tree, n => n.props.className === 'flybot-tree-head')
+  assert.equal(buttons.length, 1)
+  // with data: render the pure view with the same openBot wiring
+  const view = reactStub.createElement(mod.TreeView, { forest: sample(mod), openBot: id => opened.push(id) })
+  const open = findAll(view, n => n.props.className === 'flybot-tree-open')
+  open.find(n => findAll(n, c => c.props.className === 'flybot-tree-name')[0].children[0] === 'Dev').props.onClick()
+  assert.deepEqual(opened, ['d'])
+  const toggles = findAll(view, n => n.props.className === 'flybot-tree-toggle')
+  assert.deepEqual(toggles.map(t => t.props['aria-label']), ['Collapse Root', 'Collapse Work']) // only nodes with children
+  // without openSession, node buttons are disabled
+  const plain = findAll(reactStub.createElement(mod.TreeView, { forest: sample(mod) }), n => n.props.className === 'flybot-tree-open')
+  assert.ok(plain.every(n => n.props.disabled === true))
+})
+
+test('root is created automatically on apply (once, even with concurrent ensureRoot)', async () => {
+  const m = createMockFlybot()
+  const { tree } = plugin.apply({ flybot: m.flybot })
+  const [a, b] = await Promise.all([tree.ensureRoot(), tree.ensureRoot()])
+  assert.equal(a, b)
+  await new Promise(r => setTimeout(r, 10))
+  assert.equal(m.bots.size, 1)
+  assert.equal([...m.bots.values()][0].name, 'Root')
+  const off = createMockFlybot(); plugin.apply({ flybot: off.flybot }, { autoRoot: false })
+  await new Promise(r => setTimeout(r, 10))
+  assert.equal(off.bots.size, 0)
 })

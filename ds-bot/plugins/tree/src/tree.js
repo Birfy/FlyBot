@@ -30,9 +30,15 @@ export function createTree(fb, { limits, rootName = 'Root' } = {}) {
   }
   const refreshPrompt = (id, nodes = snapshot()) => { if (nodes[id]) fb.setSystemPrompt(id, promptFor(id, nodes)) }
 
-  async function ensureRoot() {
+  let rootTask
+  /** Idempotent; concurrent calls share one creation. */
+  function ensureRoot() {
     const root = Object.values(snapshot()).find(n => n.parent === null)
-    if (root) return root.id
+    if (root) return Promise.resolve(root.id)
+    rootTask ??= createRoot().finally(() => { rootTask = undefined })
+    return rootTask
+  }
+  async function createRoot() {
     const role = 'Top-level coordinator for everything.'
     const id = await fb.createBot({ name: rootName, systemPrompt: systemPrompt({ name: rootName, role, trace: rootName, children: [] }), fields: { parent: null, treeRole: role } })
     return id

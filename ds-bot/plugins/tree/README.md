@@ -9,7 +9,7 @@ Recursive bot tree plugin for FlyBot (built on ds-bot / DeepSeek Harness).
 - `bot.send` middleware `tree`: inside the tree a bot may message only its parent and direct children (`deny` otherwise). Bots outside the tree get no opinion (`undefined`, next middleware decides).
 - Delegation is level by level: coordinators delegate to direct children whose scope fits and aggregate upward; a bot with no children does the work itself. Answers start with a one-line trace like `Root → Work → Dev`.
 - Tools (visible only to tree bots): `list_children()` and `create_child_bot(name, role_description)`. The parent is always the calling bot. Limits: depth 5 (root = 1), 8 children per node; duplicate sibling names (case/space-insensitive) are rejected. Every new child gets the same recursive system prompt template (`src/prompt.js`).
-- Frontend (`client.js`): collapsible tree in slot `flybot.sidebar.section`, refreshed on `parent`/`treeRole` field-change events.
+- Frontend (`client.js`, bundle id `@flybot/tree`): injects the browser `flybot` service and registers into FlyBot's own slot registry (`ctx.flybot.slots.register('flybot.sidebar.section', …)`, not the shell `slots` service); refreshed on `parent`/`treeRole` field changes and every 10 s. Collapsible "Tree" header with a node count, an empty state, an indented tree with guide lines, name and one-line role; clicking a node opens its chat (`actions.openSession`). Styles reuse ds-bot sidebar tokens (`--bt-*`). The root is created on startup (`autoRoot: false` turns it off).
 
 ### Config
 ```yaml
@@ -20,10 +20,11 @@ Recursive bot tree plugin for FlyBot (built on ds-bot / DeepSeek Harness).
     maxChildren: 8
     bypassSocial: false # true: allowed tree edges skip social friend/approval checks
     rootName: Root
+    autoRoot: true      # false: do not create the root at startup
 ```
 
 ### Plugin format (matches ds-bot)
-`package.json` has `"type": "module"`, keyword `dsh-plugin`, `exports` `.` (host) and `./client` (browser), and `"dsh": { "client": { "platform": "web" } }`. The host entry exports `name`, `inject`, `apply(ctx, config)` (cordis style). `client.js` uses `window.__ModuleLoader__.load({ id, factory(require) })` with `react` provided by the shell; it exports `inject` + `apply(ctx)` and registers a slot via `ctx.slots.register`.
+`package.json` has `"type": "module"`, keyword `dsh-plugin`, `exports` `.` (host) and `./client` (browser), and `"dsh": { "client": { "platform": "web" } }`. The host entry exports `name`, `inject`, `apply(ctx, config)` (cordis style). `client.js` uses `window.__ModuleLoader__.load({ id, factory(require) })` with `react` provided by the shell; it exports `inject: ['flybot']` + `apply(ctx)` and registers its section via `ctx.flybot.slots.register`.
 
 ### Interface (ctx.flybot, finalized by bot-im 2026-10-14 — all in `src/adapter.js`)
 | API | Shape |
@@ -39,7 +40,7 @@ Recursive bot tree plugin for FlyBot (built on ds-bot / DeepSeek Harness).
 | browser | `ctx.flybot.bots()` items carry `fields: { [plugin]: {...} }` (read `fields['flybot-tree']`); tree built in-plugin |
 | remote targets | `target.remote === true` (`{ handle, home }`), fallback `bot.isRemote(to)`; never tree members: passed to social |
 | `bot.created` | handled by social; tree does not subscribe |
-| root | created by the plugin (`ensureRoot`) when none exists |
+| root | created by the plugin at startup and on demand (`ensureRoot`, idempotent; concurrent calls share one creation) |
 
 ### Test
 `pnpm --filter @flybot/tree test` (or `node --test "test/*.test.js"`). `test/mock-flybot.js` is an in-memory mock of `ctx.flybot`.

@@ -18,6 +18,10 @@ export function apply(ctx, config = {}) {
     fb.onFieldChange(change => tree.onFieldChange(change)),
     fb.onBotRemoved(e => tree.onBotRemoved(e)),
   ]
+  // The tree starts with a root: create it once the host is up (config.autoRoot: false turns this off).
+  if (config.autoRoot !== false) {
+    Promise.resolve().then(() => tree.ensureRoot()).catch(error => (ctx.logger?.('flybot-tree')?.warn ?? console.warn)('flybot-tree: could not create the root:', error?.message ?? error))
+  }
   const dispose = () => { for (const d of disposers.splice(0)) d?.() }
   ctx.on?.('dispose', dispose)
   return { tree, dispose }
