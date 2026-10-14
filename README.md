@@ -126,7 +126,7 @@ API, so plugins never patch it:
     `tools.register({ name, parameters, visibleTo(botId), execute(args, { botId }) })`,
     `api.handle(name, fn)` for UI endpoints (`flybot/<name>` on ds-bot's `api/bot` route).
 - **Browser**: `ctx.flybot` (`bots()`, `fields.on('change')`) and slots
-  `flybot.sidebar.section`, `flybot.sidebar.structure` (the Bot list drawn as one tree under the Main Bot), `flybot.composer.mention`, `flybot.bot.details`,
+  `flybot.sidebar.section`, `flybot.sidebar.structure` (the Bot list drawn as one tree under the Main Bot; `menuItems({bot})` adds right-click items such as "Copy invite link"), `flybot.composer.mention`, `flybot.bot.details`,
   `flybot.approvals` (`ds-bot/src/client/flybot-slots.js`).
 - **Types**: `ds-bot/types/flybot.d.ts`.
 - **Plugins** (`ds-bot/plugins/`): `social` (friends' Bots via Bot Social, approval-gated

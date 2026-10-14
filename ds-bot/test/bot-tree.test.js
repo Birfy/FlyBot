@@ -27,3 +27,20 @@ test('sidebar tree draws the structure entry\'s nodeActions after each row', asy
   assert.match(src, /typeof actions === 'function' \? h\(NodeActions, \{ component: actions, bot \}\)/)
   assert.match(src, /children\.map\(child => h\(TreeNode, \{[^}]*actions \}\)\)/)
 })
+
+test('row context menu renders the structure entry\'s menuItems', async () => {
+  const { pluginItems } = await import('../src/client/flybot-registry.js')
+  const bot = { id: 'b', name: 'B' }
+  const notes = []
+  const actions = { notify: t => notes.push(t) }
+  assert.deepEqual(pluginItems(undefined, bot, actions), [])
+  assert.deepEqual(pluginItems({ menuItems: () => { throw new Error('x') } }, bot, actions), [])
+  const items = pluginItems({ menuItems: ({ bot }) => [
+    { id: 'a', label: 'Shown ' + bot.id, visible: true, run: () => 'done' },
+    { id: 'h', label: 'Hidden', visible: false, run: () => {} },
+    { id: 'bad', label: 'No run' },
+  ] }, bot, actions)
+  assert.deepEqual(items.map(i => i[0]), ['Shown b'])
+  await items[0][1]()
+  assert.deepEqual(notes, ['done'])
+})

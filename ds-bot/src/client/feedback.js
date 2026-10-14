@@ -133,9 +133,10 @@ export function ErrorToast({ useUi, actions }) {
     return () => { clearTimeout(fade); clearTimeout(gone) }
   }, [toast?.token])
   if (!toast) return null
-  return h('div', { className: 'bt-toast', role: 'alert', 'data-leaving': leaving || undefined },
+  const info = toast.tone === 'info'
+  return h('div', { className: 'bt-toast', role: info ? 'status' : 'alert', 'data-tone': toast.tone, 'data-leaving': leaving || undefined },
     h('span', { className: 'bt-toast-text' }, toast.text),
-    h('button', { type: 'button', className: 'bt-toast-link', onClick: () => { actions.dismissToast(toast.token); actions.openSettings('feedback') } }, t('Details')),
+    info ? null : h('button', { type: 'button', className: 'bt-toast-link', onClick: () => { actions.dismissToast(toast.token); actions.openSettings('feedback') } }, t('Details')),
     h('button', { type: 'button', className: 'bt-icon-btn bt-toast-close', 'aria-label': t('Dismiss'), onClick: () => actions.dismissToast(toast.token) }, h(CloseIcon)))
 }
 

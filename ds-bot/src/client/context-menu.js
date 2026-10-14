@@ -4,6 +4,9 @@ import { currentPart } from './text.js'
 import { GearIcon, PinIcon, UnreadIcon, PencilIcon, StarLineIcon, CopyIcon, HideIcon, TrashIcon, DuplicateIcon } from './icons.js'
 import { useEscape } from './overlay-hooks.js'
 import { t } from './i18n.js'
+import { useSidebarStructure } from './flybot-slots.js'
+import { pluginItems } from './flybot-registry.js'
+import { LinkIcon } from './icons.js'
 
 export function ContextMenu({ menu, roster, actions, leaving = false }) {
   useEscape(() => actions.closeMenu())
@@ -12,6 +15,7 @@ export function ContextMenu({ menu, roster, actions, leaving = false }) {
     window.addEventListener('mousedown', onDown)
     return () => window.removeEventListener('mousedown', onDown)
   }, [])
+  const structure = useSidebarStructure()
   const ref = useRef(null)
   const [place, setPlace] = useState({ left: menu.x, top: menu.y })
   useLayoutEffect(() => {
@@ -41,6 +45,7 @@ export function ContextMenu({ menu, roster, actions, leaving = false }) {
       bot && !isMainBot ? [t('Make Main Bot'), StarLineIcon, () => actions.setMain(bot.id, true)] : null,
       bot && isMainBot && mainCount > 1 ? [t('Remove Main Bot role'), StarLineIcon, () => actions.setMain(bot.id, false)] : null,
     ],
+    bot ? pluginItems(structure, bot, actions).map(([label, run]) => [label, LinkIcon, run]) : [],
     [[t('Copy conversation ID'), CopyIcon, () => navigator.clipboard?.writeText(bot ? currentPart(bot) : menu.id)]],
     [
       isMainBot ? null : [t('Hide from sidebar'), HideIcon, () => actions.setFlags(menu.id, { hidden: true })],
@@ -92,3 +97,4 @@ function AgentMenu({ menu, roster, actions, leaving }) {
         onClick: () => { actions.closeMenu(); void Promise.resolve(run()).catch(error => console.warn('[ds-bot]', error)) },
       }, h(Icon), label)))))
 }
+

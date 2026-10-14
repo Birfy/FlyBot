@@ -575,6 +575,8 @@ export function apply(ctx) {
       noteClientError(where, error)
       ui.set(state => ({ ...state, toast: { text: error?.message ?? String(error), token: Date.now() } }))
     },
+    // A short confirmation (e.g. "Invite link copied") in the same toast, without the error styling.
+    notify: text => ui.set(state => ({ ...state, toast: { text: String(text), tone: 'info', token: Date.now() } })),
     dismissToast: token => ui.set(state => (state.toast && (token === undefined || state.toast.token === token) ? { ...state, toast: null } : state)),
   }
   // Without the Desktop bridge these stay undefined, and no browser control renders.

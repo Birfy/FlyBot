@@ -570,12 +570,35 @@ const withNavigator = async (nav, fn) => {
 }
 const inviteButtons = (mod, flybot, bot) => findAll(reactStub.createElement(mod.makeInviteAction(flybot), { bot }), n => n.props.className === 'flybot-tree-invite')
 
-test('invite action: structure entry carries nodeActions; hidden without social or when canInvite is false', () => {
+test('menu item: structure entry carries menuItems with copy-invite, visible only when canInvite(bot.id)', async () => {
   const mod = loadClient()
   const entries = []
   const dispose = mod.registerStructure({ slots: { register: (n, e) => { entries.push(e); return () => {} } }, bots: async () => [] })
-  assert.equal(typeof entries[0].nodeActions, 'function')
+  assert.equal(typeof entries[0].menuItems, 'function')
+  assert.equal(entries[0].nodeActions, undefined) // no hover button any more
   dispose()
+  const b = { id: 'b1', name: '研究员' }
+  delete globalThis.__flybot__
+  const item = flybot => mod.makeMenuItems(flybot)({ bot: b })[0]
+  assert.equal(item({}).id, 'copy-invite')
+  assert.equal(item({}).label, 'Copy invite link')
+  assert.equal(item({}).visible, false)
+  assert.equal(item({ social: { canInvite: () => false } }).visible, false)
+  assert.equal(item({ social: { canInvite: () => { throw new Error('x') } } }).visible, false)
+  const seen = []
+  assert.equal(item({ social: { canInvite: id => { seen.push(id); return true } } }).visible, true)
+  assert.deepEqual(seen, ['b1'])
+  const copied = []
+  await withNavigator({ clipboard: { writeText: async t => { copied.push(t) } } }, async () => {
+    const note = await item({ social: { canInvite: () => true, createInvite: async id => ({ text: 'join ' + id, link: 'L' }) } }).run({ bot: b })
+    assert.equal(note, 'Invite link for 研究员 copied')
+  })
+  assert.deepEqual(copied, ['join b1'])
+  await assert.rejects(item({ social: { canInvite: () => true, createInvite: async () => { throw new Error('offline') } } }).run({ bot: b }), /offline/)
+})
+
+test('invite action (legacy hover component): hidden without social or when canInvite is false', () => {
+  const mod = loadClient()
   const bot = { id: 'b1', name: '研究员' }
   delete globalThis.__flybot__
   assert.equal(inviteButtons(mod, {}, bot).length, 0) // social not installed

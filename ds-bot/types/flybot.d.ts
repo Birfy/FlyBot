@@ -232,7 +232,12 @@ export type FlyBotCall = (endpoint: string, payload?: unknown) => Promise<any>
 export interface FlyBotSlots {
   'flybot.sidebar.section': { id: string; order?: number; component(props: SidebarSectionProps): any }
   /** The sidebar Bot list as one tree under the Main Bot; a missing/unknown parent means "under the Main Bot". First entry wins. */
-  'flybot.sidebar.structure': { id: string; order?: number; parentOf(botId: string): string | null | undefined }
+  'flybot.sidebar.structure': {
+    id: string; order?: number; parentOf(botId: string): string | null | undefined
+    /** Extra items in a Bot's right-click menu. visible false hides one; a string returned by run is shown as a toast, a throw as the error toast. */
+    menuItems?(props: { bot: { id: string; name: string } }): Array<{ id: string; label: string; visible?: boolean; run(props: { bot: { id: string; name: string } }): unknown }>
+    nodeActions?: unknown
+  }
   'flybot.composer.mention': { id: string; order?: number; candidates(query: string, context: { sessionId: string; roster: any; call: FlyBotCall }): MentionRow[] | Promise<MentionRow[]> }
   'flybot.bot.details': { id: string; order?: number; component(props: BotDetailsProps): any }
   /** policy: only approvals held by this middleware name; omit for all. */

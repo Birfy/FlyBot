@@ -168,3 +168,17 @@ export function botTree(bots, mainId, parentOf) {
   const walk = (bot, depth) => ({ bot, depth, children: (kids.get(bot.id) ?? []).map(child => walk(child, depth + 1)) })
   return [walk(main, 0)]
 }
+
+// Items the sidebar structure entry adds to a Bot's menu: menuItems({ bot }) → [{ id, label, visible, run }].
+// Returns [label, run] pairs; the menu adds the icon.
+// visible === false hides an item; run({ bot }) may return a string, shown as a confirmation toast.
+// A failing menuItems or run never breaks the menu: errors go to the console or the error toast.
+export function pluginItems(structure, bot, actions) {
+  if (typeof structure?.menuItems !== 'function') return []
+  let items
+  try { items = structure.menuItems({ bot }) } catch (error) { console.error('flybot: menuItems failed', error); return [] }
+  if (!Array.isArray(items)) return []
+  return items
+    .filter(item => item && item.visible !== false && typeof item.label === 'string' && typeof item.run === 'function')
+    .map(item => [item.label, async () => { const note = await item.run({ bot }); if (typeof note === 'string' && note) actions.notify?.(note) }])
+}

@@ -1248,6 +1248,21 @@ function botTree(bots, mainId, parentOf) {
   const walk = (bot, depth) => ({ bot, depth, children: (kids.get(bot.id) ?? []).map((child) => walk(child, depth + 1)) });
   return [walk(main, 0)];
 }
+function pluginItems(structure, bot, actions) {
+  if (typeof structure?.menuItems !== "function") return [];
+  let items;
+  try {
+    items = structure.menuItems({ bot });
+  } catch (error) {
+    console.error("flybot: menuItems failed", error);
+    return [];
+  }
+  if (!Array.isArray(items)) return [];
+  return items.filter((item) => item && item.visible !== false && typeof item.label === "string" && typeof item.run === "function").map((item) => [item.label, async () => {
+    const note = await item.run({ bot });
+    if (typeof note === "string" && note) actions.notify?.(note);
+  }]);
+}
 
 // src/client/flybot-slots.js
 var import_react = require("react");
@@ -3444,6 +3459,7 @@ var CopyIcon = lineIcon(["M8.5 7h6A1.5 1.5 0 0 1 16 8.5v6a1.5 1.5 0 0 1-1.5 1.5h
 var HideIcon = lineIcon(["M3 3l14 14", "M8.6 5.2A7.6 7.6 0 0 1 10 5c4.5 0 7 5 7 5a12.6 12.6 0 0 1-2 2.6M12.2 14.5A6.8 6.8 0 0 1 10 15c-4.5 0-7-5-7-5a12.4 12.4 0 0 1 3-3.4", "M8.5 8.5a2 2 0 0 0 3 3"]);
 var TrashIcon = lineIcon(["M3.5 5.5h13", "M8 5.5V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5", "M5 5.5l.7 10A1.5 1.5 0 0 0 7.2 17h5.6a1.5 1.5 0 0 0 1.5-1.5l.7-10", "M8.5 9v4.5M11.5 9v4.5"]);
 var DuplicateIcon = lineIcon(["M7 7h8.5v9.5H7z", "M4.5 13V3.5H13", "M11.25 9.5v4.5M9 11.75h4.5"]);
+var LinkIcon = lineIcon(["M8.5 11.5a3.5 3.5 0 0 0 5 0l2.5-2.5a3.5 3.5 0 0 0-5-5l-1 1", "M11.5 8.5a3.5 3.5 0 0 0-5 0L4 11a3.5 3.5 0 0 0 5 5l1-1"]);
 var SlidersIcon = lineIcon(["M4 6.5h5M12.5 6.5H16M4 13.5h4M11.5 13.5H16", "M10.5 4.5v4M9.5 11.5v4"]);
 var MemoryIcon = lineIcon(["M5.5 3.5h8A1.5 1.5 0 0 1 15 5v10a1.5 1.5 0 0 1-1.5 1.5h-8z", "M5.5 3.5v13", "M8.5 7.5h3.5M8.5 10.5h2.5", "M12 3.5v4l1-.8 1 .8"]);
 var FolderIcon = lineIcon(["M3 6A1.5 1.5 0 0 1 4.5 4.5h3.2l1.8 2h6A1.5 1.5 0 0 1 17 8v6.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"]);
@@ -10786,11 +10802,12 @@ function ErrorToast({ useUi, actions }) {
     };
   }, [toast?.token]);
   if (!toast) return null;
+  const info = toast.tone === "info";
   return (0, import_react27.createElement)(
     "div",
-    { className: "bt-toast", role: "alert", "data-leaving": leaving || void 0 },
+    { className: "bt-toast", role: info ? "status" : "alert", "data-tone": toast.tone, "data-leaving": leaving || void 0 },
     (0, import_react27.createElement)("span", { className: "bt-toast-text" }, toast.text),
-    (0, import_react27.createElement)("button", { type: "button", className: "bt-toast-link", onClick: () => {
+    info ? null : (0, import_react27.createElement)("button", { type: "button", className: "bt-toast-link", onClick: () => {
       actions.dismissToast(toast.token);
       actions.openSettings("feedback");
     } }, t("Details")),
@@ -11266,6 +11283,7 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
   }, []);
+  const structure = useSidebarStructure();
   const ref = (0, import_react30.useRef)(null);
   const [place, setPlace] = (0, import_react30.useState)({ left: menu.x, top: menu.y });
   (0, import_react30.useLayoutEffect)(() => {
@@ -11298,6 +11316,7 @@ function ContextMenu({ menu, roster, actions, leaving = false }) {
       bot && !isMainBot ? [t("Make Main Bot"), StarLineIcon, () => actions.setMain(bot.id, true)] : null,
       bot && isMainBot && mainCount > 1 ? [t("Remove Main Bot role"), StarLineIcon, () => actions.setMain(bot.id, false)] : null
     ],
+    bot ? pluginItems(structure, bot, actions).map(([label, run]) => [label, LinkIcon, run]) : [],
     [[t("Copy conversation ID"), CopyIcon, () => navigator.clipboard?.writeText(bot ? currentPart(bot) : menu.id)]],
     [
       isMainBot ? null : [t("Hide from sidebar"), HideIcon, () => actions.setFlags(menu.id, { hidden: true })],
@@ -14251,6 +14270,8 @@ function apply(ctx) {
       noteClientError(where, error);
       ui2.set((state) => ({ ...state, toast: { text: error?.message ?? String(error), token: Date.now() } }));
     },
+    // A short confirmation (e.g. "Invite link copied") in the same toast, without the error styling.
+    notify: (text) => ui2.set((state) => ({ ...state, toast: { text: String(text), tone: "info", token: Date.now() } })),
     dismissToast: (token) => ui2.set((state) => state.toast && (token === void 0 || state.toast.token === token) ? { ...state, toast: null } : state)
   };
   if (browsers) {

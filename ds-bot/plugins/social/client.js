@@ -53,7 +53,6 @@ window.__ModuleLoader__.load({
 .fs-card .fs-hint{padding:0}
 .fs-line{display:flex;gap:6px;min-width:0;align-items:center}
 .fs-input{flex:1 1 auto;min-width:0;width:0;height:30px;padding:0 9px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:13px;outline:none;text-overflow:ellipsis}
-.fs-select{width:100%;cursor:pointer;appearance:auto}
 .fs-input:focus{border-color:var(--bt-accent,#4d6bfe)}
 .fs-input[readonly]{background:var(--bt-tag-bg,rgba(20,20,20,.06));border-color:transparent}
 .fs-btn{flex:none;height:30px;padding:0 12px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:8px;background:transparent;color:var(--bt-ink,#141414);font:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;transition:background-color .12s ease}
@@ -111,21 +110,16 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'fs-sub' }, bot.handle)),
               h('span', { className: 'fs-tag bt-social-badge' }, 'remote'))))),
           data && homes.length === 0 && !adding
-            ? h('div', { className: 'fs-empty' }, 'No friends yet. Use ', h('b', null, '+ Add'), ' to invite a friend to one of your Bots, or to join a friend\'s invite.')
+            ? h('div', { className: 'fs-empty' }, 'No friends yet. Right-click one of your Bots and choose ', h('b', null, 'Copy invite link'), ', or use ', h('b', null, '+ Add'), ' to join a friend\'s invite.')
             : null) : null)
     }
 
-    // Add friend: share an invite link, join a friend's link, and answer requests.
+    // Add friend: join a friend's link and answer requests (invites are made from a Bot's right-click menu).
     function AddFriend({ onChange }) {
       const [overview, setOverview] = useState(null)
-      const [invite, setInvite] = useState(null)
       const [code, setCode] = useState('')
       const [status, setStatus] = useState(null)
       const [busy, setBusy] = useState(false)
-      const [copied, setCopied] = useState(false)
-      const [mine, setMine] = useState(null)
-      const [pick, setPick] = useState('')
-      useEffect(() => { loadStatus().then(value => { setMine(value); const main = value?.bots?.find(b => b.isMain) ?? value?.bots?.[0]; if (main) setPick(p => p || main.id) }, () => {}) }, [])
       const refresh = () => call('social/overview', {}).then(setOverview, e => setStatus({ tone: 'error', text: errorText(e) }))
       useEffect(() => { refresh() }, [])
       const run = async (label, fn) => {
@@ -142,7 +136,6 @@ window.__ModuleLoader__.load({
           setBusy(false)
         }
       }
-      const create = () => run('Creating the invite link', async () => { setCopied(false); setInvite(await call('social/create-invite', { botId: pick })) })
       const join = e => {
         e.preventDefault()
         return run('Joining', async () => {
@@ -155,33 +148,10 @@ window.__ModuleLoader__.load({
         await call('social/respond', { relationshipId: item.relationshipId, decision })
         return decision === 'accept' ? `${item.name ?? item.handle} is now a friend.` : `Declined ${item.name ?? item.handle}.`
       })
-      const link = invite ? (invite.url ?? invite.code) : ''
-      const copyText = (text, what) => {
-        const done = () => { setCopied(what); setTimeout(() => setCopied(false), 2000) }
-        const clip = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
-        if (clip?.writeText) clip.writeText(text).then(done, () => setStatus({ tone: 'error', text: 'Could not copy. Select the link and copy it by hand.' }))
-        else setStatus({ tone: 'error', text: 'Copying is not available here. Select the link and copy it by hand.' })
-      }
       const incoming = overview?.incoming ?? []
       const outgoing = overview?.outgoing ?? []
-      const expires = invite?.expiresAt ? new Date(invite.expiresAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : ''
-      const message = invite?.text ?? link
-      const bots = mine?.bots ?? []
       return h('div', { className: 'bt-social-add', 'data-flybot': 'add-friend' },
-        h('div', { className: 'fs-card' },
-          h('div', { className: 'fs-hint' }, 'Invite a friend to one of your Bots. They can talk to that Bot only.'),
-          h('div', { className: 'fs-line' },
-            h('select', { className: 'fs-input fs-select', value: pick, 'aria-label': 'Bot to invite to', disabled: busy || bots.length === 0, onChange: e => { setPick(e.target.value); setInvite(null) } },
-              bots.length === 0 ? h('option', { value: '' }, mine === null ? 'Loading…' : 'No Bots available') : null,
-              bots.map(b => h('option', { key: b.id, value: b.id }, b.isMain ? `${b.name} (Main Bot)` : b.name)))),
-          h('button', { type: 'button', className: 'fs-btn fs-btn-primary', disabled: busy || !pick, onClick: create }, invite ? 'Create another invite link' : 'Create invite link'),
-          invite ? h('div', { className: 'fs-hint' }, 'Invite to ', h('b', null, invite.botName ?? ''), ' ', invite.handle ?? '') : null,
-          invite ? h('div', { className: 'bt-social-invite', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-            h('div', { className: 'fs-line' },
-              h('input', { className: 'fs-input', readOnly: true, value: link, 'aria-label': 'Invite link', title: link, onFocus: e => e.target.select() }),
-              h('button', { type: 'button', className: 'fs-btn', title: 'Copy the link with instructions for your friend', onClick: () => copyText(message, 'message'), 'aria-live': 'polite' }, copied === 'message' ? 'Copied' : 'Copy')),
-            h('div', { className: 'fs-hint' }, expires ? `Works once, until ${expires}. ` : 'Works once. ',
-              h('button', { type: 'button', className: 'fs-link', onClick: () => copyText(link, 'link') }, copied === 'link' ? 'Link copied' : 'Copy link only'))) : null),
+        h('div', { className: 'fs-hint', 'data-flybot': 'invite-hint' }, 'To invite a friend to one of your Bots, right-click it in the Bot list and choose ', h('b', null, 'Copy invite link'), '.'),
         h('form', { onSubmit: join, className: 'fs-card bt-social-join' },
           h('div', { className: 'fs-hint' }, 'Got a link from a friend?'),
           h('div', { className: 'fs-line' },

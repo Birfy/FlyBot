@@ -183,6 +183,25 @@ window.__ModuleLoader__.load({
         return { tone: 'error', text: String(error?.message ?? error) || 'Could not copy' }
       }
     }
+    /** Right-click menu items for a tree node: "Copy invite link" when social.canInvite(bot.id) is true. */
+    function makeMenuItems(flybot) {
+      return function menuItems({ bot }) {
+        const id = bot?.id
+        let can = false
+        try { can = Boolean(id) && socialOf(flybot)?.canInvite?.(id) === true } catch { can = false }
+        return [{
+          id: 'copy-invite',
+          label: 'Copy invite link',
+          visible: can,
+          run: async () => {
+            const result = await copyInvite(flybot, id)
+            if (result.tone === 'error') throw new Error(`Could not copy the invite link: ${result.text}`)
+            return `Invite link for ${bot.name} copied`
+          },
+        }]
+      }
+    }
+    // Earlier hover button (kept for plugins that still render it; the tree registers menuItems instead).
     function makeInviteAction(flybot) {
       return function InviteAction({ bot }) {
         useInviteStyles()
@@ -264,9 +283,9 @@ window.__ModuleLoader__.load({
       let parents = new Map()
       let key = '[]'
       let stopped = false
-      // nodeActions: optional per-node component ds-bot renders next to each tree row ({ bot }).
-      const nodeActions = makeInviteAction(flybot)
-      const entry = () => ({ id: 'flybot-tree', order: 90, parentOf: id => parents.get(id), nodeActions })
+      // menuItems: entries ds-bot adds to a Bot's right-click menu ({ bot } → [{ id, label, visible, run }]).
+      const menuItems = makeMenuItems(flybot)
+      const entry = () => ({ id: 'flybot-tree', order: 90, parentOf: id => parents.get(id), menuItems })
       let off = flybot.slots.register('flybot.sidebar.structure', entry())
       const refresh = async () => {
         let bots
@@ -311,6 +330,6 @@ window.__ModuleLoader__.load({
       ctx.effect?.(() => off, 'flybot-tree: tree helper')
       return off
     }
-    return { name: 'flybot-tree', inject, apply, forestOf, registerStructure, makeInviteAction, copyInvite, copyText, INVITE_CSS, buildForest, treeOf, TreeView, countNodes, EMPTY, CSS }
+    return { name: 'flybot-tree', inject, apply, forestOf, registerStructure, makeMenuItems, makeInviteAction, copyInvite, copyText, INVITE_CSS, buildForest, treeOf, TreeView, countNodes, EMPTY, CSS }
   },
 })
