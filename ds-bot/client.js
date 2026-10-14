@@ -1796,6 +1796,13 @@ function reminderPrompts(text) {
   }
 }
 var stripHeader = (text) => text.replace(HEADER, "");
+var TRACE = /^[ \t]*[^\n→]{1,60}(?:[ \t]*→[ \t]*[^\n→]{1,60})+[ \t]*(?:\n+|$)/;
+function stripTrace(text) {
+  if (typeof text !== "string") return text;
+  const line = text.match(TRACE)?.[0];
+  if (!line || /[.!?。！？:：,，]/.test(line.replace(/[^\S\n]*\n+$/, "").replace(/→/g, ""))) return text;
+  return text.slice(line.length).replace(/^\s+/, "");
+}
 function latestMemoryChange(news, ids) {
   const at = (id) => news?.[id]?.seen ? news[id].at ?? 0 : 0;
   return ids.reduce((best, id) => at(id) > at(best) ? id : best, ids[0] ?? null);
@@ -1906,7 +1913,7 @@ function previewOf(list, id, hiddenTurns = []) {
     const entry = outline[index];
     if (hiddenTurns.includes(entry.turn)) continue;
     const text = entry.response || entry.prompt || "";
-    if (text !== "") return stripHeader(text).replace(/\s+/g, " ").trim();
+    if (text !== "") return stripTrace(stripHeader(text)).replace(/\s+/g, " ").trim();
   }
   return "";
 }
@@ -2905,6 +2912,9 @@ var CONVERSATION_CSS = `
 .bt-think{font-size:13px;line-height:18px;color:var(--bt-ink-2);margin:2px 0 4px;max-width:min(560px,78%)}
 .bt-think summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px}
 .bt-think summary::-webkit-details-marker{display:none}
+.bt-think-caret{display:inline-block;transition:transform .15s;font-size:14px;line-height:1}
+.bt-think[open] .bt-think-caret{transform:rotate(90deg)}
+.bt-remote-handle{display:inline-flex;align-items:center;gap:3px;margin-left:6px;font-weight:400;color:var(--bt-ink-3,rgba(20,20,20,.36))}
 .bt-think-text{white-space:pre-wrap;margin-top:6px;padding-left:10px;border-left:2px solid var(--bt-line-2)}
 .bt-event{display:flex;justify-content:center;align-items:center;gap:2px;min-height:24px;margin:2px 0;font-size:12px;line-height:16px;color:var(--bt-ink-2);flex-wrap:wrap}
 .bt-event>span{padding:0 2px}
@@ -4199,10 +4209,11 @@ function MessageTools({ text, name, sessionId, react, actions }) {
   );
 }
 function ThinkingRow({ text }) {
+  if (typeof text !== "string" || text.trim() === "") return null;
   return (0, import_react7.createElement)(
     "details",
     { className: "bt-think" },
-    (0, import_react7.createElement)("summary", null, t("Thought it through")),
+    (0, import_react7.createElement)("summary", null, (0, import_react7.createElement)("span", { className: "bt-think-caret", "aria-hidden": true }, "›"), t("Thought it through")),
     (0, import_react7.createElement)("div", { className: "bt-think-text" }, text)
   );
 }
@@ -4223,7 +4234,7 @@ function AssistantCell({ node, groupPart, sessionId, openFile, fileMentions, use
   const contexts = useTurnContext(String(data.turn));
   const mentions = useFileMentions({ node, openFile, fileMentions, useTurnData });
   const hidden = Boolean(roster.roomsById[sessionId]) || isHiddenTurn(roster, sessionId, data.turn);
-  const texts2 = groupPart === "reasoning" ? [] : data.blocks.filter((block) => block.kind === "text" && block.text.trim() !== "").map((block) => block.text);
+  const texts2 = groupPart === "reasoning" ? [] : data.blocks.filter((block) => block.kind === "text" && block.text.trim() !== "").map((block, index) => index === 0 ? stripTrace(block.text) : block.text).filter((text) => text.trim() !== "");
   const running = data.status === "running";
   useLiveNote(actions, sessionId, `text:${node.key ?? data.seq}`, !hidden && running && texts2.length > 0 ? { text: true } : null);
   if (hidden) return null;
@@ -4296,22 +4307,38 @@ function GroupMessage({ bot, text, room: room2, roster, actions, msgKey, useUi }
     (0, import_react7.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room2?.id, msgKey, useUi, lead })
   );
 }
+function remoteSpeaker(source, roster) {
+  const handle = source.remote.handle;
+  const member = (roster.remoteBots ?? []).find((bot2) => bot2.handle === handle);
+  const chat = (roster.bots ?? []).find((bot2) => bot2.remote?.handle === handle);
+  const name = chat?.name ?? member?.name ?? source.senderName ?? handle;
+  const bot = chat ?? { id: `remote:${handle}`, name, color: member?.color, shape: member?.shape };
+  return { bot, member, name, handle, chatId: chat ? currentPart(chat) : void 0 };
+}
 function RemoteMessage({ source, text, roster, actions, sessionId, msgKey, useUi }) {
-  const member = (roster.remoteBots ?? []).find((bot2) => bot2.handle === source.remote.handle);
+  const { bot, member, name, handle, chatId } = remoteSpeaker(source, roster);
   const files = Array.isArray(source.attachments) ? source.attachments : [];
-  const bot = { id: `remote:${source.remote.handle}`, name: member?.name ?? source.senderName ?? source.remote.handle, color: "gray" };
-  const lead = (0, import_react7.createElement)("span", { className: "bt-lead", title: source.remote.handle }, (0, import_react7.createElement)(BotMark, { bot, size: 22 }));
+  const mark = (0, import_react7.createElement)(BotMark, { bot, size: 22 });
+  const lead = chatId ? (0, import_react7.createElement)("button", { type: "button", className: "bt-lead", title: handle, "aria-label": t("Open {name}'s chat", { name }), onClick: () => actions.openSession(chatId) }, mark) : (0, import_react7.createElement)("span", { className: "bt-lead", title: handle }, mark);
   return (0, import_react7.createElement)(
     "div",
-    { className: "bt-group-msg bt-remote-msg", "data-remote": source.remote.handle },
+    { className: "bt-group-msg bt-remote-msg", "data-remote": handle },
     (0, import_react7.createElement)(
       "span",
-      { className: "bt-group-name" },
-      bot.name,
-      (0, import_react7.createElement)("span", { className: "bt-group-role bt-remote-badge", title: source.remote.home ?? source.remote.handle }, "remote")
+      { className: "bt-group-name", style: { color: inkText(colorOf(bot)) } },
+      name,
+      (0, import_react7.createElement)("span", { className: "bt-remote-handle", title: source.remote.home ?? handle, "aria-label": t("Friend's Bot") }, (0, import_react7.createElement)(GlobeMark), handle)
     ),
-    (0, import_react7.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead }),
+    (0, import_react7.createElement)(Bubbles, { texts: [stripTrace(text)], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead }),
     files.length ? (0, import_react7.createElement)(RemoteFiles, { files, plugin: member?.plugin ?? "social", botId: roster.byId[sessionId]?.id ?? sessionId }) : null
+  );
+}
+function GlobeMark() {
+  return (0, import_react7.createElement)(
+    "svg",
+    { width: 10, height: 10, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", "aria-hidden": true },
+    (0, import_react7.createElement)("circle", { cx: 12, cy: 12, r: 9 }),
+    (0, import_react7.createElement)("path", { d: "M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" })
   );
 }
 function RemoteFiles({ files, plugin, botId }) {
