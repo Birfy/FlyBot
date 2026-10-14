@@ -49,12 +49,12 @@ jobs:
           node-version: 24
           # No cache in a job that publishes: nothing restored from a cache goes into a release.
           package-manager-cache: false
-      - name: Tag matches ds-bot/package.json
+      - name: Tag matches core/package.json
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          have=$(node -p "require('./ds-bot/package.json').version")
-          [ "$have" = "$VERSION" ] || { echo "ds-bot/package.json is $have, tag is v$VERSION" >&2; exit 1; }
+          have=$(node -p "require('./core/package.json').version")
+          [ "$have" = "$VERSION" ] || { echo "core/package.json is $have, tag is v$VERSION" >&2; exit 1; }
       - name: Wait for a green Test run on this commit
         run: |
           sha=$(git rev-parse HEAD)

@@ -1,5 +1,4 @@
-import { FlyBotSections, useSidebarStructure, botTree } from './flybot-slots.js'
-import { Component, createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createElement as h, Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { FishLogo } from '@deepseek-ai/dsh-client-ui-primitives'
 import { isMainOf } from './sources.js'
@@ -38,7 +37,7 @@ const workKeys = text => (text === '' ? [] : text.split(',').map((key) => {
 }))
 const workLine = (lead, tool, more) => h(Shimmer, null, `${lead} · ${workPhrase(tool)}…${more > 0 ? ` +${more}` : ''}`)
 
-function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked, asRow = false }) {
+function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked }) {
   const id = bot.id
   const part = currentPart(bot)
   const preview = useSessions(list => previewOf(list, part, roster.exchangeTurns[part]))
@@ -47,7 +46,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const unread = useSessionStatus(map => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== undefined) || (marked && !active)
   useMarkedUnread(id, active, marked, actions)
   const main = isMainOf(roster, id)
-  const tile = roster.mainBotId === id && !asRow
+  const tile = roster.mainBotId === id
   const approval = useApproval(useWork, entry => entry.botId === id)
   const alert = roster.questions?.[part] !== undefined || approval
   const doing = useActivity(map => map[id])
@@ -79,16 +78,9 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   h(BotAvatar, { bot, size: 36, state, main }),
   pinned && !wide ? h(PinMark) : null,
   wide ? h('span', { className: 'bt-row-body' },
-    h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, bot.name), bot.remote ? h(RemoteMark, { remote: bot.remote }) : null, pinned ? h(PinMark) : null),
+    h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, bot.name), pinned ? h(PinMark) : null),
     awayLine ? h('span', { className: 'bt-row-preview' }, awayLine) : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
   wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null)
-}
-
-// A friend's Bot: a small globe after the name, its handle on hover.
-function RemoteMark({ remote }) {
-  return h('span', { className: 'bt-row-remote', title: remote.gone ? `${remote.handle} · ${t('no longer shared')}` : remote.handle, 'aria-label': t('Friend\'s Bot') },
-    h('svg', { width: 11, height: 11, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', 'aria-hidden': true },
-      h('circle', { cx: 12, cy: 12, r: 9 }), h('path', { d: 'M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18' })))
 }
 
 function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, wide, marked }) {
@@ -243,30 +235,6 @@ function useListGlide(listRef, layout, key) {
   }, [layout, key])
 }
 
-// One Bot of the sidebar tree: its usual row, indented by depth, with a toggle when it has children.
-// `actions` is the structure entry's optional nodeActions component (e.g. the tree's "Copy invite
-// link"), drawn after the row; a failing one draws nothing.
-// A try/catch around createElement cannot see render errors, so this is an error boundary.
-class NodeActions extends Component {
-  constructor(props) { super(props); this.state = { failed: false } }
-  static getDerivedStateFromError() { return { failed: true } }
-  componentDidCatch(error) { console.error('flybot: nodeActions failed', error) }
-  render() { return this.state.failed ? null : h(this.props.component, { bot: this.props.bot }) }
-}
-
-function TreeNode({ node, rowProps, markedUnread, collapsed, toggle, actions }) {
-  const { bot, depth, children } = node
-  const closed = collapsed[bot.id] === true
-  return h(Fragment, null,
-    h('div', { className: 'bt-tree-item', 'data-depth': depth, style: { paddingLeft: `${depth * 16}px` } },
-      children.length
-        ? h('button', { type: 'button', className: 'bt-tree-toggle', 'aria-expanded': !closed, 'aria-label': `${closed ? t('Expand') : t('Collapse')} ${bot.name}`, onClick: () => toggle(bot.id) }, '▾')
-        : h('span', { className: 'bt-tree-toggle bt-tree-leaf', 'aria-hidden': true }),
-      h(BotRow, { ...rowProps, bot, asRow: true, marked: markedUnread[bot.id] === true }),
-      typeof actions === 'function' ? h(NodeActions, { component: actions, bot }) : null),
-    closed ? null : children.map(child => h(TreeNode, { key: child.bot.id, node: child, rowProps, markedUnread, collapsed, toggle, actions })))
-}
-
 export function TeamSidebar(props) {
   const { wide, useRoster, useUi, useSessions, actions } = props
   const listRef = useRef(null)
@@ -281,8 +249,7 @@ export function TeamSidebar(props) {
   const order = useMemo(() => {
     const stamps = JSON.parse(updated)
     const entries = [
-      // Friends' Bots (remote chats) are listed by their plugin's section, not with the team.
-      ...roster.bots.filter(bot => bot.id !== roster.mainBotId && !bot.remote).map(bot => ({ kind: 'bot', item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
+      ...roster.bots.filter(bot => bot.id !== roster.mainBotId).map(bot => ({ kind: 'bot', item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
       ...roster.rooms.map(room => ({ kind: 'room', item: room, at: stamps[room.id] ?? room.createdAt })),
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map(agent => ({ kind: 'agent', item: agent, at: Math.max(0, ...agent.sessions.map(id => stamps[id] ?? 0)) || agent.createdAt })),
@@ -290,11 +257,6 @@ export function TeamSidebar(props) {
     return entries.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at)
   }, [roster, updated])
   const main = roster.byId[roster.mainBotId]
-  // A plugin (the tree) may give the Bots a structure: the list then is one tree under the Main Bot.
-  const structure = useSidebarStructure()
-  const [collapsed, setCollapsed] = useState({})
-  const toggle = id => setCollapsed(value => ({ ...value, [id]: !value[id] }))
-  const tree = structure && wide && main ? botTree([main, ...order.filter(entry => entry.kind === 'bot').map(entry => entry.item)], main.id, id => structure.parentOf(id)) : null
   useListGlide(listRef, wide, order.map(entry => entry.item.id).join(','))
   useLandOnMainBot(roster, useSessions, actions)
   const rowProps = { roster, actions, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, wide }
@@ -316,14 +278,12 @@ export function TeamSidebar(props) {
           h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon))),
     wide && roster.readOnly ? h('div', { className: 'bt-hint bt-read-only', role: 'status' }, hostText(roster.readOnly)) : null,
     h('div', { ref: listRef, className: 'bt-list', role: 'region', 'aria-label': t('Bot list') },
-      tree ? h('div', { className: 'bt-tree', role: 'group', 'aria-label': t('Bot tree') }, tree.map(node => h(TreeNode, { key: node.bot.id, node, rowProps, markedUnread, collapsed, toggle, actions: structure?.nodeActions })))
-        : main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, t('Setting up your Main Bot…')),
-      order.filter(entry => !(tree && entry.kind === 'bot')).map(entry => (entry.kind === 'bot'
+      main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, t('Setting up your Main Bot…')),
+      order.map(entry => (entry.kind === 'bot'
         ? h(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true })
         : entry.kind === 'room'
           ? h(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true })
-          : h(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true }))),
-      wide ? h(FlyBotSections, { roster, actions, renderBot: bot => h(BotRow, { key: bot.id, ...rowProps, bot, asRow: true, marked: markedUnread[bot.id] === true }) }) : null))
+          : h(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true })))))
 }
 
 // The update button at the sidebar's top right: a cloud while a newer DS Bot —
@@ -415,10 +375,33 @@ function UpdateButton({ useUpdate, actions }) {
 // The footer entry to the shell's plugin panel, marked as not yet adapted: the red
 // badge and a hover tip explain that plugin support lands step by step.
 export function ConnectPlugins({ wide, actions }) {
+  const tipId = useId()
+  const [tip, setTip] = useState(false)
+  const timer = useRef(0)
+  const button = useRef(null)
+  const [box, setBox] = useState(null)
+  useEffect(() => () => clearTimeout(timer.current), [])
   if (!wide) return null
+  const show = () => {
+    clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      const rect = button.current?.getBoundingClientRect()
+      if (!rect) return
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - 268))
+      setBox({ left, bottom: window.innerHeight - rect.top + 10 })
+      setTip(true)
+    }, 250)
+  }
+  const hide = () => { clearTimeout(timer.current); setTip(false) }
   return h('span', { className: 'bt-connect-wrap' },
-    h('button', { type: 'button', className: 'bt-connect bt-connect-foot', onClick: () => actions.selectPanel('plugins') },
-      h(PlugIcon), t('Connect plugins')))
+    h('button', {
+      ref: button, type: 'button', className: 'bt-connect bt-connect-foot', 'aria-describedby': tip ? tipId : undefined,
+      onMouseEnter: show, onMouseLeave: hide, onFocus: show, onBlur: hide,
+      onClick: () => actions.selectPanel('plugins'),
+    },
+    h(PlugIcon), t('Connect plugins'), h('span', { className: 'bt-connect-warn', 'aria-hidden': true }, '!')),
+    tip && box ? createPortal(h('span', { role: 'tooltip', id: tipId, className: 'bt-connect-tip', style: box },
+      t('Plugin compatibility is not fully verified.')), document.body) : null)
 }
 
 // Account seat of the Settings trigger: the visible label stays for assistive tech only.

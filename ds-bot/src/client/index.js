@@ -1,4 +1,3 @@
-import { FLYBOT_CSS, FlyBotApprovals, createClientApi as createFlyBotClient } from './flybot-slots.js'
 import { call } from './api.js'
 import { isHex, inkText, paintCss } from './inks.js'
 import { DEFAULT_MASK, SHAPES, markupCache, maskOf } from './characters.js'
@@ -38,14 +37,6 @@ import { noticeApprovals } from './approval-notices.js'
 export const inject = ['sessions', 'uiWorkspace', 'uiConversation', 'slots', 'theme', 'layout']
 
 export function apply(ctx) {
-  // FlyBot: the browser `flybot` service for client plugins (bots(), fields.on, slots).
-  const flybot = createFlyBotClient()
-  globalThis.__flybot__.api = flybot
-  try {
-    if (typeof ctx.provide === 'function') ctx.provide('flybot', flybot)
-    else if (typeof ctx.reflect?.provide === 'function') ctx.reflect.provide('flybot', flybot)
-    else if (typeof ctx.set === 'function') ctx.set('flybot', flybot)
-  } catch {}
   ctx.effect(() => installLocale(ctx.get('locale')), 'ds-bot: interface copy')
   const roster = createSource(EMPTY_ROSTER)
   migrateStorage()
@@ -575,8 +566,6 @@ export function apply(ctx) {
       noteClientError(where, error)
       ui.set(state => ({ ...state, toast: { text: error?.message ?? String(error), token: Date.now() } }))
     },
-    // A short confirmation (e.g. "Invite link copied") in the same toast, without the error styling.
-    notify: text => ui.set(state => ({ ...state, toast: { text: String(text), tone: 'info', token: Date.now() } })),
     dismissToast: token => ui.set(state => (state.toast && (token === undefined || state.toast.token === token) ? { ...state, toast: null } : state)),
   }
   // Without the Desktop bridge these stay undefined, and no browser control renders.
@@ -621,7 +610,6 @@ export function apply(ctx) {
   }
   actions.closePanel = () => { ui.set(state => (state.details ? { ...state, details: null, view: 'details', renaming: false, tab: null } : state)) }
   // Whether AccountLauncher holds the shell's settings seat; FooterAccount steps aside if so.
-  actions.flybotSlotEntries = name => ctx.slots.entries?.(name) ?? []
   actions.signInEntry = () => ctx.slots.entries?.('settings.models.sign-in')?.[0] ?? null
   actions.canSignIn = () => Boolean(actions.signInEntry())
   actions.signIn = () => ui.set(state => ({ ...state, signIn: (state.signIn ?? 0) + 1 }))
@@ -769,7 +757,6 @@ export function apply(ctx) {
     installCompiledStyles(SCHEDULE_CSS, 'schedules'),
     installCompiledStyles(FEEDBACK_CSS, 'feedback'),
     installCompiledStyles(ABOUT_CSS, 'about'),
-    installCompiledStyles(FLYBOT_CSS, 'flybot'),
     installCompiledStyles(MEMBER_CSS, 'members'),
     installCompiledStyles(USER_MESSAGE_CSS, 'user-messages'),
     browsers ? installCompiledStyles(BROWSER_CSS, 'browser') : null,
@@ -786,7 +773,6 @@ export function apply(ctx) {
     shadow('shell.overlay', { id: 'bot', order: 50, inject: face }, Overlays),
     shadow('shell.overlay', { id: 'bot-signin', order: 55, inject: face }, DeepSeekSignIn),
     shadow('shell.overlay', { id: 'bot-toast', order: 60, inject: face }, ErrorToast),
-    shadow('shell.overlay', { id: 'flybot-approvals', order: 58, inject: face }, FlyBotApprovals),
   ]
   const installConversation = () => [
     installCompiledStyles(CONVERSATION_CSS, 'conversation'),

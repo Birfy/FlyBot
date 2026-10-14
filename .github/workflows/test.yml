@@ -36,7 +36,7 @@ jobs:
           dsh: 0.2.0-rc.2
           coverage: 'true'
 
-  # What a DSH profile installs: each package packs with everything its main/exports/files
+  # The core pin (ds-bot.pin.json + patches/ds-bot/ -> core/), then what a DSH profile installs: each package packs with everything its main/exports/files
   # name, and no tests or dev tools. The release job ships these same tarballs.
   package:
     name: package
@@ -49,10 +49,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: 24
-      - name: Pack and check ds-bot, social, tree
+      - name: ds-bot/ matches the pin, patches apply, core/ is ds-bot/ + patches (#34)
+        run: node scripts/ds-bot-patches.mjs check
+      - name: Pack and check core (ds-bot), social, tree
         run: node .github/scripts/check-pack.mjs
       - name: Typecheck the plugin API (types/*.d.ts, strict)
-        working-directory: ds-bot
+        working-directory: core
         run: npx --yes -p typescript@5.9.3 tsc --noEmit --strict --skipLibCheck types/*.d.ts
       - name: Changelog has an Unreleased section
         run: grep -q '^## \[Unreleased\]' CHANGELOG.md

@@ -99,17 +99,3 @@ test('the Thinking section always offers Default, so a picked level can be clear
   assert.deepEqual([...effortRows({ efforts }).map(row => row.effort)], [undefined, 'low', 'high'])
   assert.equal(effortRows({ efforts: [] }).length, 0)
 })
-
-test("a friend's Bot never gets the lost-model picker; an ended share says why instead", () => {
-  const remoteDock = (remote) => {
-    const bot = { id: 'r', name: '助手', model: 'flybot-remote/bot.friend.home', remote }
-    const roster = { ready: true, byId: { r: bot }, models, defaultModel: models[0].ref }
-    return ModelChoiceDock({ sessionId: 'r', useRoster: select => select(roster), actions: { updateBot: () => { throw new Error('no pick') } } })
-  }
-  assert.equal(remoteDock({ handle: 'bot.friend.home' }), null)
-  const gone = remoteDock({ handle: 'bot.friend.home', gone: true })
-  assert.ok(gone)
-  const flat = JSON.stringify(gone, (key, value) => typeof value === 'function' ? value.name : value)
-  assert.doesNotMatch(flat, /bt-model-chip|Pick another model/)
-  assert.match(flat, /RemoteGoneDock/)
-})

@@ -48,7 +48,7 @@ You need:
 
 ```sh
 git clone https://github.com/Fei2411/DeepSeek-Bot.git ds-bot-repo
-cd ds-bot-repo/ds-bot
+cd ds-bot-repo/core
 
 # The plugin's own build tool (esbuild only).
 npm ci
@@ -68,23 +68,23 @@ git -C deepseek-harness checkout dsh-v0.2.0-rc.2
 
 If your DeepSeek Harness checkout is somewhere else, set `DSH_HARNESS` to its path. `DSH_HARNESS` also takes the place of `dev/harness/` for the unit tests and the linter.
 
-The `@deepseek-ai/*` packages are peer dependencies: in a real install, the DSH profile supplies them. `ds-bot/.npmrc` keeps npm from installing them into the plugin folder.
+The `@deepseek-ai/*` packages are peer dependencies: in a real install, the DSH profile supplies them. `core/.npmrc` keeps npm from installing them into the plugin folder.
 
 ## Layout
 
 | Path | What it is |
 |---|---|
-| `ds-bot/index.js`, `ds-bot/src/host/` | The server side: Bot roster and store, tools, turns and delivery, group chats, conversation parts and the search index, images, the Bot browser bridge, the `api/bot` channel |
-| `ds-bot/src/client/` | The browser side: sidebar, chat, panels and dialogs, themes, characters, the Bot browser panel |
-| `ds-bot/client.js` | Generated from `src/client/` by `scripts/build-client.mjs`. It is committed, so that Git installs need no build step |
-| `ds-bot/web-search.js` | The `auto` web-search provider. It does not depend on the Bot team code |
-| `ds-bot/cordis.patch.yml` | The profile patch that the plugin brings |
-| `ds-bot/test/` | Unit tests and fixtures |
-| `ds-bot/dev/` | The DSH packages for the unit tests (`harness/`), the mock model, the test bench, the smoke test, the character generator, the Desktop scripts for Linux, and two tools for real models: the steward evaluation and a logging pass-through |
+| `core/index.js`, `core/src/host/` | The server side: Bot roster and store, tools, turns and delivery, group chats, conversation parts and the search index, images, the Bot browser bridge, the `api/bot` channel |
+| `core/src/client/` | The browser side: sidebar, chat, panels and dialogs, themes, characters, the Bot browser panel |
+| `core/client.js` | Generated from `src/client/` by `scripts/build-client.mjs`. It is committed, so that Git installs need no build step |
+| `core/web-search.js` | The `auto` web-search provider. It does not depend on the Bot team code |
+| `core/cordis.patch.yml` | The profile patch that the plugin brings |
+| `core/test/` | Unit tests and fixtures |
+| `core/dev/` | The DSH packages for the unit tests (`harness/`), the mock model, the test bench, the smoke test, the character generator, the Desktop scripts for Linux, and two tools for real models: the steward evaluation and a logging pass-through |
 
 ## Test a change
 
-Run these in `ds-bot/`:
+Run these in `core/`:
 
 ```sh
 npm run build                          # src/client → client.js

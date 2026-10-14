@@ -27,10 +27,7 @@
     ".": "./index.js",
     "./client": "./client.js",
     "./web-search": "./web-search.js",
-    "./package.json": "./package.json",
-    "./types": {
-      "types": "./types/flybot.d.ts"
-    }
+    "./package.json": "./package.json"
   },
   "files": [
     "index.js",
@@ -40,16 +37,14 @@
     "web-search.js",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE",
-    "types/"
+    "LICENSE"
   ],
   "scripts": {
     "build": "node scripts/build-client.mjs",
     "test": "node --import ./test/harness-resolve.mjs --test \"test/*.test.js\"",
     "lint": "node scripts/lint.mjs",
     "harness": "npm install --prefix dev/harness --legacy-peer-deps=false --no-package-lock --no-fund --no-audit",
-    "check": "sh dev/check.sh",
-    "ci:local": "bash scripts/local-ci.sh"
+    "check": "sh dev/check.sh"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
@@ -67,6 +62,5 @@
   },
   "devDependencies": {
     "esbuild": "0.28.2"
-  },
-  "types": "./types/flybot.d.ts"
+  }
 }

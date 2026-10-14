@@ -79,7 +79,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: ds-bot
+        working-directory: core
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,7 +88,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-          cache-dependency-path: ds-bot/package-lock.json
+          cache-dependency-path: core/package-lock.json
       - name: npm ci
         run: npm ci --no-fund --no-audit
         timeout-minutes: 5
@@ -104,10 +104,10 @@ jobs:
       - name: Tests
         run: npm test
       - name: Plugin tests (social)
-        working-directory: ds-bot/plugins/social
+        working-directory: core/plugins/social
         run: node --import ../../test/harness-resolve.mjs --test "test/*.test.js"
       - name: Plugin tests (tree)
-        working-directory: ds-bot/plugins/tree
+        working-directory: core/plugins/tree
         run: node --test "test/*.test.js"
 
   weekly:
@@ -124,7 +124,7 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: ds-bot
+        working-directory: core
     steps:
       - uses: actions/checkout@v4
         with:
@@ -133,7 +133,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-          cache-dependency-path: ds-bot/package-lock.json
+          cache-dependency-path: core/package-lock.json
       - name: npm ci
         run: npm ci --no-fund --no-audit
         timeout-minutes: 5
@@ -149,8 +149,8 @@ jobs:
       - name: Tests
         run: npm test
       - name: Plugin tests (social)
-        working-directory: ds-bot/plugins/social
+        working-directory: core/plugins/social
         run: node --import ../../test/harness-resolve.mjs --test "test/*.test.js"
       - name: Plugin tests (tree)
-        working-directory: ds-bot/plugins/tree
+        working-directory: core/plugins/tree
         run: node --test "test/*.test.js"

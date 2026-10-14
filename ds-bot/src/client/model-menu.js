@@ -139,8 +139,6 @@ export function useAnchoredMenu() {
 // levels of the shown model when it has them.
 // `onPick`/`onPickEffort` replace saving to the Bot, for a Bot that does not exist yet.
 export function ModelMenu({ bot, roster, actions, run, wide = false, onPick, onPickEffort }) {
-  // A friend's Bot runs on its relay route; there is no model to pick.
-  if (bot?.remote !== undefined) return null
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu()
   const shown = modelOf(bot, roster)
   const current = bot.model ?? bot.appliedModel
@@ -199,10 +197,6 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
   const shown = Boolean(bot) && currentPart(bot) === sessionId && roster.ready
   useEffect(() => { if (shown) void actions.refreshModels?.() }, [shown, sessionId])
   if (!bot || currentPart(bot) !== sessionId || !roster.ready) return null
-  // A friend's Bot runs on its owner's machine: its relay route is never in the local
-  // catalog (the host filters flybot-remote out), so it is never "lost" and never gets
-  // a model picker. Only a share that ended is worth a note, with the real reason.
-  if (bot.remote) return bot.remote.gone ? h(RemoteGoneDock, { bot }) : null
   const models = roster.models ?? []
   const lost = bot.model ? !models.some(model => model.ref === bot.model) : false
   // An unknown catalog (none listed) cannot tell a lost model from a slow provider.
@@ -241,15 +235,6 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
           h('div', { className: 'bt-bubble' }, text)))),
     h('div', { className: 'bt-model-chips', role: 'group', 'aria-label': t('Choose a model') }, choices),
     error ? h('div', { className: 'bt-secret-error bt-model-error', role: 'alert' }, error) : null)
-}
-
-function RemoteGoneDock({ bot }) {
-  return h('div', { className: 'bt-model-dock', 'data-flybot': 'remote-gone' },
-    h('div', { className: 'bt-astack', 'data-lead': '' },
-      h('div', { className: 'bt-msg' },
-        h('div', { className: 'bt-msg-line' },
-          h(BotMark, { bot, size: 22 }),
-          h('div', { className: 'bt-bubble' }, t('{name} ({handle}) is no longer shared with you, so messages to it cannot be delivered. It runs on its owner\'s machine, so another model cannot stand in. Ask its owner for a new invite.', { name: bot.name, handle: bot.remote.handle }))))))
 }
 
 // Ways to get a first model. The DeepSeek sign-in exists only where the shell carries

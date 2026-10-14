@@ -29,8 +29,6 @@ import * as schedules from './src/host/schedules.js'
 import * as usage from './src/host/usage.js'
 import * as update from './src/host/update.js'
 import * as dshUpdate from './src/host/dsh-update.js'
-import * as hooks from './src/host/hooks.js'
-import * as remoteChat from './src/host/remote-chat.js'
 import * as channel from './src/host/channel.js'
 
 export { COLORS } from './src/host/constants.js'
@@ -42,30 +40,10 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 // the functions other modules call; they call them through `rt` at run time, never during
 // install. Listeners run and tools are listed in registration order, so this order holds:
 // usage meters model requests after every listener that rewrites them.
-const MODULES = [diagnostics, store, models, permissions, turns, delivery, roster, folders, agents, prompt, timeContext, tools, chatIndex, groups, approvals, resume, memory, parts, images, secrets, connectors, capabilities, schedules, browser, usage, update, dshUpdate, hooks, remoteChat, channel]
+const MODULES = [diagnostics, store, models, permissions, turns, delivery, roster, folders, agents, prompt, timeContext, tools, chatIndex, groups, approvals, resume, memory, parts, images, secrets, connectors, capabilities, schedules, browser, usage, update, dshUpdate, channel]
 
 export function apply(ctx, config = {}) {
-  const rt = createRuntime(ctx, config)
-  // FlyBot: feature plugins reach the extension API as ctx.flybot (inject: ['flybot']).
-  provideFlyBot(ctx, rt.flybot)
-}
-
-// Registers rt.flybot as the Cordis service `flybot`: ctx.provide where the context has it
-// (Cordis 4 requires a provide before a service exists), else ctx.set, else a plain
-// property for test contexts.
-export function provideFlyBot(ctx, flybot) {
-  const provide = typeof ctx.provide === 'function' ? ctx.provide.bind(ctx) : typeof ctx.reflect?.provide === 'function' ? ctx.reflect.provide.bind(ctx.reflect) : undefined
-  if (provide) {
-    provide('flybot', flybot)
-    return
-  }
-  if (typeof ctx.set === 'function') {
-    try {
-      ctx.set('flybot', flybot)
-      return
-    } catch {}
-  }
-  ctx.flybot = flybot
+  createRuntime(ctx, config)
 }
 
 export function createRuntime(ctx, config = {}) {

@@ -47,8 +47,6 @@ export function install(rt) {
     }),
     exchangeTurns: state.exchangeTurns,
     questions: state.questions,
-    // FlyBot: friends' remote Bots, chat members with a remote badge (not team Bots).
-    remoteBots: rt.flybotRemoteMembers?.() ?? [],
     // The team's DSH Agent (at most one): plain dsh Sessions, not Bots.
     agents: Object.values(state.agents),
     // Key names and who may use them; values never leave the host.
@@ -56,8 +54,7 @@ export function install(rt) {
     capabilities: rt.capabilityLibraryView(),
     secretRequests: state.secretRequests ?? {},
     colors: [...COLORS, ...EXTRA_COLORS],
-    // Friends' Bots' routes are no model a Bot can pick.
-    models: rt.cachedCatalog().filter(entry => entry.provider !== 'flybot-remote'),
+    models: rt.cachedCatalog(),
     defaultModel: rt.cachedDefault() ?? null,
     permissions: rt.permissionCatalog?.() ?? null,
     modelsKey: modelsKey(),
@@ -108,8 +105,7 @@ export function install(rt) {
       const body = payload ?? {}
       await rt.refresh()
       const readOnly = rt.readOnly()
-      const flybotRead = endpoint.startsWith('flybot/') && rt.flybotIsRead?.(endpoint.slice('flybot/'.length)) === true
-      if (readOnly !== undefined && !READS.has(endpoint) && !flybotRead) return fail(readOnly, 'bot/read-only')
+      if (readOnly !== undefined && !READS.has(endpoint)) return fail(readOnly, 'bot/read-only')
       switch (endpoint) {
         case 'state':
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
@@ -324,8 +320,6 @@ export function install(rt) {
           await rt.diagnostics.clear()
           return ok(true)
         default:
-          // FlyBot plugins' endpoints (src/host/hooks.js).
-          if (endpoint.startsWith('flybot/')) return ok(await rt.flybotEndpoint(endpoint.slice('flybot/'.length), body))
           return fail(`Unknown endpoint ${endpoint}`, 'bot/not-found')
       }
     } catch (error) {
@@ -337,7 +331,7 @@ export function install(rt) {
   }
 
   // An exact Fetch route on the shared /api channel; the browser authenticates with its session cookie.
-  const route = {
+  ctx.effect(() => ctx.connection.fetch.register({
     path: ROUTE,
     methods: ['POST'],
     requestBody: 'buffered',
@@ -347,41 +341,10 @@ export function install(rt) {
       const result = await handle(String(body?.endpoint ?? ''), body?.payload, request.signal)
       return new Response(JSON.stringify(result), { status: 200, headers: { 'content-type': 'application/json' } })
     },
-  }
-  ctx.effect(() => registerRoute(ctx, route, rt.warn), 'ds-bot: api route')
+  }), 'ds-bot: api route')
+
   ctx.effect(() => {
     void rt.load()
     return () => {}
   }, 'ds-bot: load state')
-}
-
-// Registers the exact Fetch route, surviving a hot reload. When the plugin manager reloads
-// ds-bot in a running DSH, the new instance can start before the old one is disposed; the
-// connection then refuses the duplicate path ("already registered") and that refusal used to
-// fail the whole apply, so once the old instance went away nothing served /api/bot and every
-// browser call (Friends' Bots "Create invite link" included) got HTTP 404 until a restart.
-// Here a taken path is retried until the old owner lets go.
-export function registerRoute(ctx, route, warn = () => {}, { every = 100, tries = 600 } = {}) {
-  let dispose
-  let timer
-  let stopped = false
-  const attempt = (left) => {
-    if (stopped) return
-    try {
-      dispose = ctx.connection.fetch.register(route)
-    } catch (error) {
-      if (!/already registered/i.test(String(error?.message ?? error)) || left <= 0) throw error
-      if (left === tries) warn('ds-bot: %s is still held by the previous instance; waiting for it', route.path)
-      timer = setTimeout(() => {
-        try { attempt(left - 1) } catch (failure) { warn('ds-bot: could not register %s: %s', route.path, failure) }
-      }, every)
-      timer.unref?.()
-    }
-  }
-  attempt(tries)
-  return () => {
-    stopped = true
-    clearTimeout(timer)
-    dispose?.()
-  }
 }

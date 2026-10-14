@@ -21,49 +21,49 @@ runs:
       with:
         node-version: ${{ inputs.node }}
         cache: npm
-        cache-dependency-path: ds-bot/package-lock.json
+        cache-dependency-path: core/package-lock.json
     # The job-level timeout-minutes bounds a stuck registry (composite steps take none).
     - name: npm ci
       shell: bash
-      working-directory: ds-bot
+      working-directory: core
       run: npm ci --no-fund --no-audit
     - name: Install DSH
       shell: bash
-      working-directory: ds-bot
+      working-directory: core
       env:
         DSH: ${{ inputs.dsh }}
       run: npm run harness -- --no-save "@deepseek-ai/dsh@$DSH"
     # Lint and the bundle check first: a slip fails in seconds instead of after the suite.
     - name: Lint
       shell: bash
-      working-directory: ds-bot
+      working-directory: core
       run: npm run lint
     - name: Build (client bundle is up to date)
       shell: bash
-      working-directory: ds-bot
+      working-directory: core
       run: node scripts/build-client.mjs --check
     # ds-bot's suite (incl. tree-host / tree-plugin / bot-tree: the tree plugin on a real
     # ds-bot), then each plugin's own suite (social; tree's test/tree.test.js).
     - name: Unit tests
       if: inputs.coverage != 'true'
       shell: bash
-      working-directory: ds-bot
+      working-directory: core
       run: npm test
     - name: Plugin tests (social)
       if: inputs.coverage != 'true'
       shell: bash
-      working-directory: ds-bot/plugins/social
+      working-directory: core/plugins/social
       run: node --import ../../test/harness-resolve.mjs --test "test/*.test.js"
     - name: Plugin tests (tree)
       if: inputs.coverage != 'true'
       shell: bash
-      working-directory: ds-bot/plugins/tree
+      working-directory: core/plugins/tree
       run: node --test "test/*.test.js"
     # The same three suites in one run, so coverage spans ds-bot and both plugins.
     - name: Unit and plugin tests with coverage
       if: inputs.coverage == 'true'
       shell: bash
-      working-directory: ds-bot
+      working-directory: core
       env:
         NODE_V: ${{ inputs.node }}
         DSH: ${{ inputs.dsh }}
@@ -84,6 +84,6 @@ runs:
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
       with:
         name: coverage-lcov
-        path: ds-bot/lcov.info
+        path: core/lcov.info
         if-no-files-found: ignore
         retention-days: 14
