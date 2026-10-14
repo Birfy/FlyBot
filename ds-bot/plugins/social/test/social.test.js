@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
@@ -443,4 +443,45 @@ test('legacy (#8): the conversation opened by a first text is kept for the next 
   await ctx.flybot.bot.send({ from: 'a', to: '@bob.bot', text: 'again' })
   await settle()
   assert.ok(server.calls.some(c => c.name === 'send_message' && c.args.conversation_id === 'legacy-c'))
+})
+
+test('files (#10): private paths refused before any card, Bot files held under auto-accept, staging cleaned', async (t) => {
+  const { ctx, tool, call, stop, home } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const credentialsPath = join(home, 'bot', 'flybot-social.json')
+  mkdirSync(join(home, 'bot'), { recursive: true })
+  writeFileSync(credentialsPath, '{}')
+  const filesDir = join(home, 'files')
+  const social = createSocial(ctx.flybot, { autoAccept: true, inboxPollMs: 0, filesDir, credentialsPath }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  mkdirSync(join(home, '.ssh'))
+  writeFileSync(join(home, '.ssh', 'id_rsa.txt'), 'k')
+  writeFileSync(join(home, 'id_rsa'), 'k')
+  writeFileSync(join(home, 'run.sh'), 'x')
+  for (const bad of [credentialsPath, join(home, '.ssh', 'id_rsa.txt'), join(home, 'id_rsa'), join(home, 'run.sh'), 'relative.md']) {
+    await assert.rejects(tool('message_friend_bot', { to: '@coder.bob.home', message: 'x', files: [bad] }, 'b'), /cannot be attached|absolute|not a file/)
+  }
+  assert.equal(ctx.flybot.approvals.list().length, 0)
+  const ok = join(home, 'notes.md')
+  writeFileSync(ok, 'hi')
+  assert.match(await tool('message_friend_bot', { to: '@coder.bob.home', message: 'x', files: [ok] }, 'b'), /Waiting/)
+  assert.equal(ctx.flybot.approvals.list()[0].request.attachments[0].path, realpathSync(ok))
+  await assert.rejects(tool('message_friend_bot', { to: '@coder.bob.home', message: 'x', files: [ok, ok, ok, ok, ok, ok] }, 'b'), /at most 5/)
+  // Composer files are staged, then removed once the send is final.
+  const staged = () => { try { return readdirSync(join(filesDir, 'outbox')).length } catch { return 0 } }
+  const one = { name: 'a.csv', mime: 'text/csv', content_base64: Buffer.from('1').toString('base64') }
+  await call('flybot/social/send', { from: 'a', to: '@coder.bob.home', text: 't', files: [one] })
+  assert.equal(staged(), 0, 'sent: staging empty')
+  social.dispose()
+  const holding = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0, filesDir, credentialsPath }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
+  t.after(() => holding.dispose())
+  await holding.registerAll()
+  const held = await call('flybot/social/send', { from: 'a', to: '@coder.bob.home', text: 't', files: [one] })
+  assert.equal(held.value.action, 'hold')
+  assert.equal(staged(), 1)
+  const id = ctx.flybot.approvals.list().at(-1).id
+  await ctx.flybot.approvals.decide(id, 'reject')
+  assert.equal(staged(), 0, 'rejected: staging empty')
 })

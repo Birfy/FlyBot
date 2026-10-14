@@ -21,9 +21,10 @@
 // - Backward compat: without a home, config.botId + token use the per-bot identity
 //   (start_conversation / send_message) as before.
 import { createHash } from 'node:crypto'
-import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, extname, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
 import { createMcpClient, untrustedText } from './mcp-client.js'
 
 export const NS = 'social'
@@ -45,6 +46,7 @@ export const stripMarkers = (text) => {
   return out
 }
 const SEEN_KEPT = 1000
+const CREDENTIAL_NAME = /(^id_(rsa|dsa|ecdsa|ed25519)|\.(pem|key|p12|pfx|kdbx|keychain)$|credential|secret|token|password|passwd|^flybot-social.*\.json$|^\.?env$|^\.netrc$|^known_hosts$|^authorized_keys$)/i
 const safeName = name => String(name ?? 'file').replace(/[\u0000-\u001f\u007f/\\:]/g, '_').replace(/^\.+/, '_').slice(0, 120) || 'file'
 // The text Copy puts on the clipboard for a per-Bot invite: what to do with the link, for a
 // person in FlyBot or for their Grok bot.
@@ -90,18 +92,43 @@ export function createSocial(service, config = {}, { client: given, home: givenH
 
   // Local files a send carries until approval: metadata only (bytes are read again,
   // and their hash checked, when the approved send goes out).
-  function describeFiles(paths) {
+  // A Bot may attach only ordinary documents: an absolute path, a known document or image
+  // type, nowhere under a dot folder (~/.ssh, ~/.dsh, ...), not a credential file, and not
+  // in this plugin's own folder. Refused before any approval card exists.
+  const privateDirs = () => [config.credentialsPath ? dirname(config.credentialsPath) : undefined, filesDir].filter(Boolean)
+  async function describeFiles(paths) {
     if (paths === undefined || paths === null) return []
     const list = Array.isArray(paths) ? paths : [paths]
     if (list.length > MAX_FILES) throw new Error(`at most ${MAX_FILES} files per message`)
-    return list.map((path) => {
-      const file = String(path)
+    const out = []
+    for (const path of list) {
+      const given = String(path)
+      if (!isAbsolute(given)) throw new Error(`${given}: use an absolute path`)
+      let file
+      try { file = realpathSync(given) } catch { throw new Error(`${given} does not exist`) }
       const info = statSync(file)
       if (!info.isFile()) throw new Error(`${file} is not a file`)
+      const problem = fileProblem(file)
+      if (problem) throw new Error(`${given} cannot be attached: ${problem}`)
       if (info.size > maxFileBytes) throw new Error(`${basename(file)} is over ${sizeLabel(maxFileBytes)}`)
-      const bytes = readFileSync(file)
-      return { name: safeName(basename(file)), size: bytes.length, mime: mimeOf(file), sha256: sha256(bytes), path: file }
-    })
+      // Read and hashed once; the size checked is that of the bytes read.
+      const bytes = await readFile(file)
+      if (bytes.length > maxFileBytes) throw new Error(`${basename(file)} is over ${sizeLabel(maxFileBytes)}`)
+      out.push({ name: safeName(basename(file)), size: bytes.length, mime: mimeOf(file), sha256: sha256(bytes), path: file })
+    }
+    return out
+  }
+  function fileProblem(file) {
+    const parts = file.split(sep).filter(Boolean)
+    if (parts.some(part => part.startsWith('.'))) return 'hidden files and folders are private'
+    if (CREDENTIAL_NAME.test(basename(file))) return 'it looks like a credential'
+    for (const dir of privateDirs()) {
+      let real = dir
+      try { real = realpathSync(dir) } catch {}
+      if (file === real || file.startsWith(real + sep)) return 'it is a private FlyBot file'
+    }
+    if (!(extname(file).toLowerCase() in MIME)) return `only ${Object.keys(MIME).join(' ')} files`
+    return undefined
   }
   // Composer files (bytes from the browser) wait in a private outbox until approval.
   function stageFiles(files) {
@@ -123,12 +150,26 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   async function uploadAll(files, botId) {
     const refs = []
     for (const file of files ?? []) {
-      const bytes = readFileSync(file.path)
+      const bytes = await readFile(file.path)
+      if (bytes.length > maxFileBytes) throw new Error(`${file.name} is over ${sizeLabel(maxFileBytes)}`)
       if (file.sha256 && sha256(bytes) !== file.sha256) throw new Error(`${file.name} changed after it was approved; send it again`)
       const up = await client.callTool('upload_attachment', { ...(botId ? { bot_id: botId } : {}), name: file.name, mime: file.mime, content_base64: bytes.toString('base64') })
       refs.push(up.attachment)
     }
     return refs
+  }
+
+  // Staged composer files are removed once their send is final (sent, rejected or failed).
+  const outboxDir = () => join(filesDir, 'outbox')
+  const dropStaged = (files) => {
+    for (const file of files ?? []) {
+      if (typeof file?.path === 'string' && file.path.startsWith(outboxDir() + sep)) rmSync(file.path, { force: true })
+    }
+  }
+  if (flybot.approvals?.onChange) {
+    disposers.push(flybot.approvals.onChange((approval) => {
+      if (approval?.status && approval.status !== 'pending') dropStaged(approval.request?.attachments)
+    }))
   }
 
   // ------------------------------------------------------------ settings (per friend home)
@@ -210,6 +251,9 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       if (msg.target?.remote !== true || (msg.to?.transport ?? 'bot-social') !== 'bot-social') return undefined
       const bot = await remoteBot(msg.target.handle)
       if (bot === undefined) return { action: 'deny', reason: `${msg.target.handle} is not a Bot of a friend on Bot Social` }
+      // A Bot's files are always shown to the user first, whatever auto-accept says;
+      // files the user picked in the composer are the user's own send.
+      if (msg.attachments?.length && msg.via !== 'composer') return { action: 'hold', reason: 'a Bot attaches files: check them before they leave' }
       if (approvalFor(msg.from, bot.home) === 'auto') return undefined
       return { action: 'hold', reason: `messages to ${bot.home}'s Bots need your approval` }
     },
@@ -218,6 +262,10 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   // ------------------------------------------------------------ transport
   disposers.push(flybot.transports.add('bot-social', {
     async send(msg) {
+      try { return await sendOut(msg) } finally { dropStaged(msg.attachments) }
+    },
+  }))
+  async function sendOut(msg) {
       const bot = await remoteBot(msg.target.handle)
       if (bot === undefined) throw new Error(`${msg.target.handle} is no longer reachable`)
       if (home) {
@@ -245,8 +293,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       const conversationId = started?.conversation_id ?? started?.conversation?.conversation_id ?? started?.message?.conversation_id
       if (conversationId) bot.conversationId = conversationId
       return { exchangeId: started?.message?.message_id ?? msg.exchangeId }
-    },
-  }))
+  }
 
   // ------------------------------------------------------------ remote chats
   // What the user types in a friend's Bot's chat goes out directly: no approval hold, it
@@ -381,7 +428,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     },
     async execute(args, { botId }) {
       const to = norm(args.to)
-      const attachments = describeFiles(args.files)
+      const attachments = await describeFiles(args.files)
       const result = await flybot.bot.send({ from: botId, to, text: String(args.message ?? ''), ...(attachments.length ? { attachments } : {}) })
       if (result.action === 'deny') throw new Error(`Not sent: ${result.reason}`)
       if (result.action === 'hold') return `Waiting for the user's approval before it goes to ${to}. Do not resend.`
@@ -491,7 +538,9 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   // The owner's composer for a remote member: text plus files, through bot.send (approval applies).
   disposers.push(flybot.api.handle('social/send', async ({ from, to, text, files } = {}) => {
     const attachments = stageFiles(files)
-    return flybot.bot.send({ from: String(from ?? ''), to: norm(to), text: String(text ?? '').trim() || `${attachments.length} file(s)`, via: 'composer', ...(attachments.length ? { attachments } : {}) })
+    const result = await flybot.bot.send({ from: String(from ?? ''), to: norm(to), text: String(text ?? '').trim() || `${attachments.length} file(s)`, via: 'composer', ...(attachments.length ? { attachments } : {}) })
+    if (result?.action === 'deny') dropStaged(attachments)
+    return result
   }))
   disposers.push(flybot.api.handle('social/remote-bots', async payload => remoteBots({ fresh: payload?.fresh === true })))
   disposers.push(flybot.api.handle('social/friends', async payload => (await remoteBots({ fresh: payload?.fresh === true })).homes.flatMap(entry => entry.bots)))

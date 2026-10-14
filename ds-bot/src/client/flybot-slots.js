@@ -166,7 +166,7 @@ export function FlyBotApprovals() {
         h('div', { className: 'bt-flybot-approval-text' }, approval.request.text),
         approval.request.attachments?.length
           ? h('ul', { className: 'bt-flybot-approval-files', 'aria-label': 'Attached files' }, approval.request.attachments.map((file, index) =>
-            h('li', { key: index }, `${file.name} · ${fileSize(file.size)}`)))
+            h('li', { key: index, title: file.path ?? file.name }, `${file.name} · ${fileSize(file.size)}`, file.path ? h('div', { className: 'bt-flybot-approval-path' }, file.path) : null)))
           : null,
         h('div', { className: 'bt-flybot-approval-actions' },
           h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'approve') }, 'Approve'),
@@ -191,5 +191,6 @@ export const FLYBOT_CSS = `
 .bt-flybot-approval { background: var(--bt-card, #fff); border: 1px solid var(--bt-line, rgba(0,0,0,.12)); border-radius: 10px; padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); font-size: 13px; }
 .bt-flybot-approval-head { font-weight: 600; margin-bottom: 4px; }
 .bt-flybot-approval-text { white-space: pre-wrap; max-height: 120px; overflow: auto; margin-bottom: 8px; }
+.bt-flybot-approval-path { font-family: ui-monospace, monospace; font-size: 11px; opacity: .7; overflow-wrap: anywhere; }
 .bt-flybot-approval-actions { display: flex; gap: 8px; justify-content: flex-end; }
 `
