@@ -108,49 +108,88 @@ Bots use your own model quota, and they read and write files and run commands wh
 ## FlyBot plugin architecture
 
 FlyBot is DS Bot (`ds-bot/`) plus feature plugins. ds-bot itself provides the extension
-API, so plugins never patch it:
+API, so plugins never patch it.
 
-- **Host service `flybot`** (`ds-bot/src/host/hooks.js`, provided via `ctx.set('flybot')`;
-  plugins declare `inject: ['flybot']` and call `ctx.flybot.scope('<plugin>')`):
-  - `fields.get/set/all/query` – synchronous, per-plugin custom fields on Bots, saved in
-    `state.json` as `bots[id].fields[plugin][key]`; `on('change', fn, { all })`.
-  - `bot.list/get/find/of` (local Bots only), `bot.isRemote(ref)`,
-    `bot.create({ name, systemPrompt, fields }) → id`, `bot.setSystemPrompt(id, text)`;
-    `on('bot.created' | 'bot.removed' | 'change', fn)` (disposable).
-  - `bot.send(msg)` and `bot.send.use({ name, before, after, handle })` – every
-    Bot-to-Bot message (including built-in `message_bot` and replies) runs one middleware
-    chain: `undefined`/`allow` continue, `deny` refuses, `hold` queues it for the owner's
-    approval card. `allow` with `bypass: ['social']` skips a middleware only if
-    `config.flybot.bypass` grants it.
-  - `transports.add(kind, { send })` for remote Bots, `approvals.list/decide`,
-    `tools.register({ name, parameters, visibleTo(botId), execute(args, { botId }) })`,
-    `api.handle(name, fn)` for UI endpoints (`flybot/<name>` on ds-bot's `api/bot` route).
-- **Browser**: `ctx.flybot` (`bots()`, `fields.on('change')`) and slots
-  `flybot.sidebar.section`, `flybot.sidebar.structure` (the Bot list drawn as one tree under the Main Bot; `menuItems({bot})` adds right-click items such as "Copy invite link"), `flybot.composer.mention`, `flybot.bot.details`,
-  `flybot.approvals` (`ds-bot/src/client/flybot-slots.js`).
-- **Types**: `ds-bot/types/flybot.d.ts`.
-- **Plugins** (`ds-bot/plugins/`): `social` (friends' Bots via Bot Social, approval-gated
-  sends) and `tree` (recursive Bot tree, maintained by recursive-bot).
+### Install FlyBot (clean profile)
+
+Needs Node.js >= 22.19 and pnpm. Add ds-bot and the two plugins to a DSH profile, then
+enable them in that profile's `cordis.patch.yml` (with the Bot Social server URL for social):
+
+```sh
+npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot"
+npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot/plugins/social"
+npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot/plugins/tree"
+```
+
+Update later with `pnpm update ds-bot @flybot/social @flybot/tree` inside the profile
+folder, then restart DSH. A plugin that fails to start logs one warning; its UI slots
+draw nothing and the rest of ds-bot keeps working.
+
+### Host API (`ctx.flybot`)
+
+`ds-bot/src/host/hooks.js`, provided with `ctx.provide('flybot')`. Plugins declare
+`inject: ['flybot']` and call `ctx.flybot.scope('<plugin>')` (`'shared'` is reserved).
+
+- `fields.get/set/all/query`: synchronous per-plugin fields on Bots, saved in `state.json`
+  as `bots[id].fields[plugin][key]`; `on('change', fn, { all })` gets a copy of each change.
+- `bot.list/get/find/of` (local Bots only), `bot.isRemote(ref)`,
+  `bot.create({ name, systemPrompt, fields }) → id`, `bot.setSystemPrompt(id, text)`;
+  `on('bot.created' | 'bot.removed' | 'change', fn)`; `ready()` resolves once the saved
+  team is loaded; `readOnly()` is true while another dsh holds the team.
+- `bot.send(msg)` and `bot.send.use({ name, before, after, handle })`: every Bot-to-Bot
+  message (built-in `message_bot` and replies included) runs one middleware chain.
+  `undefined`/`allow` continue, `deny` refuses, `hold` queues an approval card. Approving
+  resumes the chain after the middleware that held it, so a later `deny` still wins; a
+  send whose delivery failed stays on the card with Retry. At most 100 holds wait at a
+  time and a message is at most 20,000 characters.
+- `transports.add(kind, { send })`, `approvals.list/decide/onChange`,
+  `tools.register({ name, parameters, visibleTo(botId), execute(args, { botId }) })`
+  (a tool `visibleTo` refuses is also taken out of that Bot's tool list),
+  `api.handle(name, fn, { read })` for UI endpoints (`flybot/<name>`; `read: true` keeps
+  it working on a read-only host; built-in names are reserved).
+- `remote.publish/list/get` for friends' Bots, and `remote.chats.{open, deliver, onSend,
+  list, of}`: each friend's Bot is a chat of its own (see below).
+- Browser: `ctx.flybot` (`bots()`, `fields.on('change')`, which survives host restarts)
+  and slots `flybot.sidebar.section`, `flybot.sidebar.structure`, `flybot.composer.mention`,
+  `flybot.bot.details`, `flybot.approvals` (`ds-bot/src/client/flybot-slots.js`). Each
+  plugin component renders inside an error boundary.
+- Types: `ds-bot/types/flybot.d.ts`.
+- Plugins (`ds-bot/plugins/`): `social` (friends' Bots via Bot Social) and `tree`
+  (recursive Bot tree, maintained by recursive-bot).
 
 CI (`.github/workflows/test.yml`) runs ds-bot's tests, which include every plugin's tests,
 plus the client build check and lint.
 
-### Social design: homes and members
+### Social: homes, members and friends
 
 - **Home**: one Bot Social identity per FlyBot install (e.g. `@danyang.home`), made by a
-  single `POST /v1/onboard/flybot` on first start (owner + home + connector token +
-  optional webhook). The token lives in `$DSH_HOME/bot/flybot-social.json` (mode 600),
-  never in `state.json` or the repo.
-- **Members**: every local Bot is registered as `@<bot>.<home>` (key custodied by the
-  server); new Bots (including tree children) join on `bot.created`, deleted ones are
-  revoked on `bot.removed`.
-- **Friendship is home-to-home**: once accepted, every local Bot can message every Bot of
-  the friend home. The server signs each message as the sending member and checks that
-  its home is friends with the recipient's home. Per-bot identities keep working.
-- **Remote Bots** are never in `bot.list()`; they are addresses (`'@coder.bob.home'` or
-  `{ kind: 'remote', handle }`), and middleware sees `msg.target = { remote: true, handle, home }`.
-  The sidebar lists them grouped by home with a "remote" badge, and the `@` menu offers them.
-- **Approval**: per friend home (`config.approval.homes`, default hold), overridden per
-  local Bot (`fields.social.autoApprove[home]`); held messages show in the
-  `flybot.approvals` card. The tree middleware passes remote sends on to `social`.
-- Inbound messages arrive in the addressed member Bot's chat as fenced untrusted text.
+  single `POST /v1/onboard/flybot` on first start. The token lives in
+  `$DSH_HOME/bot/flybot-social.json` (mode 600) together with the server it belongs to; it
+  is never sent to another server, and an explicit `config.token` or
+  `FLYBOT_SOCIAL_TOKEN` wins.
+- **Members**: every local Bot is registered as `@<name>.<home>`; a name with no ASCII
+  letters (研究员) gets `@bot-<hash>.<home>`. New Bots join on `bot.created`, deleted ones
+  are revoked.
+- **Add friend**: right-click one of your Bots and choose **Copy invite link** (copies only
+  the bare URL) or **Copy invite with instructions** (the URL plus how to join), or use
+  **+ Add** in Friends' Bots to paste a friend's link or code and to accept requests. Your
+  click is the owner's confirmation; no model tool can accept a friend.
+- **Friends' Bots in the sidebar**: one collapsible group per friend home, each Bot drawn
+  like your own (avatar, last message, unread badge) with a small globe. Clicking one opens
+  a normal chat: what you type goes to that Bot, its replies come back as its messages.
+- **Auto-accept** (per friend home, on by default, a checkbox in Friends' Bots): incoming
+  messages are delivered and the server's own approval is switched off for that
+  friendship. What you type is always sent at once. What your Bots send on their own
+  (`message_bot` / `message_friend_bot` to a friend's Bot, replies) goes at once only with
+  auto-accept on; otherwise it waits on an approval card.
+- **@-mentions**: `@handle`, `@Name` or the `@` menu row of a friend's Bot in any chat sends
+  that message to it (code, links and quoted lines are ignored); the reply comes back into
+  the same chat, and your own Bot does not answer the mention.
+- **Files**: a Bot attaches files with `message_friend_bot` `files` (absolute paths of
+  documents, data or images, at most 5 × 20 MB). Hidden folders (`~/.ssh`, `~/.dsh`),
+  credential-like files and FlyBot's own files are refused, and a Bot's files are always
+  held for your approval, with the full path on the card, whatever auto-accept says. Bytes
+  are uploaded only after approval, hash-checked. Incoming files show as chips you can save;
+  the receiving Bot reads them inside an `<untrusted-file>` fence.
+- Everything a friend's Bot writes reaches your Bots fenced as untrusted text, with its
+  name cleaned to one line.

@@ -85,3 +85,38 @@ test('every client bundle registers under its package name, as the DSH module lo
     }
   }
 })
+
+test('field events keep flowing after a host restart (#18)', async () => {
+  let epoch = 'e1'
+  let log = []
+  const host = async (endpoint, body) => {
+    assert.equal(endpoint, 'changes')
+    const since = body.epoch === epoch ? body.since : 0
+    return { epoch, seq: log.length, changes: log.map((c, i) => ({ seq: i + 1, ...c })).filter(c => c.seq > since) }
+  }
+  let tick
+  const api = createClientApi({ call: host, every: fn => { tick = fn; return 1 }, clear: () => {} })
+  const seen = []
+  log = [{ key: 'a' }, { key: 'b' }, { key: 'c' }]
+  api.fields.on('change', e => seen.push(e.key))
+  await new Promise(resolve => setTimeout(resolve, 10))
+  log.push({ key: 'd' })
+  await tick()
+  assert.deepEqual(seen, ['d'])
+  // Restart: a new epoch, counting from 1 again.
+  epoch = 'e2'
+  log = [{ key: 'after' }]
+  await tick()
+  assert.deepEqual(seen, ['d', 'after'])
+})
+
+test('client UI (#19): every plugin slot renders inside an error boundary; approval copy is translated; the stack scrolls', async () => {
+  const { readFileSync } = await import('node:fs')
+  const source = readFileSync(new URL('../src/client/flybot-slots.js', import.meta.url), 'utf8')
+  assert.match(source, /static getDerivedStateFromError\(\)/)
+  assert.match(source, /function Safe\(\{ entry, props \}\) \{\n  return h\(SlotBoundary/)
+  assert.doesNotMatch(source, /\}, '(Approve|Reject|Retry)'\)/)
+  assert.match(source, /\.bt-flybot-approvals \{[^}]*max-height:[^}]*overflow-y: auto/)
+  // One remote list: the old built-in "Remote members" section is gone.
+  assert.doesNotMatch(source, /Remote members/)
+})

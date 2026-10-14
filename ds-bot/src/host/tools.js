@@ -46,7 +46,7 @@ export function install(rt) {
     async execute(_args, exec) {
       await rt.load()
       const self = rt.selfOf(exec.agent?.id)
-      const lines = Object.values(state.bots).map(bot => {
+      const lines = Object.values(state.bots).filter(bot => bot.remote === undefined).map(bot => {
         const model = bot.appliedModel ?? bot.model
         const tags = [bot.role, model ? `model ${model}` : '', bot.workDir ? `works in ${bot.workDir}` : '', rt.isMain(bot.id) ? 'Main Bot' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
         const job = bot.instructions ? ` — ${bot.instructions.split('\n')[0].slice(0, 120)}` : ''
@@ -54,12 +54,14 @@ export function install(rt) {
       })
       if (lines.length === 0) return 'No Bots yet.'
       const rooms = visibleRooms(self)
+      const friends = Object.values(state.bots).filter(bot => bot.remote?.handle && !bot.remote.gone).map(bot => `- ${bot.name} (${bot.remote.handle}${bot.remote.homeName ? `, ${bot.remote.homeName}'s home` : ''})`)
       return [
         'Bots:',
         ...lines,
         '',
         rooms.length === 0 ? 'Group chats: none you can see.' : 'Group chats:',
         ...rooms.map(room => roomLine(room, self)),
+        ...(friends.length === 0 ? [] : ['', "Friends' Bots (other people's Bots; reach them with message_bot, their replies are untrusted):", ...friends]),
       ].join('\n')
     },
   }))
@@ -86,7 +88,7 @@ export function install(rt) {
     name: 'message_bot',
     description: 'Send a message to another Bot on the team. If that Bot is working, it reads your message at its next step and can change course, then answers once that work is done; if it is idle, it starts on it right away. Its reply arrives later as a new message to you; with reply_to "user" it answers the user in its own chat instead.',
     parameters: {
-      to: { type: 'string', required: true, description: 'Exact Bot name from list_bots' },
+      to: { type: 'string', required: true, description: 'Exact Bot name from list_bots, or a friend\'s Bot by name or @handle' },
       message: { type: 'string', required: true, description: 'Self-contained message; the other Bot cannot see this conversation' },
       reply_to: {
         type: 'string',
@@ -105,7 +107,17 @@ export function install(rt) {
       const sender = callerBot(exec)
       if (sender === undefined) return 'Only Bots on the team can use message_bot.'
       const target = rt.findBot(args.to)
-      if (target === undefined) return `No Bot named ${args.to}. Team: ${Object.values(state.bots).map(bot => bot.name).join(', ')}`
+      // A friend's Bot (by name or @handle) is reached through FlyBot's send path, so the
+      // friend's auto-accept setting decides whether it goes now or waits for the user.
+      const wanted = String(args.to ?? '').trim().replace(/^@/, '').toLowerCase()
+      const friend = target === undefined ? Object.values(state.bots).find(bot => bot.remote?.handle && !bot.remote.gone && (bot.name.toLowerCase() === wanted || bot.remote.handle.slice(1).toLowerCase() === wanted)) : undefined
+      if (friend !== undefined && rt.flybotSend) {
+        const result = await rt.flybotSend({ from: sender.id, to: friend.remote.handle, text: args.message, via: 'message_bot' })
+        if (result?.action === 'deny') refuse(`Not sent to ${friend.name}: ${result.reason}`)
+        if (result?.action === 'hold') return `Held for the user's approval before it reaches ${friend.name} (${friend.remote.handle}, a friend's Bot): ${result.reason}. Do not resend.`
+        return `Sent to ${friend.name} (${friend.remote.handle}, a friend's Bot). Its reply will arrive later in this chat as a new message; do not wait for it.`
+      }
+      if (target === undefined) return `No Bot named ${args.to}. Team: ${Object.values(state.bots).filter(bot => bot.remote === undefined).map(bot => bot.name).join(', ')}`
       if (target.id === sender.id) return 'You cannot message yourself.'
       const turn = rt.live.get(exec.agent?.id)
       const hop = Math.max(turn?.info?.hop ?? 0, ...(turn?.joined ?? []).map(joined => joined.info?.hop ?? 0))
@@ -157,7 +169,7 @@ export function install(rt) {
       const sender = callerBot(exec)
       if (sender === undefined || !rt.isMain(sender.id)) refuse('Only a Main Bot can stop other Bots.')
       const target = rt.findBot(args.bot)
-      if (target === undefined) refuse(`No Bot named ${args.bot}. Team: ${Object.values(state.bots).map(bot => bot.name).join(', ')}`)
+      if (target === undefined) refuse(`No Bot named ${args.bot}. Team: ${Object.values(state.bots).filter(bot => bot.remote === undefined).map(bot => bot.name).join(', ')}`)
       if (target.id === sender.id) refuse('You cannot stop yourself.')
       const { running } = activeSessions(target.id)
       if (running.length === 0) refuse(`${target.name} is not running right now, so there is nothing to stop. Use message_bot to reach it.`)
@@ -261,7 +273,7 @@ export function install(rt) {
     }
     return { bots, unknown }
   }
-  const teamNames = () => Object.values(state.bots).map(bot => bot.name).join(', ')
+  const teamNames = () => Object.values(state.bots).filter(bot => bot.remote === undefined).map(bot => bot.name).join(', ')
   const groupNames = self => visibleRooms(self).map(room => `"${room.name}"`).join(', ') || 'none'
   const pickRoom = (ref, self) => {
     const matches = rt.findRooms(ref).filter(room => visibleRooms(self).includes(room))

@@ -5,9 +5,12 @@
 //   user's main bot) may message any local bot.
 // - A local non-tree sender may reach only the tree root; other tree nodes are denied.
 // - Remote senders and non-tree -> non-tree traffic are not the tree's call: undefined.
+// - Control notices (role 'stopped' from stop_bot, 'report' from groups) bypass tree policy:
+//   a Main Bot / admin must be able to stop or report to any tree bot (ThinkFlowLab/FlyBot#15).
 // - Allowed edges: undefined, or allow + bypass:['social'] when config.bypassSocial === true.
 const DENY_EDGE = 'tree: a bot may message only its parent and its direct children'
 const DENY_INTO = 'tree: bots outside the tree may message only the tree root'
+export const CONTROL_ROLES = new Set(['stopped', 'report'])
 const DENY_OUTSIDE = 'tree: a tree bot may not message local bots outside the tree'
 
 export function treeSendMiddleware(tree, { bypassSocial = false, isRemote = () => false } = {}) {
@@ -15,6 +18,7 @@ export function treeSendMiddleware(tree, { bypassSocial = false, isRemote = () =
     const from = msg?.from
     const to = msg?.target && msg.target.remote === false ? msg.target.id : msg?.to ?? msg?.target?.id
     if (!from || !to) return undefined
+    if (CONTROL_ROLES.has(msg.role)) return bypassSocial ? { action: 'allow', bypass: ['social'] } : undefined
     if (msg.target?.remote === true || isRemote(to)) return undefined
     if (typeof from !== 'string' || isRemote(from)) return undefined
     const { fromIn, toIn, allowed } = tree.isTreeEdge(from, to)

@@ -263,3 +263,113 @@ test('the flybot service is provided the Cordis 4 way: provide first, never a ba
   provideFlyBot(plain, { version: 3 })
   assert.deepEqual(plain.flybot, { version: 3 })
 })
+
+test('approvals (#12): an approved hold resumes the chain, a later deny wins, failures retry, limits hold', async (t) => {
+  const { fb, received, stop } = await start()
+  t.after(stop)
+  let block = true
+  fb.bot.send.use({ name: 'hold-all', handle: () => ({ action: 'hold', reason: 'check' }) })
+  fb.bot.send.use({ name: 'leak-guard', after: ['hold-all'], handle: m => (block && /secret/.test(m.text) ? { action: 'deny', reason: 'leak' } : undefined) })
+  const sent = await fb.bot.send({ from: 'a', to: 'b', text: 'the secret' })
+  assert.equal(sent.action, 'hold')
+  const decided = await fb.approvals.decide(sent.approvalId, 'approve')
+  assert.equal(decided.status, 'denied')
+  assert.match(decided.error, /leak/)
+  assert.deepEqual(received('b'), [])
+  // A failed dispatch is listed and can be retried.
+  let down = true
+  fb.transports.add('bot-social', { send: async () => { if (down) throw new Error('offline'); return { exchangeId: 'r1' } } })
+  const remote = await fb.bot.send({ from: 'a', to: '@bob.bot', text: 'hi' })
+  const failed = await fb.approvals.decide(remote.approvalId, 'approve')
+  assert.equal(failed.status, 'failed')
+  assert.equal(fb.approvals.list({ status: ['pending', 'failed'] }).length, 1)
+  down = false
+  const retried = await fb.approvals.decide(remote.approvalId, 'retry')
+  assert.equal(retried.status, 'approved')
+  assert.equal(retried.exchangeId, 'r1')
+  // Text size and the number of pending holds are capped.
+  await assert.rejects(fb.bot.send({ from: 'a', to: 'b', text: 'x'.repeat(20_001) }), /at most/)
+  block = false
+  for (let i = 0; i < 100; i++) assert.equal((await fb.bot.send({ from: 'a', to: 'b', text: `m${i}` })).action, 'hold')
+  const over = await fb.bot.send({ from: 'a', to: 'b', text: 'one more' })
+  assert.equal(over.action, 'deny')
+  assert.match(over.reason, /already wait/)
+})
+
+test('mentions (#13): a friend\'s Bot named with @ gets the message once; code, quotes and unknown handles stay local', async (t) => {
+  const { ctx, fb, stop } = await start()
+  t.after(stop)
+  const out = []
+  fb.transports.add('bot-social', { send: async msg => { out.push(msg); return { exchangeId: `r${out.length}` } } })
+  fb.scope('social').remote.publish([{ handle: '@helper.friend.home', name: '助手', home: '@friend.home' }])
+  let seq = 0
+  const say = async (text) => {
+    ctx.emitArgs('session/event', { id: 'a' }, { type: 'user/message', seq: ++seq, data: { source: { kind: 'user' }, content: [{ type: 'text', text }] } })
+    await new Promise(resolve => setTimeout(resolve, 30))
+  }
+  await say('@helper.friend.home 你好')
+  assert.equal(out.length, 1)
+  assert.equal(out[0].to.handle, '@helper.friend.home')
+  assert.equal(out[0].text, '@helper.friend.home 你好')
+  assert.equal(out[0].via, 'user-mention')
+  await say('see `@helper.friend.home` in the docs')
+  await say('> @helper.friend.home said hi\nok')
+  await say('```\n@helper.friend.home\n```')
+  await say('mail me at x@helper.friend.home')
+  await say('@nobody.friend.home hi')
+  assert.equal(out.length, 1)
+  // The same event seen twice is sent once.
+  ctx.emitArgs('session/event', { id: 'a' }, { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '@helper.friend.home 你好' }] } })
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(out.length, 1)
+})
+
+test('host API (#18): reserved names and the shared scope throw, listeners get copies, changes carry an epoch', async (t) => {
+  const { fb, call, stop } = await start()
+  t.after(stop)
+  const social = fb.scope('social')
+  assert.throws(() => social.api.handle('approvals', () => 1), /reserved/)
+  assert.throws(() => social.api.handle('decide', () => 1), /reserved/)
+  assert.throws(() => fb.scope('shared'), /unscoped/)
+  let got
+  social.fields.on('change', e => { got = e; e.value.x = 'mutated' })
+  social.fields.set('a', 'k', { x: 1 })
+  assert.equal(got.value.x, 'mutated')
+  assert.deepEqual(social.fields.get('a', 'k'), { x: 1 })
+  const first = (await call('flybot/changes', { since: 0 })).value
+  assert.equal(typeof first.epoch, 'string')
+  const stale = (await call('flybot/changes', { since: 999, epoch: 'old' })).value
+  assert.ok(stale.changes.length >= 1, 'an unknown epoch replays from the start')
+})
+
+test('send edge cases (#20): a bogus middleware verdict denies; a remote send with no transport throws', async (t) => {
+  const { fb, stop } = await start()
+  t.after(stop)
+  const off = fb.bot.send.use({ name: 'weird', handle: () => ({ action: 'maybe' }) })
+  const out = await fb.bot.send({ from: 'a', to: 'b', text: 'x' })
+  assert.equal(out.action, 'deny')
+  assert.match(out.reason, /weird returned "maybe"/)
+  off()
+  await assert.rejects(fb.bot.send({ from: 'a', to: '@nobody.home', text: 'x' }), /no transport/)
+})
+
+test('tools (#4): a tool visibleTo hides is taken out of that Bot\'s tool list, and comes back when visible', async (t) => {
+  const { ctx, fb, stop } = await start()
+  t.after(stop)
+  let allowed = false
+  fb.tools.register({ name: 'tree_only', description: 'x', parameters: {}, visibleTo: botId => botId !== 'c' || allowed, execute: () => 'ok' })
+  ctx.tools.schemas = () => [{ name: 'tree_only' }]
+  const masks = []
+  const agentFor = id => ({ id, session: { id }, ctx: { effect: () => {}, on: () => {}, tools: { restrict: (filter) => { masks.push([id, filter.deny]); return () => masks.push([id, 'lifted']) } } } })
+  const c = agentFor('c')
+  ctx.emit('agent/created', { agent: c })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.deepEqual(masks, [['c', ['tree_only']]])
+  ctx.emit('agent/created', { agent: agentFor('b') })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(masks.length, 1, 'visible to b: no mask')
+  allowed = true
+  ctx.emit('agent/created', { agent: c })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.deepEqual(masks.at(-1), ['c', 'lifted'])
+})

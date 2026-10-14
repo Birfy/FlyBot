@@ -1,4 +1,4 @@
-// FlyBot extension API (version 1). Implemented in src/host/flybot.js (host) and
+// FlyBot extension API (version 1). Implemented in src/host/hooks.js (host) and
 // src/client/flybot-registry.js + flybot-slots.js (browser). Feature plugins declare
 // `inject: ['flybot']` and use `ctx.flybot`.
 
@@ -171,6 +171,10 @@ export interface FlyBot {
   plugin: string
   /** The same API with fields/events/sends attributed to `plugin`. */
   scope(plugin: string): FlyBot
+  /** Resolves once ds-bot has loaded its saved team (bot.list() is complete). */
+  ready(): Promise<void>
+  /** True while another dsh holds the team: no polling, no writes. */
+  readOnly(): boolean
   on: On
   fields: BotFields
   bot: {
@@ -204,12 +208,14 @@ export interface FlyBot {
     get(id: string): Approval | undefined
     /** Owner only: exposed to the UI route, never as a model tool. */
     decide(id: string, decision: 'approve' | 'reject', options?: { note?: string }): Promise<Approval>
+    /** 'retry' re-sends a failed approval; an approve resumes the chain after the holder. */
     onChange(listener: (approval: Approval) => void): () => void
   }
   tools: { register(tool: FlyBotTool): () => void }
   api: {
     /** UI endpoint: POST api/bot { endpoint: 'flybot/<name>', payload }. */
-    handle(name: string, fn: (payload: any) => unknown | Promise<unknown>): () => void
+    /** `read: true` marks a query a read-only host (another dsh holds the team) still serves. */
+    handle(name: string, fn: (payload: any) => unknown | Promise<unknown>, options?: { read?: boolean }): () => void
   }
   outcomeOf(exchangeId: string): SendResult | undefined
 }

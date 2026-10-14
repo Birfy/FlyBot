@@ -1,3 +1,4 @@
+import { MAX_NAME_LENGTH } from './limits.js' // = ds-bot roster's 40-character name truncation
 // Model tools. The caller comes from the tool context ({ botId }), never from arguments,
 // so a bot can only create children under itself. Visible only to tree members.
 // tools.register keeps only type/description/enum/items from JSON Schema (minLength/maxLength
@@ -28,7 +29,7 @@ export const LIST_CHILDREN_SCHEMA = Object.freeze({ type: 'object', properties: 
 export const CREATE_CHILD_SCHEMA = Object.freeze({
   type: 'object',
   properties: {
-    name: { type: 'string', minLength: 1, maxLength: 60, description: 'Short domain name, e.g. "Cooking"' },
+    name: { type: 'string', minLength: 1, maxLength: MAX_NAME_LENGTH, description: 'Short domain name, e.g. "Cooking"' },
     role_description: { type: 'string', minLength: 1, maxLength: 1000, description: 'What the child is responsible for' },
   },
   required: ['name', 'role_description'],

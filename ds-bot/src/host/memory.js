@@ -941,6 +941,8 @@ export function install(rt) {
   // desiredModel only falls back for models that are not served; so a failed call
   // is tried once more on the profile default.
   async function botShot(bot, system, text, tag) {
+    // A friend's Bot (remote chat) runs on no model: its route would send the text away.
+    if (bot?.remote !== undefined) throw new Error('A friend\'s Bot has no memory here')
     const own = await modelFor(bot)
     try {
       return await oneShot(own, system, text, tag)
@@ -1004,7 +1006,7 @@ export function install(rt) {
     const prior = summaryFailures.get(bot.id)
     const failed = prior?.hash === hash && prior.model === bot.model ? prior : undefined
     const wanted = body.regenerate === true || (body.summarize === true && saved?.hash !== hash && failed === undefined)
-    if (wanted && entries.length > 0 && !summarizing.has(bot.id)) startSummary(bot, own, team, language, hash)
+    if (wanted && entries.length > 0 && bot.remote === undefined && !summarizing.has(bot.id)) startSummary(bot, own, team, language, hash)
     return {
       botId: bot.id,
       entries,

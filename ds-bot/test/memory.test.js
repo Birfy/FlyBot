@@ -181,7 +181,8 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 20))
 const summarySettled = async (call, botId) => {
   for (let i = 0; i < 250; i++) {
     await settle()
-    if ((await call('memory-view', { botId })).value?.summarizing === false) return
+    // Off (config.memory false) has no summary at all: nothing to wait for.
+    if ((await call('memory-view', { botId })).value?.summarizing !== true) return
   }
 }
 

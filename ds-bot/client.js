@@ -90,6 +90,15 @@ var ZH = {
   // Sidebar and account menu
   "Bot list": "Bot 列表",
   "Bot tree": "Bot 树",
+  "no longer shared": "已不再共享",
+  "Messages waiting for your approval": "等你批准的消息",
+  "Not sent to {to} · {reason}": "未发给 {to} · {reason}",
+  "Message to {to} · {reason}": "发给 {to} 的消息 · {reason}",
+  failed: "失败",
+  "Attached files": "附件",
+  Retry: "重试",
+  Approve: "批准",
+  "Friend's Bot": "好友的 Bot",
   "Expand": "展开",
   "Collapse": "收起",
   "Setting up your Main Bot…": "正在设置你的主 Bot…",
@@ -147,6 +156,7 @@ var ZH = {
   "Switch": "切换",
   "Switch to classic Agent mode": "切换经典 Agent 模式",
   "{model} is not available anymore. Pick another model for me.": "{model} 已经不可用了。给我换一个模型吧。",
+  "{name} ({handle}) is no longer shared with you, so messages to it cannot be delivered. It runs on its owner's machine, so another model cannot stand in. Ask its owner for a new invite.": "{name}（{handle}）已不再与你共享，消息无法送达。它运行在主人的机器上，不能换用其他模型。请向它的主人要一个新的邀请。",
   "Hi, I'm {name}. I don't have a model yet. How do you want to set one up?": "你好，我是 {name}。我还没有可用的模型。你想怎么配置？",
   "Hi, I'm {name}. Pick a model for me first. You can change it later in my details.": "你好，我是 {name}。先给我选一个模型吧，以后可以在我的详情里换。",
   "Mode": "模式",
@@ -1152,11 +1162,14 @@ var CHANGES_POLL_MS = 3e3;
 function createClientApi({ call: callFn, registry: slots = registry, every = setInterval, clear = clearInterval }) {
   const listeners2 = /* @__PURE__ */ new Set();
   let since2;
+  let epoch;
   let timer;
   const poll = async () => {
     const first = since2 === void 0;
     try {
-      const { seq, changes } = await callFn("changes", { since: since2 ?? 0 });
+      const { seq, changes, epoch: now } = await callFn("changes", { since: since2 ?? 0, ...epoch ? { epoch } : {} });
+      if (epoch !== void 0 && now !== epoch) since2 = 0;
+      epoch = now;
       const fresh = first ? [] : changes.filter((change) => change.seq > (since2 ?? 0));
       since2 = Math.max(since2 ?? 0, seq);
       for (const change of fresh) {
@@ -1279,93 +1292,35 @@ function useSlot(name) {
   (0, import_react.useEffect)(() => slots.subscribe(() => setVersion(slots.version())), [slots]);
   return slots.entries(name);
 }
-function Safe({ entry, props }) {
-  try {
-    return (0, import_react.createElement)(entry.component, props);
-  } catch (error) {
-    console.error(`flybot: ${entry.id} failed`, error);
-    return null;
+var SlotBoundary = class extends import_react.Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
   }
-}
-function RemoteMembers({ roster }) {
-  const homes = remoteMembersByHome(roster);
-  const [open, setOpen] = (0, import_react.useState)("");
-  if (homes.length === 0) return null;
-  return (0, import_react.createElement)(
-    "div",
-    { className: "bt-flybot-section bt-remote-members", "data-flybot": "remote-members" },
-    (0, import_react.createElement)("div", { className: "bt-flybot-title" }, "Remote members"),
-    homes.map((home) => (0, import_react.createElement)(
-      "div",
-      { key: home.home, className: "bt-remote-home", title: home.home },
-      (0, import_react.createElement)("div", { className: "bt-remote-home-name" }, home.name),
-      home.bots.map((bot) => (0, import_react.createElement)(
-        import_react.Fragment,
-        { key: bot.handle },
-        (0, import_react.createElement)(
-          "button",
-          { type: "button", className: "bt-remote-member", title: `Message ${bot.handle}`, "aria-expanded": open === bot.handle, onClick: () => setOpen(open === bot.handle ? "" : bot.handle) },
-          (0, import_react.createElement)("span", { className: "bt-remote-name" }, bot.name),
-          (0, import_react.createElement)("span", { className: "bt-remote-badge" }, "remote")
-        ),
-        open === bot.handle ? (0, import_react.createElement)(RemoteCompose, { bot, roster, onDone: () => setOpen("") }) : null
-      ))
-    ))
-  );
-}
-var MAX_FILE_BYTES = 20 * 1024 * 1024;
-var readBase64 = (file) => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ""));
-  reader.onerror = () => reject(reader.error);
-  reader.readAsDataURL(file);
-});
-function RemoteCompose({ bot, roster, onDone }) {
-  const bots = roster.bots ?? [];
-  const [from, setFrom] = (0, import_react.useState)((bots.find((b) => b.isMain) ?? bots[0])?.id ?? "");
-  const [text, setText] = (0, import_react.useState)("");
-  const [files, setFiles] = (0, import_react.useState)([]);
-  const [status, setStatus] = (0, import_react.useState)("");
-  const submit = async (event) => {
-    event.preventDefault();
-    const big = files.find((file) => file.size > MAX_FILE_BYTES);
-    if (big) return setStatus(`${big.name} is over 20 MB`);
-    setStatus("Sending…");
-    try {
-      const payload = await Promise.all(files.map(async (file) => ({ name: file.name, mime: file.type, content_base64: await readBase64(file) })));
-      const result = await call2(`${bot.plugin ?? "social"}/send`, { from, to: bot.handle, text: text || `${payload.length} file(s)`, files: payload });
-      const value = result?.value ?? result;
-      setStatus(value?.action === "hold" ? "Waiting for your approval" : value?.action === "deny" ? `Not sent: ${value.reason}` : "Sent");
-      if (value?.action !== "deny") {
-        setText("");
-        setFiles([]);
-        setTimeout(onDone, 1500);
-      }
-    } catch (error) {
-      setStatus(String(error?.message ?? error));
-    }
-  };
-  return (0, import_react.createElement)(
-    "form",
-    { className: "bt-remote-compose", onSubmit: submit },
-    (0, import_react.createElement)("select", { value: from, "aria-label": "Send as", onChange: (e) => setFrom(e.target.value) }, bots.map((b) => (0, import_react.createElement)("option", { key: b.id, value: b.id }, b.name))),
-    (0, import_react.createElement)("textarea", { value: text, placeholder: `Message ${bot.handle}`, onChange: (e) => setText(e.target.value) }),
-    (0, import_react.createElement)("input", { type: "file", multiple: true, "aria-label": "Attach files", onChange: (e) => setFiles([...e.target.files].slice(0, 5)) }),
-    files.length ? (0, import_react.createElement)("div", null, files.map((file) => `${file.name} · ${fileSize(file.size)}`).join(", ")) : null,
-    (0, import_react.createElement)("button", { type: "submit", disabled: !from || !text.trim() && files.length === 0 }, "Send"),
-    status ? (0, import_react.createElement)("div", { role: "status" }, status) : null
-  );
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error) {
+    console.error(`flybot: ${this.props.id} failed`, error);
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+};
+function Safe({ entry, props }) {
+  return (0, import_react.createElement)(SlotBoundary, { id: entry.id }, (0, import_react.createElement)(entry.component, props));
 }
 function useSidebarStructure() {
   return useSlot("flybot.sidebar.structure")[0];
 }
-function FlyBotSections({ roster, actions }) {
+function FlyBotSections({ roster, actions, renderBot }) {
   const shell = (actions.flybotSlotEntries?.("flybot.sidebar.section") ?? []).map((entry, index) => ({ id: entry.id ?? `slot-${index}`, order: entry.order ?? 0, component: entry.component }));
   const entries2 = [...useSlot("flybot.sidebar.section"), ...shell].sort((a, b) => a.order - b.order);
-  return (0, import_react.createElement)(import_react.Fragment, null, (0, import_react.createElement)(RemoteMembers, { roster }), entries2.map((entry) => (0, import_react.createElement)(
+  const remoteChats = (roster.bots ?? []).filter((bot) => bot.remote);
+  return (0, import_react.createElement)(import_react.Fragment, null, entries2.map((entry) => (0, import_react.createElement)(
     "div",
     { key: entry.id, className: "bt-flybot-section", "data-flybot": entry.id },
-    (0, import_react.createElement)(Safe, { entry, props: { roster, actions, call: call2 } })
+    (0, import_react.createElement)(Safe, { entry, props: { roster, actions, call: call2, renderBot, remoteChats } })
   )));
 }
 function FlyBotDetails({ bot, roster }) {
@@ -1382,7 +1337,7 @@ function FlyBotApprovals() {
   const entries2 = useSlot("flybot.approvals");
   const [pending, setPending] = (0, import_react.useState)([]);
   const [busy, setBusy] = (0, import_react.useState)("");
-  const refresh = () => call2("approvals").then((list) => setPending(Array.isArray(list) ? list : [])).catch(() => {
+  const refresh = () => call2("approvals", { status: ["pending", "failed"] }).then((list) => setPending(Array.isArray(list) ? list : [])).catch(() => {
   });
   (0, import_react.useEffect)(() => {
     void refresh();
@@ -1390,10 +1345,14 @@ function FlyBotApprovals() {
     return () => clearInterval(timer);
   }, []);
   if (pending.length === 0) return null;
+  const [error, setError] = (0, import_react.useState)("");
   const decide = async (id, decision) => {
     setBusy(id);
+    setError("");
     try {
       await call2("decide", { id, decision });
+    } catch (failure) {
+      setError(failure?.message ?? String(failure));
     } finally {
       setBusy("");
       await refresh();
@@ -1401,7 +1360,7 @@ function FlyBotApprovals() {
   };
   return (0, import_react.createElement)(
     "div",
-    { className: "bt-flybot-approvals", role: "region", "aria-label": "Messages waiting for your approval" },
+    { className: "bt-flybot-approvals", role: "region", "aria-label": t("Messages waiting for your approval") },
     pending.map((approval) => {
       const custom = entries2.find((entry) => entry.policy === void 0 || entry.policy === approval.by);
       if (custom) return (0, import_react.createElement)("div", { key: approval.id }, (0, import_react.createElement)(Safe, { entry: custom, props: { approval, decide: (decision) => decide(approval.id, decision), call: call2 } }));
@@ -1409,17 +1368,19 @@ function FlyBotApprovals() {
       return (0, import_react.createElement)(
         "div",
         { key: approval.id, className: "bt-flybot-approval" },
-        (0, import_react.createElement)("div", { className: "bt-flybot-approval-head" }, `Message to ${to} · ${approval.reason}`),
+        (0, import_react.createElement)("div", { className: "bt-flybot-approval-head" }, approval.status === "failed" ? t("Not sent to {to} · {reason}", { to, reason: approval.error ?? t("failed") }) : t("Message to {to} · {reason}", { to, reason: approval.reason })),
         (0, import_react.createElement)("div", { className: "bt-flybot-approval-text" }, approval.request.text),
-        approval.request.attachments?.length ? (0, import_react.createElement)("ul", { className: "bt-flybot-approval-files", "aria-label": "Attached files" }, approval.request.attachments.map((file, index) => (0, import_react.createElement)("li", { key: index }, `${file.name} · ${fileSize(file.size)}`))) : null,
+        approval.request.attachments?.length ? (0, import_react.createElement)("ul", { className: "bt-flybot-approval-files", "aria-label": t("Attached files") }, approval.request.attachments.map((file, index) => (0, import_react.createElement)("li", { key: index, title: file.path ?? file.name }, `${file.name} · ${fileSize(file.size)}`, file.path ? (0, import_react.createElement)("div", { className: "bt-flybot-approval-path" }, file.path) : null))) : null,
         (0, import_react.createElement)(
           "div",
           { className: "bt-flybot-approval-actions" },
-          (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "approve") }, "Approve"),
-          (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "reject") }, "Reject")
+          approval.status === "failed" ? (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "retry") }, t("Retry")) : null,
+          approval.status === "failed" ? null : (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "approve") }, t("Approve")),
+          approval.status === "failed" ? null : (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "reject") }, t("Reject"))
         )
       );
-    })
+    }),
+    error ? (0, import_react.createElement)("div", { className: "bt-flybot-approval-error", role: "alert" }, error) : null
   );
 }
 var fileSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
@@ -1427,17 +1388,14 @@ var FLYBOT_CSS = `
 .bt-flybot-approval-files { margin: 0 0 8px; padding-left: 18px; font-size: 12px; }
 .bt-file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0 30px; }
 .bt-file-chip { font-size: 12px; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--bt-line, rgba(0,0,0,.15)); background: transparent; cursor: pointer; }
-.bt-remote-compose { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 8px; font-size: 12px; }
-.bt-remote-compose textarea { font: inherit; min-height: 48px; }
-.bt-remote-badge { font-size: 10px; padding: 0 5px; margin-left: 6px; border-radius: 6px; background: rgba(120,120,160,.18); text-transform: lowercase; }
-.bt-remote-member { display: flex; align-items: center; padding: 2px 12px; font-size: 13px; }
-.bt-remote-home-name { padding: 4px 12px 0; font-size: 11px; opacity: .7; }
 
 .bt-flybot-section { margin-top: 8px; border-top: 1px solid var(--bt-line, rgba(0,0,0,.08)); padding-top: 6px; }
-.bt-flybot-approvals { position: fixed; right: 16px; bottom: 16px; z-index: 50; display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
+.bt-flybot-approvals { position: fixed; right: 16px; bottom: 16px; z-index: 50; display: flex; flex-direction: column; gap: 8px; max-width: 360px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.bt-flybot-approval-error { color: var(--bt-danger, #d33); font-size: 12px; }
 .bt-flybot-approval { background: var(--bt-card, #fff); border: 1px solid var(--bt-line, rgba(0,0,0,.12)); border-radius: 10px; padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); font-size: 13px; }
 .bt-flybot-approval-head { font-weight: 600; margin-bottom: 4px; }
 .bt-flybot-approval-text { white-space: pre-wrap; max-height: 120px; overflow: auto; margin-bottom: 8px; }
+.bt-flybot-approval-path { font-family: ui-monospace, monospace; font-size: 11px; opacity: .7; overflow-wrap: anywhere; }
 .bt-flybot-approval-actions { display: flex; gap: 8px; justify-content: flex-end; }
 `;
 
@@ -1838,6 +1796,13 @@ function reminderPrompts(text) {
   }
 }
 var stripHeader = (text) => text.replace(HEADER, "");
+var TRACE = /^[ \t]*[^\n→]{1,60}(?:[ \t]*→[ \t]*[^\n→]{1,60})+[ \t]*\n+/;
+function stripTrace(text) {
+  if (typeof text !== "string") return text;
+  const line = text.match(TRACE)?.[0];
+  if (!line || /[.!?。！？:：,，]/.test(line.replace(/[^\S\n]*\n+$/, "").replace(/→/g, ""))) return text;
+  return text.slice(line.length).replace(/^\s+/, "");
+}
 function latestMemoryChange(news, ids) {
   const at = (id) => news?.[id]?.seen ? news[id].at ?? 0 : 0;
   return ids.reduce((best, id) => at(id) > at(best) ? id : best, ids[0] ?? null);
@@ -1948,7 +1913,7 @@ function previewOf(list, id, hiddenTurns = []) {
     const entry = outline[index];
     if (hiddenTurns.includes(entry.turn)) continue;
     const text = entry.response || entry.prompt || "";
-    if (text !== "") return stripHeader(text).replace(/\s+/g, " ").trim();
+    if (text !== "") return stripTrace(stripHeader(text)).replace(/\s+/g, " ").trim().replace(/^[^\s→]{1,40}(?: → [^\s→]{1,40})+ (?=\S)/, "");
   }
   return "";
 }
@@ -2299,6 +2264,7 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-row-body{display:flex;flex-direction:column;min-width:0;flex:1 1 auto}
 .bt-row-name{display:flex;align-items:center;gap:6px;min-width:0;font-size:14px;line-height:20px;font-weight:400}
 .bt-row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-row-remote{flex:none;display:inline-flex;align-items:center;color:var(--bt-ink-3,rgba(20,20,20,.36))}
 .bt-tag{flex:none;max-width:96px;font-size:12px;line-height:16px;font-weight:400;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-row-preview{font-size:13px;line-height:18px;color:var(--bt-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-unread{width:8px;height:8px;border-radius:50%;background:#1084fe;flex:none;margin-right:2px;animation:bt-fade .13s cubic-bezier(.22,1,.36,1)}
@@ -2946,6 +2912,9 @@ var CONVERSATION_CSS = `
 .bt-think{font-size:13px;line-height:18px;color:var(--bt-ink-2);margin:2px 0 4px;max-width:min(560px,78%)}
 .bt-think summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px}
 .bt-think summary::-webkit-details-marker{display:none}
+.bt-think-caret{display:inline-block;transition:transform .15s;font-size:14px;line-height:1}
+.bt-think[open] .bt-think-caret{transform:rotate(90deg)}
+.bt-remote-handle{display:inline-flex;align-items:center;gap:3px;margin-left:6px;font-weight:400;color:var(--bt-ink-3,rgba(20,20,20,.36))}
 .bt-think-text{white-space:pre-wrap;margin-top:6px;padding-left:10px;border-left:2px solid var(--bt-line-2)}
 .bt-event{display:flex;justify-content:center;align-items:center;gap:2px;min-height:24px;margin:2px 0;font-size:12px;line-height:16px;color:var(--bt-ink-2);flex-wrap:wrap}
 .bt-event>span{padding:0 2px}
@@ -4240,10 +4209,11 @@ function MessageTools({ text, name, sessionId, react, actions }) {
   );
 }
 function ThinkingRow({ text }) {
+  if (typeof text !== "string" || text.trim() === "") return null;
   return (0, import_react7.createElement)(
     "details",
     { className: "bt-think" },
-    (0, import_react7.createElement)("summary", null, t("Thought it through")),
+    (0, import_react7.createElement)("summary", null, (0, import_react7.createElement)("span", { className: "bt-think-caret", "aria-hidden": true }, "›"), t("Thought it through")),
     (0, import_react7.createElement)("div", { className: "bt-think-text" }, text)
   );
 }
@@ -4264,7 +4234,7 @@ function AssistantCell({ node, groupPart, sessionId, openFile, fileMentions, use
   const contexts = useTurnContext(String(data.turn));
   const mentions = useFileMentions({ node, openFile, fileMentions, useTurnData });
   const hidden = Boolean(roster.roomsById[sessionId]) || isHiddenTurn(roster, sessionId, data.turn);
-  const texts2 = groupPart === "reasoning" ? [] : data.blocks.filter((block) => block.kind === "text" && block.text.trim() !== "").map((block) => block.text);
+  const texts2 = groupPart === "reasoning" ? [] : data.blocks.filter((block) => block.kind === "text" && block.text.trim() !== "").map((block, index) => index === 0 ? stripTrace(block.text) : block.text).filter((text) => text.trim() !== "");
   const running = data.status === "running";
   useLiveNote(actions, sessionId, `text:${node.key ?? data.seq}`, !hidden && running && texts2.length > 0 ? { text: true } : null);
   if (hidden) return null;
@@ -4337,22 +4307,38 @@ function GroupMessage({ bot, text, room: room2, roster, actions, msgKey, useUi }
     (0, import_react7.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room2?.id, msgKey, useUi, lead })
   );
 }
+function remoteSpeaker(source, roster) {
+  const handle = source.remote.handle;
+  const member = (roster.remoteBots ?? []).find((bot2) => bot2.handle === handle);
+  const chat = (roster.bots ?? []).find((bot2) => bot2.remote?.handle === handle);
+  const name = chat?.name ?? member?.name ?? source.senderName ?? handle;
+  const bot = chat ?? { id: `remote:${handle}`, name, color: member?.color, shape: member?.shape };
+  return { bot, member, name, handle, chatId: chat ? currentPart(chat) : void 0 };
+}
 function RemoteMessage({ source, text, roster, actions, sessionId, msgKey, useUi }) {
-  const member = (roster.remoteBots ?? []).find((bot2) => bot2.handle === source.remote.handle);
+  const { bot, member, name, handle, chatId } = remoteSpeaker(source, roster);
   const files = Array.isArray(source.attachments) ? source.attachments : [];
-  const bot = { id: `remote:${source.remote.handle}`, name: member?.name ?? source.senderName ?? source.remote.handle, color: "gray" };
-  const lead = (0, import_react7.createElement)("span", { className: "bt-lead", title: source.remote.handle }, (0, import_react7.createElement)(BotMark, { bot, size: 22 }));
+  const mark = (0, import_react7.createElement)(BotMark, { bot, size: 22 });
+  const lead = chatId ? (0, import_react7.createElement)("button", { type: "button", className: "bt-lead", title: handle, "aria-label": t("Open {name}'s chat", { name }), onClick: () => actions.openSession(chatId) }, mark) : (0, import_react7.createElement)("span", { className: "bt-lead", title: handle }, mark);
   return (0, import_react7.createElement)(
     "div",
-    { className: "bt-group-msg bt-remote-msg", "data-remote": source.remote.handle },
+    { className: "bt-group-msg bt-remote-msg", "data-remote": handle },
     (0, import_react7.createElement)(
       "span",
-      { className: "bt-group-name" },
-      bot.name,
-      (0, import_react7.createElement)("span", { className: "bt-group-role bt-remote-badge", title: source.remote.home ?? source.remote.handle }, "remote")
+      { className: "bt-group-name", style: { color: inkText(colorOf(bot)) } },
+      name,
+      (0, import_react7.createElement)("span", { className: "bt-remote-handle", title: source.remote.home ?? handle, "aria-label": t("Friend's Bot") }, (0, import_react7.createElement)(GlobeMark), handle)
     ),
-    (0, import_react7.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead }),
+    (0, import_react7.createElement)(Bubbles, { texts: [stripTrace(text)], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead }),
     files.length ? (0, import_react7.createElement)(RemoteFiles, { files, plugin: member?.plugin ?? "social", botId: roster.byId[sessionId]?.id ?? sessionId }) : null
+  );
+}
+function GlobeMark() {
+  return (0, import_react7.createElement)(
+    "svg",
+    { width: 10, height: 10, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", "aria-hidden": true },
+    (0, import_react7.createElement)("circle", { cx: 12, cy: 12, r: 9 }),
+    (0, import_react7.createElement)("path", { d: "M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" })
   );
 }
 function RemoteFiles({ files, plugin, botId }) {
@@ -4534,6 +4520,7 @@ function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnClock, us
   const body = triggerBody();
   return unreadOpening ? (0, import_react7.createElement)(import_react7.Fragment, null, (0, import_react7.createElement)("div", { className: "bt-open-new" }, (0, import_react7.createElement)(NewDivider), (0, import_react7.createElement)("div", { className: "bt-time-sep", role: "separator" }, unreadOpening)), body) : body;
   function triggerBody() {
+    if (source.form === "remote-chat") return null;
     if (source.remote?.handle) {
       return (0, import_react7.createElement)(RemoteMessage, { source, text: remoteMessageText(stripHeader(contentText(data.content))), roster, actions, sessionId, msgKey: `${sessionId}:${data.turn}:remote`, useUi });
     }
@@ -5207,10 +5194,22 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     wide ? (0, import_react9.createElement)(
       "span",
       { className: "bt-row-body" },
-      (0, import_react9.createElement)("span", { className: "bt-row-name" }, (0, import_react9.createElement)("span", { className: "bt-row-title" }, bot.name), pinned ? (0, import_react9.createElement)(PinMark) : null),
+      (0, import_react9.createElement)("span", { className: "bt-row-name" }, (0, import_react9.createElement)("span", { className: "bt-row-title" }, bot.name), bot.remote ? (0, import_react9.createElement)(RemoteMark, { remote: bot.remote }) : null, pinned ? (0, import_react9.createElement)(PinMark) : null),
       awayLine ? (0, import_react9.createElement)("span", { className: "bt-row-preview" }, awayLine) : preview ? (0, import_react9.createElement)("span", { className: "bt-row-preview" }, preview) : null
     ) : null,
     wide && unread && !active ? (0, import_react9.createElement)("span", { className: "bt-unread", "aria-hidden": true }) : null
+  );
+}
+function RemoteMark({ remote }) {
+  return (0, import_react9.createElement)(
+    "span",
+    { className: "bt-row-remote", title: remote.gone ? `${remote.handle} · ${t("no longer shared")}` : remote.handle, "aria-label": t("Friend's Bot") },
+    (0, import_react9.createElement)(
+      "svg",
+      { width: 11, height: 11, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", "aria-hidden": true },
+      (0, import_react9.createElement)("circle", { cx: 12, cy: 12, r: 9 }),
+      (0, import_react9.createElement)("path", { d: "M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" })
+    )
   );
 }
 function RoomRow({ room: room2, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, wide, marked }) {
@@ -5459,7 +5458,8 @@ function TeamSidebar(props) {
   const order = (0, import_react9.useMemo)(() => {
     const stamps = JSON.parse(updated);
     const entries2 = [
-      ...roster.bots.filter((bot) => bot.id !== roster.mainBotId).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
+      // Friends' Bots (remote chats) are listed by their plugin's section, not with the team.
+      ...roster.bots.filter((bot) => bot.id !== roster.mainBotId && !bot.remote).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
       ...roster.rooms.map((room2) => ({ kind: "room", item: room2, at: stamps[room2.id] ?? room2.createdAt })),
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map((agent) => ({ kind: "agent", item: agent, at: Math.max(0, ...agent.sessions.map((id) => stamps[id] ?? 0)) || agent.createdAt }))
@@ -5502,7 +5502,7 @@ function TeamSidebar(props) {
       { ref: listRef, className: "bt-list", role: "region", "aria-label": t("Bot list") },
       tree ? (0, import_react9.createElement)("div", { className: "bt-tree", role: "group", "aria-label": t("Bot tree") }, tree.map((node) => (0, import_react9.createElement)(TreeNode, { key: node.bot.id, node, rowProps, markedUnread, collapsed, toggle, actions: structure?.nodeActions }))) : main ? (0, import_react9.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react9.createElement)("div", { className: "bt-hint" }, t("Setting up your Main Bot…")),
       order.filter((entry) => !(tree && entry.kind === "bot")).map((entry) => entry.kind === "bot" ? (0, import_react9.createElement)(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }) : entry.kind === "room" ? (0, import_react9.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true }) : (0, import_react9.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true })),
-      wide ? (0, import_react9.createElement)(FlyBotSections, { roster, actions }) : null
+      wide ? (0, import_react9.createElement)(FlyBotSections, { roster, actions, renderBot: (bot) => (0, import_react9.createElement)(BotRow, { key: bot.id, ...rowProps, bot, asRow: true, marked: markedUnread[bot.id] === true }) }) : null
     )
   );
 }
@@ -6896,6 +6896,7 @@ function useAnchoredMenu() {
   return { isOpen: place !== null, shownPlace, leaving, button, menu, open, close };
 }
 function ModelMenu({ bot, roster, actions, run, wide = false, onPick, onPickEffort }) {
+  if (bot?.remote !== void 0) return null;
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu();
   const shown = modelOf(bot, roster);
   const current = bot.model ?? bot.appliedModel;
@@ -6970,6 +6971,7 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
     if (shown) void actions.refreshModels?.();
   }, [shown, sessionId]);
   if (!bot || currentPart(bot) !== sessionId || !roster.ready) return null;
+  if (bot.remote) return bot.remote.gone ? (0, import_react14.createElement)(RemoteGoneDock, { bot }) : null;
   const models = roster.models ?? [];
   const lost = bot.model ? !models.some((model) => model.ref === bot.model) : false;
   if (bot.model && (!lost || models.length === 0)) return null;
@@ -7019,6 +7021,26 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
     ),
     (0, import_react14.createElement)("div", { className: "bt-model-chips", role: "group", "aria-label": t("Choose a model") }, choices),
     error ? (0, import_react14.createElement)("div", { className: "bt-secret-error bt-model-error", role: "alert" }, error) : null
+  );
+}
+function RemoteGoneDock({ bot }) {
+  return (0, import_react14.createElement)(
+    "div",
+    { className: "bt-model-dock", "data-flybot": "remote-gone" },
+    (0, import_react14.createElement)(
+      "div",
+      { className: "bt-astack", "data-lead": "" },
+      (0, import_react14.createElement)(
+        "div",
+        { className: "bt-msg" },
+        (0, import_react14.createElement)(
+          "div",
+          { className: "bt-msg-line" },
+          (0, import_react14.createElement)(BotMark, { bot, size: 22 }),
+          (0, import_react14.createElement)("div", { className: "bt-bubble" }, t("{name} ({handle}) is no longer shared with you, so messages to it cannot be delivered. It runs on its owner's machine, so another model cannot stand in. Ask its owner for a new invite.", { name: bot.name, handle: bot.remote.handle }))
+        )
+      )
+    )
   );
 }
 function setupChoices(actions) {

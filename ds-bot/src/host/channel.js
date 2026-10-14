@@ -56,7 +56,8 @@ export function install(rt) {
     capabilities: rt.capabilityLibraryView(),
     secretRequests: state.secretRequests ?? {},
     colors: [...COLORS, ...EXTRA_COLORS],
-    models: rt.cachedCatalog(),
+    // Friends' Bots' routes are no model a Bot can pick.
+    models: rt.cachedCatalog().filter(entry => entry.provider !== 'flybot-remote'),
     defaultModel: rt.cachedDefault() ?? null,
     permissions: rt.permissionCatalog?.() ?? null,
     modelsKey: modelsKey(),
@@ -107,7 +108,8 @@ export function install(rt) {
       const body = payload ?? {}
       await rt.refresh()
       const readOnly = rt.readOnly()
-      if (readOnly !== undefined && !READS.has(endpoint)) return fail(readOnly, 'bot/read-only')
+      const flybotRead = endpoint.startsWith('flybot/') && rt.flybotIsRead?.(endpoint.slice('flybot/'.length)) === true
+      if (readOnly !== undefined && !READS.has(endpoint) && !flybotRead) return fail(readOnly, 'bot/read-only')
       switch (endpoint) {
         case 'state':
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
@@ -322,7 +324,7 @@ export function install(rt) {
           await rt.diagnostics.clear()
           return ok(true)
         default:
-          // FlyBot plugins' endpoints (src/host/flybot.js).
+          // FlyBot plugins' endpoints (src/host/hooks.js).
           if (endpoint.startsWith('flybot/')) return ok(await rt.flybotEndpoint(endpoint.slice('flybot/'.length), body))
           return fail(`Unknown endpoint ${endpoint}`, 'bot/not-found')
       }

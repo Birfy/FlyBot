@@ -162,6 +162,9 @@ export function install(rt) {
   // Roles whose turn owes the sender a reply: a 'stopped' notice asks the Bot to
   // acknowledge, exactly like a request.
   const expectsReply = info => info.role === 'request' || info.role === 'stopped'
+  // A friend's Bot asking (FlyBot remote, Bot Social): the turn stays in the Bot's own
+  // chat, where the user sees it, and its answer goes back to the friend's Bot.
+  const fromRemote = info => info.role === 'request' && typeof info.remote?.handle === 'string'
 
   // A group Session is hidden as a whole, so its turns need no marking. A handoff
   // package that only opens a part is acknowledged with a fixed line, also hidden.
@@ -172,7 +175,7 @@ export function install(rt) {
       entry.joined = info.joined.filter(item => item?.info !== undefined && item.info !== null)
     }
     if (rt.groupOwners.has(sessionId)) return
-    if ((expectsReply(info) && !answersUser(info)) || info.role === 'room' || (info.role === 'handoff' && info.resume !== true)) {
+    if ((expectsReply(info) && !answersUser(info) && !fromRemote(info)) || info.role === 'room' || (info.role === 'handoff' && info.resume !== true)) {
       markExchangeTurn(sessionId, entry.turn)
     }
   }
@@ -419,6 +422,13 @@ export function install(rt) {
         // Whoever the turn answers gets the same three-way rule: a failure notice,
         // the turn's text (or a stopped-before-answer line), or nothing.
         const answer = (source, reply) => {
+          if (fromRemote(source)) {
+            if (failure === undefined && reply !== '') {
+              void rt.flybotReplyRemote?.({ from: rt.selfOf(id), handle: source.remote.handle, home: source.remote.home, text: reply, replyTo: source.exchangeId })
+                .catch(error => rt.warn('ds-bot: reply to %s failed: %s', source.remote.handle, error))
+            }
+            return
+          }
           if (!expectsReply(source) || answersUser(source)) return
           const name = rt.botOf(rt.selfOf(id))?.name ?? 'The other Bot'
           // A sender that wrote from a group gets the reply in its Session there, while

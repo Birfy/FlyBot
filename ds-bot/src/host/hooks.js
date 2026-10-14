@@ -10,6 +10,7 @@
 // Types: ds-bot/types/flybot.d.ts. Plugins call flybot.scope('<plugin>') to get the
 // same API with their own field namespace; the unscoped API uses namespace 'shared'.
 import { randomUUID } from 'node:crypto'
+import { mentionSpans } from '../shared/mentions.js'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
 export const FLYBOT_API_VERSION = 1
@@ -19,6 +20,10 @@ const BOT_TO_BOT_ROLES = new Set(['request', 'reply', 'stopped', 'report'])
 const ACTIONS = new Set(['allow', 'deny', 'hold'])
 const MAX_ATTACHMENTS = 5
 const APPROVALS_KEPT = 200
+const BUILTIN_ENDPOINTS = new Set(['bots', 'remote-members', 'changes', 'approvals', 'decide'])
+const PENDING_MAX = 100
+const MAX_SEND_TEXT = 20_000
+class HoldFull extends Error {}
 const CHANGES_KEPT = 500
 const NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/i
 
@@ -84,13 +89,15 @@ export function install(rt) {
   const listeners = { 'change': new Set(), 'bot.created': new Set(), 'bot.removed': new Set() }
   const changes = []
   let changeSeq = 0
+  // A new host process starts a new epoch: the browser resets its watermark on a change.
+  const changeEpoch = randomUUID()
   const fire = (event, payload) => {
     if (event === 'change') {
-      changes.push({ seq: ++changeSeq, ...payload })
+      changes.push({ seq: ++changeSeq, ...structuredClone(payload) })
       if (changes.length > CHANGES_KEPT) changes.shift()
     }
     for (const fn of [...listeners[event]]) {
-      try { fn({ ...payload }) } catch (error) { warn('flybot: %s listener failed: %s', event, error) }
+      try { fn(structuredClone(payload)) } catch (error) { warn('flybot: %s listener failed: %s', event, error) }
     }
     emit(`flybot/${event}`, clone(payload))
   }
@@ -104,6 +111,8 @@ export function install(rt) {
   }
 
   // ---------------------------------------------------------------- bots
+  // The team: every Bot but friends' Bots, which are chats of their own (remote-chat.js).
+  const team = () => Object.values(state.bots).filter(bot => bot.remote === undefined)
   const view = bot => (bot === undefined ? undefined : {
     id: bot.id, name: bot.name, role: bot.role, isMain: rt.isMain(bot.id), createdBy: bot.createdBy ?? null,
     systemPrompt: bot.systemPrompt ?? '', fields: clone(bot.fields ?? {}),
@@ -135,7 +144,7 @@ export function install(rt) {
   if (typeof createBot === 'function') {
     rt.createBot = async (...args) => {
       const bot = await createBot(...args)
-      if (bot?.id !== undefined) fire('bot.created', view(rt.botOf(bot.id)) ?? view(bot))
+      if (bot?.id !== undefined && bot.remote === undefined) fire('bot.created', view(rt.botOf(bot.id)) ?? view(bot))
       return bot
     }
   }
@@ -145,8 +154,9 @@ export function install(rt) {
     rt.deleteBot = async (id, ...rest) => {
       // Fires after removal; the payload keeps the Bot's last record, fields included.
       const last = view(rt.botOf(id))
+      const remoteChat = rt.botOf(id)?.remote !== undefined
       const result = await deleteBot(id, ...rest)
-      fire('bot.removed', { ...last, botId: id, bot: last })
+      if (!remoteChat) fire('bot.removed', { ...last, botId: id, bot: last })
       return result
     }
   }
@@ -181,7 +191,7 @@ export function install(rt) {
       },
       // Bots that have the key; with `value`, only those whose value deep-equals it.
       query(key, value) {
-        return Object.values(state.bots)
+        return team()
           .filter(bot => bot.fields?.[plugin] !== undefined && Object.hasOwn(bot.fields[plugin], key) && (value === undefined || same(bot.fields[plugin][key], value)))
           .map(view)
       },
@@ -198,9 +208,13 @@ export function install(rt) {
     chain = orderMiddleware([...chain, middleware])
     return () => { chain = chain.filter(m => m !== middleware) }
   }
-  const evaluate = async (msg) => {
+  // `after`: the middleware that held this message; an approved hold resumes the chain
+  // just after it, so later policies (audit, leak prevention) still run.
+  const evaluate = async (msg, { after } = {}) => {
     const skip = new Set()
+    let resumed = after === undefined || !chain.some(m => m.name === after)
     for (const middleware of chain) {
+      if (!resumed) { if (middleware.name === after) resumed = true; continue }
       if (skip.has(middleware.name)) continue
       let verdict
       try {
@@ -259,8 +273,11 @@ export function install(rt) {
 
   const hold = async (msg, verdict) => {
     await rt.load()
-    const approval = { id: randomUUID(), status: 'pending', reason: verdict.reason, by: verdict.by, createdAt: Date.now(), request: clone(msg) }
     const all = store()
+    if (Object.values(all).filter(a => a.status === 'pending').length >= PENDING_MAX) {
+      throw new HoldFull(`${PENDING_MAX} messages already wait for approval; decide those first`)
+    }
+    const approval = { id: randomUUID(), status: 'pending', reason: verdict.reason, by: verdict.by, createdAt: Date.now(), request: clone(msg) }
     all[approval.id] = approval
     const done = Object.values(all).filter(a => a.status !== 'pending').sort((a, b) => a.createdAt - b.createdAt)
     for (const old of done.slice(0, Math.max(0, Object.keys(all).length - APPROVALS_KEPT))) delete all[old.id]
@@ -269,27 +286,57 @@ export function install(rt) {
     return approval
   }
 
+  // An approved hold: the rest of the chain decides (a later deny or hold still counts),
+  // then it is dispatched; a failed dispatch stays visible for Retry.
+  const release = async (approval) => {
+    let verdict
+    try { verdict = await evaluate(approval.request, { after: approval.by }) } catch (error) { verdict = { action: 'deny', reason: error?.message ?? String(error) } }
+    if (verdict.action === 'deny') {
+      approval.status = 'denied'
+      approval.error = verdict.reason
+      return
+    }
+    if (verdict.action === 'hold') {
+      try {
+        const next = await hold(approval.request, verdict)
+        approval.next = next.id
+      } catch (error) {
+        approval.status = 'failed'
+        approval.error = error?.message ?? String(error)
+      }
+      return
+    }
+    try {
+      approval.exchangeId = await dispatch(approval.request)
+    } catch (error) {
+      approval.status = 'failed'
+      approval.error = error?.message ?? String(error)
+    }
+  }
+
   const approvals = {
-    list: ({ status = 'pending' } = {}) => Object.values(store()).filter(a => status === 'all' || a.status === status).sort((a, b) => a.createdAt - b.createdAt).map(clone),
+    list: ({ status = 'pending' } = {}) => Object.values(store()).filter(a => status === 'all' || (Array.isArray(status) ? status.includes(a.status) : a.status === status)).sort((a, b) => a.createdAt - b.createdAt).map(clone),
     get: id => clone(store()[id]),
     // Owner only: reachable from the UI route, never a model tool.
     async decide(id, decision, { note } = {}) {
       await rt.load()
       const approval = store()[id]
       if (approval === undefined) throw new Error(`flybot: no approval ${id}`)
+      if (decision === 'retry') {
+        if (approval.status !== 'failed') throw new Error(`flybot: only a failed send can be retried (${id} is ${approval.status})`)
+        approval.status = 'approved'
+        delete approval.error
+        await release(approval)
+        await rt.save()
+        approvalsChanged(approval)
+        return clone(approval)
+      }
       if (approval.status !== 'pending') throw new Error(`flybot: approval ${id} is already ${approval.status}`)
       if (decision !== 'approve' && decision !== 'reject') throw new Error('flybot: decision is approve or reject')
       approval.status = decision === 'approve' ? 'approved' : 'rejected'
       approval.decidedAt = Date.now()
       if (note) approval.note = String(note)
-      if (decision === 'approve') {
-        try {
-          approval.exchangeId = await dispatch(approval.request)
-        } catch (error) {
-          approval.status = 'failed'
-          approval.error = error?.message ?? String(error)
-        }
-      }
+      if (decision === 'approve') await release(approval)
       await rt.save()
       approvalsChanged(approval)
       return clone(approval)
@@ -310,7 +357,11 @@ export function install(rt) {
     const verdict = await evaluate(msg)
     if (verdict.action === 'deny') return { action: 'deny', reason: verdict.reason, by: verdict.by }
     if (verdict.action === 'hold') {
-      const approval = await hold(msg, verdict)
+      let approval
+      try { approval = await hold(msg, verdict) } catch (error) {
+        if (error instanceof HoldFull) return { action: 'deny', reason: error.message, by: verdict.by }
+        throw error
+      }
       return { action: 'hold', approvalId: approval.id, reason: verdict.reason, by: verdict.by }
     }
     return { action: 'allow', exchangeId: await dispatch(msg) }
@@ -338,6 +389,7 @@ export function install(rt) {
   async function send({ from, to, text, role = 'request', hop = 0, via = SHARED, meta, attachments } = {}) {
     await rt.load()
     if (typeof text !== 'string' || text.trim() === '') throw new Error('flybot: send needs text')
+    if (text.length > MAX_SEND_TEXT) throw new Error(`flybot: a message is at most ${MAX_SEND_TEXT} characters`)
     if (role !== 'request' && role !== 'reply') throw new Error(`flybot: unsupported role ${role}`)
     if (!isRemote(from) && rt.botOf(from) === undefined) throw new Error(`flybot: unknown sender ${from}`)
     if (!isRemote(to) && rt.botOf(to) === undefined) throw new Error(`flybot: unknown Bot ${to}`)
@@ -400,12 +452,38 @@ export function install(rt) {
           return typeof result === 'string' ? result : JSON.stringify(result)
         },
       }))
+      if (typeof visibleTo === 'function') gatedTools.set(def.name, def)
       return () => {
+        gatedTools.delete(def.name)
         disposeTool?.()
         disposeGuard?.()
       }
     },
   }
+
+  // A tool whose visibleTo says no is taken out of that Bot's tool list, not only
+  // refused when called. Each Agent's mask is recomputed when it is resolved, so a
+  // Bot that joins (or leaves) a plugin's scope gets (or loses) the tool next turn.
+  const gatedTools = new Map()
+  const masks = new WeakMap()
+  function hidePluginTools(agent) {
+    if (agent === undefined || typeof agent.ctx?.tools?.restrict !== 'function') return
+    const bot = rt.botOf(rt.selfOf(agent.session?.id ?? agent.id))
+    if (bot === undefined) return
+    let known
+    try { known = new Set(ctx.tools.schemas(agent).map(schema => schema.name)) } catch { return }
+    const deny = [...gatedTools.values()].filter(def => known.has(def.name) && !visible(def, bot.id)).map(def => def.name).sort()
+    const key = deny.join(',')
+    const current = masks.get(agent)
+    if ((current?.key ?? '') === key) return
+    try {
+      current?.dispose?.()
+      masks.set(agent, { key, dispose: deny.length ? agent.ctx.tools.restrict({ deny }) : undefined })
+    } catch (error) {
+      warn('flybot: tools stay listed for %s: %s', bot.name, error)
+    }
+  }
+  ctx.on('agent/created', ({ agent }) => { void rt.load().then(() => hidePluginTools(agent)).catch(() => {}) })
 
   // ---------------------------------------------------------------- remote members
   // Remote Bots a plugin can reach (social: friends' Bots). They are chat members the
@@ -425,7 +503,11 @@ export function install(rt) {
     publish(plugin, list) {
       checkName('plugin', plugin)
       const next = (list ?? []).filter(bot => typeof bot?.handle === 'string').map(bot => cleanRemote(plugin, bot))
+      // A read-only host shows what the writer saved; it changes nothing.
+      if (rt.readOnly() !== undefined) return
       const all = remoteStore()
+      // Every published Bot gets a chat of its own (remote-chat.js).
+      void rt.remoteChats?.sync(plugin, next).catch(error => warn('flybot: remote chats not synced: %s', error))
       if (same(all[plugin] ?? [], next)) return
       if (next.length === 0) delete all[plugin]
       else all[plugin] = next
@@ -437,7 +519,10 @@ export function install(rt) {
 
   // The user's "@handle" of a remote member in a Bot's chat or a group goes out through
   // bot.send (so the social middleware still decides), from that Bot or the group's admin.
-  const MENTION = /(^|[^a-z0-9_./@])@([a-z0-9][a-z0-9._-]*[a-z0-9])/gi
+  const SESSION_CHIP = /@\[((?:\\.|[^\]\\])*)\]\(dsh-session:([A-Za-z0-9_-]+)\)/g
+  const decodeChip = payload => {
+    try { return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) } catch { return undefined }
+  }
   const seenUserMessages = new Set()
   async function sendUserMentions(sessionId, text, key) {
     if (seenUserMessages.has(key)) return []
@@ -448,15 +533,24 @@ export function install(rt) {
     const room = rt.roomOf(rt.groupOwners?.get(sessionId)?.roomId ?? sessionId)
     const from = room ? (room.admin ?? room.members?.[0]) : rt.selfOf(sessionId)
     if (from === undefined || rt.botOf(from) === undefined) return []
+    // The same "@" rule as the team (code, links and quoted lines are literal), over the
+    // friends' Bots by handle and by chat name; a menu chip names the chat directly.
     const handles = new Set()
-    for (const match of text.matchAll(MENTION)) {
-      const handle = `@${match[2].toLowerCase()}`
-      if (known.has(handle)) handles.add(handle)
+    const quoted = text.replace(/^[ \t]*>.*$/gm, line => ' '.repeat(line.length))
+    const names = [...known.values()].flatMap(bot => [
+      { name: bot.handle.slice(1), handle: bot.handle },
+      ...Object.values(state.bots).filter(chat => chat.remote?.handle === bot.handle && chat.name).map(chat => ({ name: chat.name, handle: bot.handle })),
+    ])
+    for (const span of mentionSpans(quoted, names)) if (span.bot) handles.add(span.bot.handle)
+    for (const match of quoted.matchAll(SESSION_CHIP)) {
+      const handle = rt.botOf(decodeChip(match[2]))?.remote?.handle
+      if (handle && known.has(handle)) handles.add(handle)
     }
+    const plain = text.replace(SESSION_CHIP, (_, label) => `@${label.replace(/\\([\\\]])/g, '$1')}`).trim()
     const results = []
     for (const handle of handles) {
       try {
-        results.push({ handle, ...(await send({ from, to: handle, text, via: 'user-mention', meta: { sessionId } })) })
+        results.push({ handle, ...(await send({ from, to: handle, text: plain, via: 'user-mention', meta: { sessionId } })) })
       } catch (error) {
         warn('flybot: sending to %s failed: %s', handle, error)
         results.push({ handle, action: 'deny', reason: error?.message ?? String(error) })
@@ -472,25 +566,41 @@ export function install(rt) {
     const id = session?.id
     if (id === undefined || (!rt.isBotSession(id) && !rt.roomOf(id))) return
     void sendUserMentions(id, textOfContent(event.data?.content), `${id}:${event.seq ?? event.id ?? textOfContent(event.data?.content)}`)
+      .then(async results => {
+        // A message the user addressed to a friend's Bot is that Bot's to answer; its
+        // reply comes back into this chat. The local Bot does not answer it itself.
+        if (!results.some(result => result.action !== 'deny') || rt.roomOf(id)) return
+        try { (await rt.resolveAgent(id)).cancel({ kind: 'user' }) } catch {}
+      })
       .catch(error => warn('flybot: user mention failed: %s', error))
   })
 
   // ---------------------------------------------------------------- UI endpoints
   const handlers = new Map()
+  // Endpoints a read-only host (another dsh holds the team) still answers: queries only.
+  const READ_ENDPOINTS = new Set(['bots', 'remote-members', 'changes', 'approvals'])
+  const readHandlers = new Set()
   const api = {
-    handle(name, fn) {
+    // `{ read: true }`: the handler only reads, so a read-only host serves it too.
+    handle(name, fn, { read = false } = {}) {
+      if (typeof name !== 'string' || name === '' || BUILTIN_ENDPOINTS.has(name)) throw new Error(`flybot: api name ${JSON.stringify(name)} is reserved`)
       if (handlers.has(name)) throw new Error(`flybot: api ${name} exists`)
       handlers.set(name, fn)
-      return () => handlers.delete(name)
+      if (read) readHandlers.add(name)
+      return () => { handlers.delete(name); readHandlers.delete(name) }
     },
   }
+  const isReadEndpoint = name => READ_ENDPOINTS.has(name) || readHandlers.has(name)
   async function endpoint(name, payload) {
     await rt.load()
     const body = payload ?? {}
     switch (name) {
-      case 'bots': return Object.values(state.bots).map(view)
+      case 'bots': return team().map(view)
       case 'remote-members': return remoteMembers.list()
-      case 'changes': return { seq: changeSeq, changes: changes.filter(change => change.seq > Number(body.since ?? 0)) }
+      case 'changes': {
+        const since = body.epoch === changeEpoch ? Number(body.since ?? 0) : 0
+        return { epoch: changeEpoch, seq: changeSeq, changes: changes.filter(change => change.seq > since).map(change => structuredClone(change)) }
+      }
       case 'approvals': return approvals.list(body)
       case 'decide': return approvals.decide(String(body.id ?? ''), body.decision, body)
       default: {
@@ -502,6 +612,7 @@ export function install(rt) {
   }
 
   const build = (plugin) => {
+    if (plugin === SHARED && built) throw new Error(`flybot: '${SHARED}' is the unscoped service; scope a plugin by its own name`)
     const fields = fieldsFor(plugin)
     return {
     version: FLYBOT_API_VERSION,
@@ -509,7 +620,7 @@ export function install(rt) {
     scope: build,
     bot: {
       get: id => view(rt.botOf(id)),
-      list: () => Object.values(state.bots).map(view),
+      list: () => team().map(view),
       find: name => view(rt.findBot?.(name)),
       isRemote,
       of: sessionId => view(rt.botOf(rt.selfOf(sessionId))),
@@ -520,15 +631,38 @@ export function install(rt) {
       send: Object.assign((msg) => send({ via: plugin, ...msg }), { use, list: send.list }),
     },
     fields,
+    // True while another dsh holds the team: plugins then only read (no polling, no writes).
+    readOnly: () => rt.readOnly() !== undefined,
+    // Resolves once ds-bot's saved team is loaded, so bot.list() has every Bot.
+    ready: () => rt.load().then(() => undefined),
     on: onFor(plugin),
     transports: { add: addTransport },
-    remote: { publish: list => remoteMembers.publish(plugin, list), list: remoteMembers.list, get: remoteMembers.get },
+    remote: {
+      publish: list => remoteMembers.publish(plugin, list),
+      list: remoteMembers.list,
+      get: remoteMembers.get,
+      // Remote chats: a friend's Bot as a chat of its own (remote-chat.js).
+      // chats.onSend(fn({ handle, text, botId, remote })) sends what the user types there;
+      // chats.deliver({ handle, text, name?, home? }) posts the friend's message into it.
+      chats: {
+        onSend: fn => rt.remoteChats.onSend(plugin, fn),
+        deliver: msg => rt.remoteChats.deliver({ ...msg, plugin }),
+        open: member => rt.remoteChats.open({ ...member, plugin }),
+        list: () => rt.remoteChats.list(),
+        of: handle => rt.remoteChats.of(toRemote(handle)?.handle),
+      },
+    },
     approvals,
     tools,
     api,
     outcomeOf: exchangeId => outcomes.get(exchangeId),
     }
   }
+  let built = false
   const flybot = build(SHARED)
-  Object.assign(rt, { flybot, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSendUserMentions: sendUserMentions })
+  built = true
+  // A local Bot's answer to a friend's Bot (turns.js): back through bot.send, so the
+  // plugin's middleware still decides (auto-accept, or the approval hold).
+  const replyRemote = ({ from, handle, home, text, replyTo }) => send({ from, to: { kind: 'remote', handle, ...(home ? { home } : {}) }, text, role: 'reply', via: 'auto-reply', meta: { replyTo } })
+  Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSend: send, flybotIsRead: isReadEndpoint, flybotHideTools: hidePluginTools })
 }

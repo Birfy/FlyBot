@@ -192,14 +192,14 @@ test('fix 4: create_child_bot enforces minLength/maxLength dropped by tools.regi
   const c = args => m.call(m.root, 'create_child_bot', args)
   assert.match((await c({ name: '', role_description: 'x' })).error, /name must be at least 1/)
   assert.match((await c({ name: '   ', role_description: 'x' })).error, /name must be at least 1/)
-  assert.match((await c({ name: 'x'.repeat(61), role_description: 'x' })).error, /name must be at most 60/)
+  assert.match((await c({ name: 'x'.repeat(41), role_description: 'x' })).error, /name must be at most 40/)
   assert.match((await c({ name: 'A', role_description: '' })).error, /role_description must be at least 1/)
   assert.match((await c({ name: 'A', role_description: 'r'.repeat(1001) })).error, /role_description must be at most 1000/)
   assert.match((await c({ name: 'A' })).error, /role_description is required/)
   assert.match((await c({ name: 5, role_description: 'x' })).error, /name must be a string/)
   assert.match((await c({ name: 'A', role_description: 'x', parent: 'bot9' })).error, /unknown argument: parent/)
   assert.equal(m.bots.size, 1) // nothing created
-  assert.ok((await c({ name: 'x'.repeat(60), role_description: 'r'.repeat(1000) })).created.id)
+  assert.ok((await c({ name: 'x'.repeat(40), role_description: 'r'.repeat(1000) })).created.id)
   assert.match((await m.call(m.root, 'list_children', { junk: 1 })).error, /unknown argument/)
 })
 
@@ -562,7 +562,7 @@ test('sidebar structure: parents from forestOf; retired and outside Bots have no
   dispose()
 })
 
-// ---- per-node "Copy invite link"
+// ---- per-node "Copy invite link" (bare URL) and "Copy invite with instructions"
 const withNavigator = async (nav, fn) => {
   const before = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
   Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true, writable: true })
@@ -579,22 +579,47 @@ test('menu item: structure entry carries menuItems with copy-invite, visible onl
   dispose()
   const b = { id: 'b1', name: '研究员' }
   delete globalThis.__flybot__
-  const item = flybot => mod.makeMenuItems(flybot)({ bot: b })[0]
-  assert.equal(item({}).id, 'copy-invite')
-  assert.equal(item({}).label, 'Copy invite link')
+  const items = flybot => mod.makeMenuItems(flybot)({ bot: b })
+  const item = flybot => items(flybot)[0]
+  const full = flybot => items(flybot)[1]
+  assert.deepEqual(items({}).map(i => [i.id, i.label]), [['copy-invite', 'Copy invite link'], ['copy-invite-text', 'Copy invite with instructions']])
   assert.equal(item({}).visible, false)
+  assert.equal(full({}).visible, false)
   assert.equal(item({ social: { canInvite: () => false } }).visible, false)
   assert.equal(item({ social: { canInvite: () => { throw new Error('x') } } }).visible, false)
   const seen = []
   assert.equal(item({ social: { canInvite: id => { seen.push(id); return true } } }).visible, true)
   assert.deepEqual(seen, ['b1'])
   const copied = []
+  const social = { canInvite: () => true, createInvite: async id => ({ text: 'join ' + id + ' at https://s/i/X', link: 'https://s/i/X' }) }
   await withNavigator({ clipboard: { writeText: async t => { copied.push(t) } } }, async () => {
-    const note = await item({ social: { canInvite: () => true, createInvite: async id => ({ text: 'join ' + id, link: 'L' }) } }).run({ bot: b })
-    assert.equal(note, 'Invite link for 研究员 copied')
+    // "Copy invite link": the bare URL only, no instructions.
+    assert.equal(await item({ social }).run({ bot: b }), 'Invite link for 研究员 copied')
+    // "Copy invite with instructions": the full message.
+    assert.equal(await full({ social }).run({ bot: b }), 'Invite for 研究员 copied, with instructions')
   })
-  assert.deepEqual(copied, ['join b1'])
+  assert.deepEqual(copied, ['https://s/i/X', 'join b1 at https://s/i/X'])
   await assert.rejects(item({ social: { canInvite: () => true, createInvite: async () => { throw new Error('offline') } } }).run({ bot: b }), /offline/)
+  // Neither falls back to the other field.
+  await withNavigator({ clipboard: { writeText: async t => { copied.push(t) } } }, async () => {
+    await assert.rejects(full({ social: { canInvite: () => true, createInvite: async () => ({ link: 'L' }) } }).run({ bot: b }), /without its message/)
+    await assert.rejects(item({ social: { canInvite: () => true, createInvite: async () => ({ text: 'T' }) } }).run({ bot: b }), /without its link/)
+  })
+  assert.equal(copied.length, 2)
+  // ClipboardItem path: the write starts inside the click (before the invite resolves).
+  const writes = []
+  let started = 0
+  globalThis.ClipboardItem = class { constructor(parts) { this.parts = parts } }
+  try {
+    await withNavigator({ clipboard: { write: async ([it]) => { started++; writes.push(await (await it.parts['text/plain']).text()) }, writeText: async () => { throw new Error('unused') } } }, async () => {
+      const slow = { canInvite: () => true, createInvite: async id => { await new Promise(r => setTimeout(r, 5)); return { text: 'full ' + id, link: 'https://s/i/Y' } } }
+      const pending = item({ social: slow }).run({ bot: b })
+      assert.equal(started, 1) // synchronous with the click
+      await pending
+      await full({ social: slow }).run({ bot: b })
+    })
+  } finally { delete globalThis.ClipboardItem }
+  assert.deepEqual(writes, ['https://s/i/Y', 'full b1'])
 })
 
 test('invite action (legacy hover component): hidden without social or when canInvite is false', () => {
@@ -618,7 +643,7 @@ test('invite action (legacy hover component): hidden without social or when canI
   assert.match(mod.INVITE_CSS, /var\(--bt-hover/)
 })
 
-test('invite action: click stops propagation, calls createInvite and copies text (clipboard)', async () => {
+test('invite action: click stops propagation, calls createInvite and copies the bare link (clipboard)', async () => {
   const mod = loadClient()
   const copied = [], calls = []
   const social = { canInvite: () => true, createInvite: async botId => { calls.push(botId); return { botId, link: 'https://x/i/abc', text: 'Join my bot: https://x/i/abc' } } }
@@ -628,25 +653,27 @@ test('invite action: click stops propagation, calls createInvite and copies text
     await btn.props.onClick({ stopPropagation: () => stopped++, preventDefault() {} })
     assert.equal(stopped, 1)
     assert.deepEqual(calls, ['b1'])
-    assert.deepEqual(copied, ['Join my bot: https://x/i/abc'])
+    assert.deepEqual(copied, ['https://x/i/abc'])
+    assert.deepEqual(await mod.copyInvite({ social }, 'b1', 'text'), { tone: 'ok', text: 'Copied' })
+    assert.deepEqual(copied, ['https://x/i/abc', 'Join my bot: https://x/i/abc'])
     assert.deepEqual(await mod.copyInvite({ social }, 'b2'), { tone: 'ok', text: 'Copied' })
     // without social.createInvite it uses flybot.call('social.createInvite', { botId })
     const via = []
-    const r = await mod.copyInvite({ social: { canInvite: () => true }, call: async (name, payload) => { via.push([name, payload]); return { text: 'T' } } }, 'b3')
+    const r = await mod.copyInvite({ social: { canInvite: () => true }, call: async (name, payload) => { via.push([name, payload]); return { text: 'T', link: 'L' } } }, 'b3')
     assert.deepEqual(r, { tone: 'ok', text: 'Copied' }); assert.deepEqual(via, [['social.createInvite', { botId: 'b3' }]])
   })
 })
 
 test('invite action: textarea fallback, and errors become inline messages', async () => {
   const mod = loadClient()
-  const social = { canInvite: () => true, createInvite: async () => ({ text: 'invite text' }) }
+  const social = { canInvite: () => true, createInvite: async () => ({ text: 'invite text', link: 'https://s/i/Z' }) }
   const doc = { body: { appendChild(el) { doc.added = el } }, createElement: () => ({ style: {}, setAttribute() {}, select() { doc.selected = this.value }, remove() { doc.removed = true } }), execCommand: cmd => cmd === 'copy' }
   const beforeDoc = globalThis.document
   globalThis.document = doc
   try {
     await withNavigator({ clipboard: { writeText: async () => { throw new Error('denied') } } }, async () => {
       assert.deepEqual(await mod.copyInvite({ social }, 'b1'), { tone: 'ok', text: 'Copied' })
-      assert.equal(doc.selected, 'invite text'); assert.equal(doc.removed, true)
+      assert.equal(doc.selected, 'https://s/i/Z'); assert.equal(doc.removed, true)
     })
     doc.execCommand = () => false
     await withNavigator({}, async () => {
@@ -656,6 +683,102 @@ test('invite action: textarea fallback, and errors become inline messages', asyn
   await withNavigator({}, async () => {
     assert.deepEqual(await mod.copyInvite({ social }, 'b1'), { tone: 'error', text: 'Clipboard unavailable' })
     assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => { throw new Error('Not connected to Bot Social') } } }, 'b1'), { tone: 'error', text: 'Not connected to Bot Social' })
-    assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => ({}) } }, 'b1'), { tone: 'error', text: 'No invite link returned' })
+    assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => ({}) } }, 'b1'), { tone: 'error', text: 'The invite came back without its link' })
+    assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => ({}) } }, 'b1', 'text'), { tone: 'error', text: 'The invite came back without its message' })
   })
+})
+
+test('issue 15 (1): control notices (stopped, report) bypass tree policy; a Main Bot can stop_bot any tree bot', async () => {
+  const m = await setup()
+  const work = await make(m, m.root, 'Work'); const life = await make(m, m.root, 'Life'); const dev = await make(m, work, 'Dev')
+  const o = await outsider(m)
+  const send = (from, to, role) => m.flybot.bot.send({ from, to, text: 'stop', role })
+  for (const [from, to] of [[m.root, dev], [o, dev], [o, work], [work, life], [dev, o]]) {
+    assert.equal((await send(from, to, 'stopped')).action, 'allow', `stopped ${from}->${to}`)
+    assert.equal((await send(from, to, 'report')).action, 'allow', `report ${from}->${to}`)
+  }
+  assert.equal((await send(m.root, dev, 'request')).action, 'deny') // ordinary requests still follow the tree
+  assert.equal((await send(o, dev)).action, 'deny')
+})
+
+test('issue 15 (2): deleting a middle node refreshes every reparented child (and its subtree); overflow warns', async () => {
+  const warnings = []
+  const m = createMockFlybot()
+  m.addBot({ name: 'Chief', isMain: true, systemPrompt: '' })
+  const { tree } = plugin.apply({ flybot: m.flybot, logger: () => ({ warn: (...a) => warnings.push(a.join(' ')) }) }, { adoptExisting: false, maxChildren: 2 })
+  m.tree = tree; m.root = await tree.ensureRoot()
+  const work = await make(m, m.root, 'Work'); await make(m, m.root, 'Life')
+  const dev = await make(m, work, 'Dev'); const ops = await make(m, work, 'Ops'); const qa = await make(m, dev, 'QA')
+  assert.match(sp(m, dev), /Work/); assert.match(sp(m, qa), /Work/)
+  m.removeBot(work)
+  for (const id of [dev, ops]) assert.equal(f(m, id, 'parent'), m.root)
+  for (const id of [dev, ops, qa]) { assert.doesNotMatch(sp(m, id), /Work/); assert.match(sp(m, id), /Chief/) }
+  assert.match(sp(m, qa), /Chief → Dev → QA/)
+  assert.ok(warnings.some(w => /maxChildren=2/.test(w)), 'overflow is logged')
+  await assert.rejects(m.call(m.root, 'create_child_bot', { name: 'New', role_description: 'x' }).then(r => { if (r.error || !r.created) throw new Error(r.error ?? 'refused') }))
+})
+
+test('issue 15 (3): parallel create_child_bot never exceeds maxChildren nor duplicates sibling names', async () => {
+  const m = await setup({ maxChildren: 3 })
+  const results = await Promise.allSettled(Array.from({ length: 10 }, (_, i) => m.call(m.root, 'create_child_bot', { name: `C${i}`, role_description: 'x' })))
+  const kids = m.tree.childrenOf(m.tree.snapshot(), m.root)
+  assert.equal(kids.length, 3)
+  const dup = await Promise.allSettled(Array.from({ length: 6 }, () => m.call(kids[0].id, 'create_child_bot', { name: 'Same', role_description: 'x' })))
+  const same = m.tree.childrenOf(m.tree.snapshot(), kids[0].id)
+  assert.equal(same.length, 1)
+  assert.ok(results.length === 10 && dup.length === 6)
+})
+
+test('issue 20: name limit matches the roster (40); checkCreate enforces it too', async () => {
+  const { MAX_NAME_LENGTH } = await import('../src/limits.js')
+  assert.equal(MAX_NAME_LENGTH, 40)
+  const L = { maxDepth: 5, maxChildren: 8 }
+  assert.match(checkCreate({ parentName: 'R', parentDepth: 1, siblings: [], name: 'x'.repeat(41), limits: L }), /at most 40/)
+  assert.equal(checkCreate({ parentName: 'R', parentDepth: 1, siblings: [], name: ` ${'x'.repeat(40)} `, limits: L }), null)
+  const m = await setup()
+  await assert.rejects(m.tree.createChild(m.root, 'y'.repeat(41), 'r'), /at most 40/)
+})
+
+test('issue 20: dispose via ctx.effect (cordis), ctx.on("dispose") only as fallback', async () => {
+  const m = createMockFlybot()
+  m.addBot({ name: 'Chief', isMain: true })
+  const effects = [], ons = []
+  plugin.apply({ flybot: m.flybot, effect: (fn, label) => effects.push([fn(), label]), on: e => ons.push(e) }, { autoRoot: false })
+  assert.equal(effects.length, 1); assert.equal(effects[0][1], 'flybot-tree'); assert.equal(ons.length, 0)
+  assert.equal(m.middlewares.length, 1)
+  effects[0][0]() // the effect's disposer unregisters middleware and tools
+  assert.equal(m.middlewares.length, 0)
+  assert.equal(m.tools.size, 0)
+  const m2 = createMockFlybot(); const ons2 = []
+  plugin.apply({ flybot: m2.flybot, on: (e, fn) => ons2.push([e, fn]) }, { autoRoot: false })
+  assert.equal(ons2[0][0], 'dispose'); ons2[0][1]()
+  assert.equal(m2.middlewares.length, 0)
+})
+
+test('issue 6: concurrent ensureRoot() calls create a single root', async () => {
+  const m = createMockFlybot()
+  m.addBot({ name: 'Worker' }) // team has bots but no Main Bot: fallback root is created
+  const { tree } = plugin.apply({ flybot: m.flybot }, { adoptExisting: false, autoRoot: false })
+  const ids = await Promise.all(Array.from({ length: 5 }, () => tree.ensureRoot()))
+  assert.equal(new Set(ids).size, 1)
+  assert.equal(m.flybot.bot.list().filter(b => b.name === 'Root').length, 1)
+})
+
+test('trace line: only in answers to the parent tree bot; never to the user or remote bots; root never', async () => {
+  const { systemPrompt } = await import('../src/prompt.js')
+  const leaf = systemPrompt({ name: 'Dev', role: 'code', trace: 'Chief → Work → Dev', children: [] })
+  const mid = systemPrompt({ name: 'Work', role: 'w', trace: 'Chief → Work', children: [{ name: 'Dev', role: 'code' }] })
+  const root = systemPrompt({ name: 'Chief', role: 'root', trace: 'Chief', children: [{ name: 'Work', role: 'w' }], root: true })
+  for (const p of [leaf, mid, root]) {
+    assert.doesNotMatch(p, /^(Start your answer|Begin with)/m)
+    assert.match(p, /Never start a reply to the user, or to a remote bot/)
+  }
+  assert.match(leaf, /Only when you answer your parent bot in the tree, start that answer with a one-line trace[^\n]*"Chief → Work → Dev"/)
+  assert.match(mid, /Only when you answer your parent bot in the tree/)
+  assert.match(root, /Do not start your replies with a trace/)
+  assert.doesNotMatch(root, /Only when you answer your parent/)
+  const m = await setup()
+  const work = await make(m, m.root, 'Work')
+  assert.match(sp(m, m.root), /Do not start your replies with a trace/)
+  assert.match(sp(m, work), /Only when you answer your parent bot/)
 })

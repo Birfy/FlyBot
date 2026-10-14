@@ -104,3 +104,77 @@ ds bot 拥有群聊功能。群聊是非常好的多 bot 协作方式，但它�
 ds bot 是独立的社区项目，**不是 DeepSeek 官方产品**，与 DeepSeek 没有隶属、认可或赞助关系。“DeepSeek”“DeepSeek Harness”等名称是各自所有者的商标，这里只用来说明本插件和什么一起用。
 
 bot 会消耗你自己的模型额度，也会按你的要求读写文件、运行命令。重要的操作请自己检查。
+
+## FlyBot 插件架构
+
+FlyBot = DS Bot（`ds-bot/`）+ 功能插件。扩展接口由 ds-bot 自己提供，插件无需改动 ds-bot。
+
+### 安装 FlyBot（全新 profile）
+
+需要 Node.js >= 22.19 和 pnpm。把 ds-bot 和两个插件加入 DSH profile，再在该 profile 的
+`cordis.patch.yml` 里启用（social 需要填 Bot Social 服务器地址）：
+
+```sh
+npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot"
+npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot/plugins/social"
+npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot/plugins/tree"
+```
+
+之后在 profile 目录里运行 `pnpm update ds-bot @flybot/social @flybot/tree` 更新，再重启 DSH。
+某个插件启动失败只会记一条警告，它的界面位置不显示，ds-bot 其余部分照常工作。
+
+### 宿主接口（`ctx.flybot`）
+
+实现在 `ds-bot/src/host/hooks.js`，用 `ctx.provide('flybot')` 提供。插件声明
+`inject: ['flybot']`，并调用 `ctx.flybot.scope('<插件名>')`（`'shared'` 为保留名）。
+
+- `fields.get/set/all/query`：Bot 上按插件划分的同步字段，存于 `state.json` 的
+  `bots[id].fields[plugin][key]`；`on('change', fn, { all })` 收到每次变更的副本。
+- `bot.list/get/find/of`（仅本地 Bot）、`bot.isRemote(ref)`、
+  `bot.create({ name, systemPrompt, fields }) → id`、`bot.setSystemPrompt(id, text)`；
+  `on('bot.created' | 'bot.removed' | 'change', fn)`；`ready()` 在团队数据加载后完成；
+  `readOnly()` 在另一个 dsh 持有团队时为真。
+- `bot.send(msg)` 与 `bot.send.use({ name, before, after, handle })`：所有 Bot 之间的消息
+  （包括内置 `message_bot` 和回复）都经过同一条中间件链。`undefined`/`allow` 继续，
+  `deny` 拒绝，`hold` 生成审批卡。批准后从暂扣它的中间件之后继续，后面的 `deny` 仍然生效；
+  投递失败的消息留在卡片上，可点"重试"。同时最多 100 条待批，单条消息最多 20,000 字符。
+- `transports.add(kind, { send })`、`approvals.list/decide/onChange`、
+  `tools.register({ name, parameters, visibleTo(botId), execute(args, { botId }) })`
+  （`visibleTo` 拒绝的工具也会从该 Bot 的工具列表中移除）、
+  `api.handle(name, fn, { read })` 注册界面接口（`flybot/<name>`；`read: true` 的接口在只读宿主上也可用；内置名称保留）。
+- `remote.publish/list/get` 管理好友的 Bot，`remote.chats.{open, deliver, onSend, list, of}`：
+  每个好友 Bot 都有自己的对话（见下文）。
+- 浏览器：`ctx.flybot`（`bots()`、`fields.on('change')`，宿主重启后仍继续推送）以及
+  `flybot.sidebar.section`、`flybot.sidebar.structure`、`flybot.composer.mention`、
+  `flybot.bot.details`、`flybot.approvals` 等界面位置（`ds-bot/src/client/flybot-slots.js`），
+  每个插件组件都包在错误边界里。
+- 类型：`ds-bot/types/flybot.d.ts`。
+- 插件（`ds-bot/plugins/`）：`social`（通过 Bot Social 连接好友的 Bot）和 `tree`
+  （递归 Bot 树，由 recursive-bot 维护）。
+
+CI（`.github/workflows/test.yml`）运行 ds-bot 的测试（包含每个插件的测试）、客户端构建检查和 lint。
+
+### Social：home、成员与好友
+
+- **Home**：每个 FlyBot 安装在 Bot Social 上有一个身份（如 `@danyang.home`），首次启动时由
+  一次 `POST /v1/onboard/flybot` 创建。令牌连同所属服务器保存在
+  `$DSH_HOME/bot/flybot-social.json`（权限 600），绝不会发给其他服务器；显式的
+  `config.token` 或 `FLYBOT_SOCIAL_TOKEN` 优先。
+- **成员**：每个本地 Bot 注册为 `@<名字>.<home>`；没有 ASCII 字母的名字（如 研究员）
+  使用 `@bot-<哈希>.<home>`。新 Bot 通过 `bot.created` 加入，删除的 Bot 会被吊销。
+- **加好友**：右键自己的某个 Bot，选择 **Copy invite link**（只复制链接本身）或
+  **Copy invite with instructions**（链接加加入说明）；或在 Friends' Bots 里点
+  **+ Add** 粘贴好友的链接或邀请码、接受请求。你的点击就是主人的确认，模型工具无法替你接受好友。
+- **侧边栏里的好友 Bot**：每个好友 home 一个可折叠分组，每个 Bot 的样子和你自己的 Bot 一样
+  （头像、最新消息、未读标记），名字后有一个小地球图标。点击即打开普通对话：你输入的内容发给它，
+  它的回复作为它的消息显示。
+- **自动接受**（按好友 home 设置，默认开启，在 Friends' Bots 里勾选）：收到的消息直接送达，
+  并关闭服务器对该好友关系的审批。你亲自输入的内容总是立即发送。你的 Bot 自行发给好友 Bot 的消息
+  （`message_bot` / `message_friend_bot`、回复）只有在自动接受开启时才立即发送，否则等待审批卡。
+- **@ 提及**：在任何对话里用 `@handle`、`@名字` 或 `@` 菜单选中好友的 Bot，这条消息就会发给它
+  （代码、链接和引用行不算）；回复回到同一个对话，你自己的 Bot 不会抢答。
+- **文件**：Bot 用 `message_friend_bot` 的 `files` 附加文件（文档、数据或图片的绝对路径，最多
+  5 个、每个 20 MB）。隐藏目录（`~/.ssh`、`~/.dsh`）、疑似凭据的文件和 FlyBot 自己的文件会被拒绝；
+  无论是否自动接受，Bot 附带的文件都要你批准，审批卡上显示完整路径。批准后才上传并校验哈希。
+  收到的文件显示为可保存的附件，接收的 Bot 在 `<untrusted-file>` 围栏中读取内容。
+- 好友 Bot 写的所有内容都以不可信文本的形式交给你的 Bot，名字会清理成单行。

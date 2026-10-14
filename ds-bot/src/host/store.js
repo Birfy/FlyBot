@@ -113,13 +113,21 @@ export function install(rt) {
     }
     for (const bot of Object.values(state.bots)) {
       // FlyBot fields (hooks.js): a corrupt value resets; absent stays absent.
-      if ('fields' in bot && (bot.fields === null || typeof bot.fields !== 'object' || Array.isArray(bot.fields))) delete bot.fields
+      if ('fields' in bot && (bot.fields === null || typeof bot.fields !== 'object' || Array.isArray(bot.fields))) {
+        delete bot.fields
+        migrated = true
+      }
       if (!Array.isArray(bot.capabilities)) {
         bot.capabilities = []
         migrated = true
       }
       if (bot.color !== currentColor(bot.color)) {
         bot.color = currentColor(bot.color)
+        migrated = true
+      }
+      // A friend's Bot whose model was changed by mistake goes back to its relay route.
+      if (bot.remote?.handle && bot.model !== `flybot-remote/${bot.remote.handle}`) {
+        bot.model = `flybot-remote/${bot.remote.handle}`
         migrated = true
       }
       // LEGACY: Bots saved with a lab ran on that lab's default model; the model they
@@ -337,9 +345,10 @@ export function install(rt) {
   }
   const findBot = (ref) => {
     if (ref === undefined) return undefined
-    if (state.bots[ref]) return state.bots[ref]
+    if (state.bots[ref]) return state.bots[ref].remote === undefined ? state.bots[ref] : undefined
     const wanted = normalize(ref).replace(/^@/, '')
-    return Object.values(state.bots).find(bot => normalize(bot.name) === wanted)
+    // A friend's Bot (remote chat) is no team member, so a name never finds it.
+    return Object.values(state.bots).find(bot => bot.remote === undefined && normalize(bot.name) === wanted)
   }
   // Every group chat whose id or name matches; callers refuse an ambiguous name.
   const findRooms = (ref) => {
