@@ -80,7 +80,7 @@ FlyBot 拥有群聊功能。群聊是非常好的多 bot 协作方式，但它�
 
 ## 开发
 
-插件源码在 [`ds-bot/`](ds-bot/)。配置项和内部结构见 [`ds-bot/README.md`](ds-bot/README.md)，开发和测试见 [CONTRIBUTING.md](CONTRIBUTING.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+插件源码在 [`core/`](core/)。配置项和内部结构见 [`core/README.md`](core/README.md)，开发和测试见 [CONTRIBUTING.md](CONTRIBUTING.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 致谢
 
@@ -107,7 +107,7 @@ bot 会消耗你自己的模型额度，也会按你的要求读写文件、运�
 
 ## FlyBot 插件架构
 
-FlyBot = FlyBot（`ds-bot/`）+ 功能插件。扩展接口由 ds-bot 自己提供，插件无需改动 ds-bot。
+FlyBot = FlyBot（`core/`）+ 功能插件。扩展接口由 ds-bot 自己提供，插件无需改动 ds-bot。
 
 ### 安装 FlyBot（全新 profile）
 
@@ -115,9 +115,9 @@ FlyBot = FlyBot（`ds-bot/`）+ 功能插件。扩展接口由 ds-bot 自己提�
 `cordis.patch.yml` 里启用（social 需要填 Bot Social 服务器地址）：
 
 ```sh
-npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot"
-npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot/plugins/social"
-npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot/plugins/tree"
+npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core"
+npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core/plugins/social"
+npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core/plugins/tree"
 ```
 
 之后在 profile 目录里运行 `pnpm update ds-bot @flybot/social @flybot/tree` 更新，再重启 DSH。
@@ -125,7 +125,7 @@ npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&p
 
 ### 宿主接口（`ctx.flybot`）
 
-实现在 `ds-bot/src/host/hooks.js`，用 `ctx.provide('flybot')` 提供。插件声明
+实现在 `core/src/host/hooks.js`，用 `ctx.provide('flybot')` 提供。插件声明
 `inject: ['flybot']`，并调用 `ctx.flybot.scope('<插件名>')`（`'shared'` 为保留名）。
 
 - `fields.get/set/all/query`：Bot 上按插件划分的同步字段，存于 `state.json` 的
@@ -146,10 +146,10 @@ npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&p
   每个好友 Bot 都有自己的对话（见下文）。
 - 浏览器：`ctx.flybot`（`bots()`、`fields.on('change')`，宿主重启后仍继续推送）以及
   `flybot.sidebar.section`、`flybot.sidebar.structure`、`flybot.composer.mention`、
-  `flybot.bot.details`、`flybot.approvals` 等界面位置（`ds-bot/src/client/flybot-slots.js`），
+  `flybot.bot.details`、`flybot.approvals` 等界面位置（`core/src/client/flybot-slots.js`），
   每个插件组件都包在错误边界里。
-- 类型：`ds-bot/types/flybot.d.ts`。
-- 插件（`ds-bot/plugins/`）：`social`（通过 Bot Social 连接好友的 Bot）和 `tree`
+- 类型：`core/types/flybot.d.ts`。
+- 插件（`core/plugins/`）：`social`（通过 Bot Social 连接好友的 Bot）和 `tree`
   （递归 Bot 树，由 recursive-bot 维护）。
 
 CI（`.github/workflows/test.yml`）运行 ds-bot 的测试（包含每个插件的测试）、客户端构建检查和 lint。

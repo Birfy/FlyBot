@@ -2,15 +2,12 @@ import { createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useR
 import { createPortal } from 'react-dom'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { inkText } from './inks.js'
-import { currentPart, linkMentions, mentionTarget, dayLabel, contentText, stripHeader, stripTrace, isHiddenTurn, isRelayContext, relaysBefore, relayPart, commRunOf, toolName, toolArgs, reminderPrompts } from './text.js'
+import { linkMentions, mentionTarget, dayLabel, contentText, stripHeader, isHiddenTurn, isRelayContext, relaysBefore, relayPart, commRunOf, toolName, toolArgs, reminderPrompts } from './text.js'
 import { SmileIcon, ReplyIcon, DotsIcon, CheckIcon, DownloadIcon, CopyIcon, MemoryIcon } from './icons.js'
 import { colorOf, toolState, BotMark, RoomAvatar } from './mark.js'
 import { AnsweredCell, SettledQuestion, PendingQuestion } from './questions.js'
 import { SecretToolCell } from './secret-card.js'
 import { dateLocale, t } from './i18n.js'
-import { remoteMessageText } from './flybot-registry.js'
-import { fileSize } from './flybot-slots.js'
-import { call } from './api.js'
 import { failureLabel } from './diagnostics.js'
 import { turnReasoning } from './turn-reasoning.js'
 
@@ -104,10 +101,8 @@ function MessageTools({ text, name, sessionId, react, actions }) {
 }
 
 function ThinkingRow({ text }) {
-  // Folded by default; the caret shows there is something inside. Nothing to show, no row.
-  if (typeof text !== 'string' || text.trim() === '') return null
   return h('details', { className: 'bt-think' },
-    h('summary', null, h('span', { className: 'bt-think-caret', 'aria-hidden': true }, '›'), t('Thought it through')),
+    h('summary', null, t('Thought it through')),
     h('div', { className: 'bt-think-text' }, text))
 }
 
@@ -131,7 +126,7 @@ export function AssistantCell({ node, groupPart, sessionId, openFile, fileMentio
   const contexts = useTurnContext(String(data.turn))
   const mentions = useFileMentions({ node, openFile, fileMentions, useTurnData })
   const hidden = Boolean(roster.roomsById[sessionId]) || isHiddenTurn(roster, sessionId, data.turn)
-  const texts = groupPart === 'reasoning' ? [] : data.blocks.filter(block => block.kind === 'text' && block.text.trim() !== '').map((block, index) => index === 0 ? stripTrace(block.text) : block.text).filter(text => text.trim() !== '')
+  const texts = groupPart === 'reasoning' ? [] : data.blocks.filter(block => block.kind === 'text' && block.text.trim() !== '').map(block => block.text)
   const running = data.status === 'running'
   // A streaming reply stands in for the activity row.
   useLiveNote(actions, sessionId, `text:${node.key ?? data.seq}`, !hidden && running && texts.length > 0 ? { text: true } : null)
@@ -183,66 +178,6 @@ function GroupMessage({ bot, text, room, roster, actions, msgKey, useUi }) {
     h('span', { className: 'bt-group-name', style: { color: inkText(colorOf(bot)) } }, bot.name,
       room?.admin === bot.id ? h('span', { className: 'bt-group-role' }, t('Admin')) : null),
     h(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room?.id, msgKey, useUi, lead }))
-}
-
-// A friend's remote Bot speaking in this chat, laid out like any chat partner: its own
-// avatar (the one its sidebar row shows), its name, a small globe and its @handle. The
-// words are shown as data; the Bot reading them still gets them fenced as untrusted.
-export function remoteSpeaker(source, roster) {
-  const handle = source.remote.handle
-  const member = (roster.remoteBots ?? []).find(bot => bot.handle === handle)
-  const chat = (roster.bots ?? []).find(bot => bot.remote?.handle === handle)
-  const name = chat?.name ?? member?.name ?? source.senderName ?? handle
-  // The sidebar's Bot record when there is one; else a stable look derived from the handle.
-  const bot = chat ?? { id: `remote:${handle}`, name, color: member?.color, shape: member?.shape }
-  return { bot, member, name, handle, chatId: chat ? currentPart(chat) : undefined }
-}
-
-function RemoteMessage({ source, text, roster, actions, sessionId, msgKey, useUi }) {
-  const { bot, member, name, handle, chatId } = remoteSpeaker(source, roster)
-  const files = Array.isArray(source.attachments) ? source.attachments : []
-  const mark = h(BotMark, { bot, size: 22 })
-  const lead = chatId
-    ? h('button', { type: 'button', className: 'bt-lead', title: handle, 'aria-label': t("Open {name}'s chat", { name }), onClick: () => actions.openSession(chatId) }, mark)
-    : h('span', { className: 'bt-lead', title: handle }, mark)
-  return h('div', { className: 'bt-group-msg bt-remote-msg', 'data-remote': handle },
-    h('span', { className: 'bt-group-name', style: { color: inkText(colorOf(bot)) } }, name,
-      h('span', { className: 'bt-remote-handle', title: source.remote.home ?? handle, 'aria-label': t('Friend\'s Bot') }, h(GlobeMark), handle)),
-    h(Bubbles, { texts: [stripTrace(text)], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead }),
-    files.length ? h(RemoteFiles, { files, plugin: member?.plugin ?? 'social', botId: roster.byId[sessionId]?.id ?? sessionId }) : null)
-}
-
-function GlobeMark() {
-  return h('svg', { width: 10, height: 10, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', 'aria-hidden': true },
-    h('circle', { cx: 12, cy: 12, r: 9 }), h('path', { d: 'M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18' }))
-}
-
-// A remote member's files as chips; a click fetches the file (the plugin checks its
-// hash) and saves it. Nothing is opened or run.
-function RemoteFiles({ files, plugin, botId }) {
-  const [busy, setBusy] = useState('')
-  const [error, setError] = useState('')
-  const download = async (file) => {
-    setBusy(file.id)
-    setError('')
-    try {
-      const got = await call(`flybot/${plugin}/attachment`, { id: file.id, botId })
-      const value = got?.value ?? got
-      const bytes = Uint8Array.from(atob(value.content_base64), c => c.charCodeAt(0))
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }))
-      const link = Object.assign(document.createElement('a'), { href: url, download: value.name ?? file.name })
-      link.click()
-      setTimeout(() => URL.revokeObjectURL(url), 10000)
-    } catch (reason) {
-      setError(String(reason?.message ?? reason))
-    } finally {
-      setBusy('')
-    }
-  }
-  return h('div', { className: 'bt-file-chips' },
-    files.map(file => h('button', { key: file.id, type: 'button', className: 'bt-file-chip', disabled: busy === file.id, title: `Download ${file.name} (untrusted file from a remote Bot)`, onClick: () => download(file) },
-      `📎 ${file.name} · ${fileSize(file.size)}`)),
-    error ? h('span', { className: 'bt-file-error', role: 'alert' }, error) : null)
 }
 
 // A centered event line that names a group chat and opens it.
@@ -396,11 +331,6 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
     : body
 
   function triggerBody() {
-    // A friend's message in its remote chat: the reply below shows it (remote-chat.js).
-    if (source.form === 'remote-chat') return null
-    if (source.remote?.handle) {
-      return h(RemoteMessage, { source, text: remoteMessageText(stripHeader(contentText(data.content))), roster, actions, sessionId, msgKey: `${sessionId}:${data.turn}:remote`, useUi })
-    }
     if (source.kind === 'bot') {
       // A part opens with its handoff package, so the earlier parts go right above it.
       if (source.handoff === true) return roster.roomsById[sessionId] ? null : h(EarlierParts, { sessionId, roster, actions })

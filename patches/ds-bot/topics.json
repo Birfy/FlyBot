@@ -1,0 +1,70 @@
+{
+  "0001-core-fixes": [
+    "src/host/memory.js",
+    "src/host/models.js",
+    "src/host/prompt.js",
+    "src/host/time-context.js",
+    "src/host/turns.js",
+    "src/client/feedback.js",
+    "src/client/text.js",
+    "src/client/i18n.js",
+    "src/client/model-menu.js",
+    "test/memory.test.js",
+    "test/model-menu.test.js",
+    "test/fence.test.js",
+    "test/home-lock.test.js",
+    "test/client-bundle.test.js",
+    "test/install.test.js"
+  ],
+  "0002-flybot-api-host": [
+    "src/host/hooks.js",
+    "index.js",
+    "src/host/store.js",
+    "src/host/roster.js",
+    "src/host/tools.js",
+    "test/flybot.test.js",
+    "test/api-route.test.js",
+    "test/fake-ctx.js"
+  ],
+  "0003-flybot-api-client": [
+    "src/client/flybot-registry.js",
+    "src/client/flybot-slots.js",
+    "src/client/index.js",
+    "src/client/sidebar.js",
+    "src/client/cells.js",
+    "src/client/context-menu.js",
+    "src/client/at-menu.js",
+    "src/client/bot-settings.js",
+    "src/client/styles.js",
+    "src/client/icons.js",
+    "test/flybot-client.test.js",
+    "test/bot-tree.test.js",
+    "test/web-entries.test.js"
+  ],
+  "0004-flybot-api-types": [
+    "types/flybot.d.ts"
+  ],
+  "0005-social-seams": [
+    "src/host/remote-chat.js",
+    "src/host/channel.js",
+    "src/host/delivery.js",
+    "test/remote-chat.test.js",
+    "test/inbound-ui.test.js"
+  ],
+  "0006-flybot-plugins": [
+    "plugins/",
+    "test/social-plugin.test.js",
+    "test/tree-plugin.test.js",
+    "test/tree-host.test.js",
+    "scripts/lint.mjs"
+  ],
+  "0007-version-and-tooling": [
+    "package.json",
+    "scripts/local-ci.sh",
+    "package-lock.json",
+    "test/diagnostics.test.js"
+  ],
+  "0008-client-bundle": [
+    "client.js"
+  ]
+}

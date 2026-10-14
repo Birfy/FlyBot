@@ -16,11 +16,6 @@ export function fakeContext({ services = {} } = {}) {
     sections,
     logger: { warn() {}, info() {} },
     get: name => services[name],
-    // Cordis ctx.set: ds-bot provides its `flybot` service here (hooks.js).
-    set(name, value) {
-      services[name] = value
-      ctx[name] = value
-    },
     on(name, listener, options) {
       calls.push(`on ${name}${options?.prepend ? ' (prepend)' : ''}`)
       listeners.set(name, [...(listeners.get(name) ?? []), listener])
@@ -31,10 +26,6 @@ export function fakeContext({ services = {} } = {}) {
       for (const listener of listeners.get(name) ?? []) {
         if (listener.length < 2) listener(payload)
       }
-    },
-    // Calls every listener of an event with these arguments (e.g. session/event).
-    emitArgs(name, ...args) {
-      for (const listener of listeners.get(name) ?? []) listener(...args)
     },
     effect(execute, label) {
       calls.push(`effect ${label}`)

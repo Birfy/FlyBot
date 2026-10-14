@@ -97,8 +97,6 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'on llm/stream',
     'effect ds-bot: update check',
     'effect ds-bot: dsh update install',
-    'on agent/created',
-    'on session/event',
     'effect ds-bot: api route',
     'route POST /api/bot',
     'effect ds-bot: load state',

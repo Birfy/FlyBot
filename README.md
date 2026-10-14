@@ -52,9 +52,9 @@ DSH keeps plugins per profile, under `$DSH_HOME/profiles/<name>` (`~/.dsh/profil
 `web` profile). `dsh plugin --profile <name> …` runs pnpm in that folder.
 
 ```sh
-npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot"
-npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot/plugins/social"
-npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot/plugins/tree"
+npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core"
+npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core/plugins/social"
+npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core/plugins/tree"
 ```
 
 The first line is FlyBot itself (package `ds-bot`); the plugins are optional. Each one is added
@@ -191,8 +191,8 @@ Agent and maintainer loop: see [AGENTS.md](AGENTS.md), [LESSONS.md](LESSONS.md),
 
 ## Development
 
-The core lives in [`ds-bot/`](ds-bot/) and the plugins in [`ds-bot/plugins/`](ds-bot/plugins/).
-See [`ds-bot/README.md`](ds-bot/README.md) for options and internals, [CONTRIBUTING.md](CONTRIBUTING.md)
+The core lives in [`core/`](core/) and the plugins in [`core/plugins/`](core/plugins/).
+See [`core/README.md`](core/README.md) for options and internals, [CONTRIBUTING.md](CONTRIBUTING.md)
 for development, and [CHANGELOG.md](CHANGELOG.md) for history. CI
 ([`.github/workflows/test.yml`](.github/workflows/test.yml)) runs the tests of the core and every
 plugin, the client build check and lint on Ubuntu and Windows.
@@ -232,12 +232,12 @@ Bots use your own model quota, and they read and write files and run commands wh
 
 ## Plugin architecture
 
-FlyBot is the core (`ds-bot/`) plus feature plugins. The core provides the extension API, so
+FlyBot is the core (`core/`) plus feature plugins. The core provides the extension API, so
 plugins never patch it.
 
 ### Host API (`ctx.flybot`)
 
-`ds-bot/src/host/hooks.js`, provided with `ctx.provide('flybot')`. Plugins declare
+`core/src/host/hooks.js`, provided with `ctx.provide('flybot')`. Plugins declare
 `inject: ['flybot']` and call `ctx.flybot.scope('<plugin>')` (`'shared'` is reserved).
 
 - `fields.get/set/all/query`: synchronous per-plugin fields on Bots, saved in `state.json`
@@ -261,10 +261,10 @@ plugins never patch it.
   list, of}`: each friend's Bot is a chat of its own (see below).
 - Browser: `ctx.flybot` (`bots()`, `fields.on('change')`, which survives host restarts)
   and slots `flybot.sidebar.section`, `flybot.sidebar.structure`, `flybot.composer.mention`,
-  `flybot.bot.details`, `flybot.approvals` (`ds-bot/src/client/flybot-slots.js`). Each
+  `flybot.bot.details`, `flybot.approvals` (`core/src/client/flybot-slots.js`). Each
   plugin component renders inside an error boundary.
-- Types: `ds-bot/types/flybot.d.ts`.
-- Plugins (`ds-bot/plugins/`): `social` (friends' Bots via Bot Social) and `tree`
+- Types: `core/types/flybot.d.ts`.
+- Plugins (`core/plugins/`): `social` (friends' Bots via Bot Social) and `tree`
   (recursive Bot tree, maintained by recursive-bot).
 
 CI (`.github/workflows/test.yml`) runs ds-bot's tests, which include every plugin's tests,

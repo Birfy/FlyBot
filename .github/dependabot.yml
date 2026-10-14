@@ -14,7 +14,7 @@ updates:
 
   - package-ecosystem: npm
     # Plugins only declare peer dependencies (no lockfile), so ds-bot is the one npm project.
-    directory: /ds-bot
+    directory: /core
     schedule:
       interval: weekly
     cooldown:
