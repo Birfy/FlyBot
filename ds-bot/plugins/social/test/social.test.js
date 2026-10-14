@@ -38,6 +38,9 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
     },
     add_home_member: (a) => {
       const handle = `@${a.name}.danyang.home`
+      // Like the server: a handle taken in this home hands back that member, renamed.
+      const taken = [...members.values()].find(m => m.handle === handle)
+      if (taken) { taken.display_name = a.display_name; return { ...taken, reactivated: true } }
       const member = { bot_id: `m${++seq}`, handle, display_name: a.display_name }
       members.set(member.bot_id, member)
       return member
@@ -598,4 +601,41 @@ test('invite card: "Copy link" copies the bare URL; "Copy invite with instructio
   byLabel('Copy link').props.onClick()
   byLabel('Copy invite with instructions').props.onClick()
   assert.deepEqual(copied, ['https://s/i/ABC', invite.text]) // written synchronously, inside each click
+})
+
+test('two Bots never share one member identity: a saved shared identity is repaired and invites name the right Bot', async (t) => {
+  const { ctx, home, call, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  // An older build slugged every non-ASCII name to 'bot': both Bots were saved with one identity.
+  server.members.set('m0', { bot_id: 'm0', handle: '@bot.danyang.home', display_name: '后端' })
+  const fields = ctx.flybot.scope('social').fields
+  fields.set('a', 'member', { bot_id: 'm0', handle: '@bot.danyang.home' })
+  fields.set('b', 'member', { bot_id: 'm0', handle: '@bot.danyang.home' })
+  const social = await startSocial(ctx.flybot, { server: 'https://social.test', credentialsPath: join(home, 'flybot-social.json'), fetch: server.fetch, inboxPollMs: 0 })
+  t.after(() => social.dispose())
+  await settle()
+  const a = fields.get('a', 'member'), b = fields.get('b', 'member')
+  assert.equal(a.bot_id, 'm0')
+  assert.notEqual(b.bot_id, 'm0')
+  const invite = (await call('flybot/social/create-invite', { botId: 'b' })).value
+  assert.equal(server.calls.filter(c => c.name === 'create_invite').at(-1).args.bot_id, b.bot_id)
+  assert.equal(invite.handle, b.handle)
+})
+
+test('a name whose handle another local Bot holds registers with its own suffixed handle', async (t) => {
+  const { ctx, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  // The server reuses a taken handle in this home: both Bots' names map to 'chief'.
+  const fields = ctx.flybot.scope('social').fields
+  fields.set('a', 'member', { bot_id: 'm0', handle: '@chief.danyang.home' })
+  server.members.set('m0', { bot_id: 'm0', handle: '@chief.danyang.home', display_name: 'Chief' })
+  const add = server.tools.add_home_member
+  server.tools.add_home_member = a => add({ ...a, name: a.name.startsWith('writer') ? a.name.replace('writer', 'chief') : a.name })
+  const social = await startSocial(ctx.flybot, { server: 'https://social.test', credentialsPath: join(home, 'flybot-social.json'), fetch: server.fetch, inboxPollMs: 0 })
+  t.after(() => social.dispose())
+  await settle()
+  assert.equal(fields.get('a', 'member').bot_id, 'm0')
+  assert.notEqual(fields.get('b', 'member').bot_id, 'm0')
 })
