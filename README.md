@@ -184,6 +184,11 @@ In **Settings** → **Usage**, you can see token usage by time, by bot and by mo
 Everything stays on your computer, in `bot/` and `sessions/` in the DSH home folder (`~/.dsh`
 by default). Uninstalling the plugin does not delete it.
 
+
+## Contributing (FlyBot)
+
+Agent and maintainer loop: see [AGENTS.md](AGENTS.md), [LESSONS.md](LESSONS.md), [docs/code-standards.md](docs/code-standards.md), and [CONTRIBUTING.md](CONTRIBUTING.md). PR reviews use [`.claude/skills/review-pr/SKILL.md`](.claude/skills/review-pr/SKILL.md).
+
 ## Development
 
 The core lives in [`ds-bot/`](ds-bot/) and the plugins in [`ds-bot/plugins/`](ds-bot/plugins/).

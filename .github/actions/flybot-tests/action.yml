@@ -1,0 +1,89 @@
+name: FlyBot tests
+description: >-
+  Node, npm ci, the DSH harness, lint, the client bundle check, ds-bot's suite and the social
+  and tree plugin suites (optionally as one coverage run). Used by Test (the PR gate); the
+  Compatibility legs (nightly.yml) can use it too, to run the same checks.
+inputs:
+  node:
+    description: Node.js version
+    required: true
+  dsh:
+    description: DSH (@deepseek-ai/dsh) version for the harness
+    required: true
+  coverage:
+    description: "'true': run all suites in one coverage run and upload lcov"
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+      with:
+        node-version: ${{ inputs.node }}
+        cache: npm
+        cache-dependency-path: ds-bot/package-lock.json
+    # The job-level timeout-minutes bounds a stuck registry (composite steps take none).
+    - name: npm ci
+      shell: bash
+      working-directory: ds-bot
+      run: npm ci --no-fund --no-audit
+    - name: Install DSH
+      shell: bash
+      working-directory: ds-bot
+      env:
+        DSH: ${{ inputs.dsh }}
+      run: npm run harness -- --no-save "@deepseek-ai/dsh@$DSH"
+    # Lint and the bundle check first: a slip fails in seconds instead of after the suite.
+    - name: Lint
+      shell: bash
+      working-directory: ds-bot
+      run: npm run lint
+    - name: Build (client bundle is up to date)
+      shell: bash
+      working-directory: ds-bot
+      run: node scripts/build-client.mjs --check
+    # ds-bot's suite (incl. tree-host / tree-plugin / bot-tree: the tree plugin on a real
+    # ds-bot), then each plugin's own suite (social; tree's test/tree.test.js).
+    - name: Unit tests
+      if: inputs.coverage != 'true'
+      shell: bash
+      working-directory: ds-bot
+      run: npm test
+    - name: Plugin tests (social)
+      if: inputs.coverage != 'true'
+      shell: bash
+      working-directory: ds-bot/plugins/social
+      run: node --import ../../test/harness-resolve.mjs --test "test/*.test.js"
+    - name: Plugin tests (tree)
+      if: inputs.coverage != 'true'
+      shell: bash
+      working-directory: ds-bot/plugins/tree
+      run: node --test "test/*.test.js"
+    # The same three suites in one run, so coverage spans ds-bot and both plugins.
+    - name: Unit and plugin tests with coverage
+      if: inputs.coverage == 'true'
+      shell: bash
+      working-directory: ds-bot
+      env:
+        NODE_V: ${{ inputs.node }}
+        DSH: ${{ inputs.dsh }}
+      run: |
+        set -o pipefail
+        node --import ./test/harness-resolve.mjs --test --experimental-test-coverage \
+          --test-reporter=spec --test-reporter-destination=stdout \
+          --test-reporter=lcov --test-reporter-destination=lcov.info \
+          "test/*.test.js" "plugins/social/test/*.test.js" "plugins/tree/test/*.test.js" | tee test-output.txt
+        {
+          echo "### Coverage: ds-bot + social + tree (Node $NODE_V, DSH $DSH)"
+          echo '```'
+          grep -E 'file +\| line %|all files' test-output.txt | sed 's/^ℹ //' | head -2
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+    - name: Upload coverage
+      if: always() && inputs.coverage == 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      with:
+        name: coverage-lcov
+        path: ds-bot/lcov.info
+        if-no-files-found: ignore
+        retention-days: 14
