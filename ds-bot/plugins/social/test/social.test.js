@@ -538,3 +538,27 @@ test('MCP client (#18): a hung server times out; an SSE answer is read', async (
   const sse = createMcpClient({ server: 'https://s', token: 't', fetch: async () => new Response('event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\\"ok\\":true}"}]}}\n\n', { headers: { 'content-type': 'text/event-stream' } }) })
   assert.deepEqual(await sse.callTool('x'), { ok: true })
 })
+
+test('Friends\' Bots (#21): one group per home, rows drawn by ds-bot\'s own Bot row, no pills', async () => {
+  const registered = []
+  const entries = []
+  const flybot = { slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } }, call: async () => ({}) }
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = flybot
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const data = { homes: [{ home: '@danyang.home', name: 'Danyang', bots: [{ handle: '@chief.danyang.home', name: 'Chief' }] }] }
+  const initial = [data, '', true, false, {}, {}, '']
+  let i = 0
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+  plugin.apply({})
+  const drawn = []
+  const tree = entries[0][1].component({ renderBot: chat => { drawn.push(chat.remote.handle); return h('BotRow', { bot: chat }) }, remoteChats: [{ id: 'x', name: 'Chief', remote: { handle: '@chief.danyang.home' } }] })
+  const all = []
+  const walk = node => { if (node && typeof node === 'object') { all.push(node); (node.children ?? []).forEach(walk) } }
+  walk(tree)
+  assert.deepEqual(drawn, ['@chief.danyang.home'])
+  assert.ok(all.some(n => n.props.className === 'fs-home-name' && n.children.includes('Danyang')))
+  assert.ok(!all.some(n => /remote/.test(String(n.props.className ?? '')) && n.children.includes('remote')))
+})
