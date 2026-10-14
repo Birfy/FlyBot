@@ -256,7 +256,7 @@ window.__ModuleLoader__.load({
       return cache.list
         .filter(friend => friend.handle.includes(needle) || String(friend.name).toLowerCase().includes(needle))
         // The inserted text asks the Bot to use message_friend_bot; the send is held for approval.
-        .map(friend => ({ name: `${friend.name} · remote`, description: `${friend.handle} · ${friend.home}`, section: 'Friends\' Bots', value: `${friend.handle} (remote Bot: use message_friend_bot) ` }))
+        .map(friend => ({ name: `${friend.name} · remote`, description: `${friend.handle} · ${friend.home}`, section: 'Friends\' Bots', value: `${friend.handle} ` }))
     }
 
     return {

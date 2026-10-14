@@ -295,3 +295,31 @@ test('approvals (#12): an approved hold resumes the chain, a later deny wins, fa
   assert.equal(over.action, 'deny')
   assert.match(over.reason, /already wait/)
 })
+
+test('mentions (#13): a friend\'s Bot named with @ gets the message once; code, quotes and unknown handles stay local', async (t) => {
+  const { ctx, fb, stop } = await start()
+  t.after(stop)
+  const out = []
+  fb.transports.add('bot-social', { send: async msg => { out.push(msg); return { exchangeId: `r${out.length}` } } })
+  fb.scope('social').remote.publish([{ handle: '@helper.friend.home', name: '助手', home: '@friend.home' }])
+  let seq = 0
+  const say = async (text) => {
+    ctx.emitArgs('session/event', { id: 'a' }, { type: 'user/message', seq: ++seq, data: { source: { kind: 'user' }, content: [{ type: 'text', text }] } })
+    await new Promise(resolve => setTimeout(resolve, 30))
+  }
+  await say('@helper.friend.home 你好')
+  assert.equal(out.length, 1)
+  assert.equal(out[0].to.handle, '@helper.friend.home')
+  assert.equal(out[0].text, '@helper.friend.home 你好')
+  assert.equal(out[0].via, 'user-mention')
+  await say('see `@helper.friend.home` in the docs')
+  await say('> @helper.friend.home said hi\nok')
+  await say('```\n@helper.friend.home\n```')
+  await say('mail me at x@helper.friend.home')
+  await say('@nobody.friend.home hi')
+  assert.equal(out.length, 1)
+  // The same event seen twice is sent once.
+  ctx.emitArgs('session/event', { id: 'a' }, { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '@helper.friend.home 你好' }] } })
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(out.length, 1)
+})

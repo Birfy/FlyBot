@@ -381,7 +381,7 @@ test('client.js registers a sidebar section and @ rows into the FlyBot registry'
   assert.equal(sandbox.__flybot__.social.canInvite('a'), false)
   assert.equal(typeof sandbox.__flybot__.social.onChange, 'function') // status-change event, so callers need not poll
   const rows = await entries[1][1].candidates('cod')
-  assert.deepEqual(JSON.parse(JSON.stringify(rows)), [{ name: 'Coder · remote', description: '@coder.bob.home · @bob.home', section: 'Friends\' Bots', value: '@coder.bob.home (remote Bot: use message_friend_bot) ' }])
+  assert.deepEqual(JSON.parse(JSON.stringify(rows)), [{ name: 'Coder · remote', description: '@coder.bob.home · @bob.home', section: 'Friends\' Bots', value: '@coder.bob.home ' }])
 })
 
 test('remote strings: names one-line, file fence cannot be escaped (#9)', async () => {

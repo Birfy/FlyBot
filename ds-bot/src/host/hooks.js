@@ -10,6 +10,7 @@
 // Types: ds-bot/types/flybot.d.ts. Plugins call flybot.scope('<plugin>') to get the
 // same API with their own field namespace; the unscoped API uses namespace 'shared'.
 import { randomUUID } from 'node:crypto'
+import { mentionSpans } from '../shared/mentions.js'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
 export const FLYBOT_API_VERSION = 1
@@ -487,7 +488,6 @@ export function install(rt) {
 
   // The user's "@handle" of a remote member in a Bot's chat or a group goes out through
   // bot.send (so the social middleware still decides), from that Bot or the group's admin.
-  const MENTION = /(^|[^a-z0-9_./@])@([a-z0-9][a-z0-9._-]*[a-z0-9])/gi
   const SESSION_CHIP = /@\[((?:\\.|[^\]\\])*)\]\(dsh-session:([A-Za-z0-9_-]+)\)/g
   const decodeChip = payload => {
     try { return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) } catch { return undefined }
@@ -502,19 +502,18 @@ export function install(rt) {
     const room = rt.roomOf(rt.groupOwners?.get(sessionId)?.roomId ?? sessionId)
     const from = room ? (room.admin ?? room.members?.[0]) : rt.selfOf(sessionId)
     if (from === undefined || rt.botOf(from) === undefined) return []
+    // The same "@" rule as the team (code, links and quoted lines are literal), over the
+    // friends' Bots by handle and by chat name; a menu chip names the chat directly.
     const handles = new Set()
-    for (const match of text.matchAll(MENTION)) {
-      const handle = `@${match[2].toLowerCase()}`
-      if (known.has(handle)) handles.add(handle)
-    }
-    // The "@" menu's chip for a friend's Bot names its chat (a dsh-session mention), and a
-    // typed "@Name" names it too; both reach the friend's Bot, without the markup.
-    for (const match of text.matchAll(SESSION_CHIP)) {
+    const quoted = text.replace(/^[ \t]*>.*$/gm, line => ' '.repeat(line.length))
+    const names = [...known.values()].flatMap(bot => [
+      { name: bot.handle.slice(1), handle: bot.handle },
+      ...Object.values(state.bots).filter(chat => chat.remote?.handle === bot.handle && chat.name).map(chat => ({ name: chat.name, handle: bot.handle })),
+    ])
+    for (const span of mentionSpans(quoted, names)) if (span.bot) handles.add(span.bot.handle)
+    for (const match of quoted.matchAll(SESSION_CHIP)) {
       const handle = rt.botOf(decodeChip(match[2]))?.remote?.handle
       if (handle && known.has(handle)) handles.add(handle)
-    }
-    for (const bot of Object.values(state.bots)) {
-      if (bot.remote?.handle && known.has(bot.remote.handle) && bot.name && text.includes(`@${bot.name}`)) handles.add(bot.remote.handle)
     }
     const plain = text.replace(SESSION_CHIP, (_, label) => `@${label.replace(/\\([\\\]])/g, '$1')}`).trim()
     const results = []
