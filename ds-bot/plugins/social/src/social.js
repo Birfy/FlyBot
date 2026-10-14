@@ -203,13 +203,23 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     }
     return registering.get(bot.id)
   }
+  // A member identity another local Bot already holds. The server hands back (and renames)
+  // an existing member when a name maps to a handle that is taken in this home, so two Bots
+  // whose names slug the same (any non-ASCII name once became 'bot') must not share it:
+  // an invite for one would befriend the other.
+  const heldByOther = (botId, memberBotId) => flybot.bot.list().some(other => other.id !== botId && memberOf(other.id)?.bot_id === memberBotId)
   async function registerOnce(bot) {
+    const suffixed = `${slug(bot.name, bot.id)}-${sha256(String(bot.id)).slice(0, 6)}`
     let member
     try {
       member = await client.callTool('add_home_member', { home: home.id, name: slug(bot.name, bot.id), display_name: bot.name })
     } catch (error) {
       if (!/taken|exists|conflict|duplicate|in use/i.test(String(error?.message ?? error))) throw error
-      member = await client.callTool('add_home_member', { home: home.id, name: `${slug(bot.name, bot.id)}-${sha256(String(bot.id)).slice(0, 6)}`, display_name: bot.name })
+      member = await client.callTool('add_home_member', { home: home.id, name: suffixed, display_name: bot.name })
+    }
+    if (member && heldByOther(bot.id, member.bot_id)) {
+      member = await client.callTool('add_home_member', { home: home.id, name: suffixed, display_name: bot.name })
+      if (heldByOther(bot.id, member?.bot_id)) throw new Error(`${bot.name} got another Bot's Bot Social identity`)
     }
     if (flybot.bot.get(bot.id) === undefined) {
       await client.callTool('remove_home_member', { home: home.id, member: member.bot_id }).catch(error => warn('revoke failed', error))
@@ -221,6 +231,16 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   // Every Bot at startup, once ds-bot's team is loaded (saved Bots fire no bot.created).
   async function registerAll() {
     await flybot.ready?.()
+    // Repair Bots saved with a shared identity: the first keeps it, the others re-register.
+    const owners = new Map()
+    for (const bot of flybot.bot.list()) {
+      const id = memberOf(bot.id)?.bot_id
+      if (!id) continue
+      if (owners.has(id)) {
+        warn(`${bot.name} shared ${owners.get(id).name}'s Bot Social identity; registering its own`)
+        flybot.fields.set(bot.id, 'member', undefined)
+      } else owners.set(id, bot)
+    }
     for (const bot of flybot.bot.list()) {
       try { await register(bot) } catch (error) {
         if (/401|403|token|unauthori[sz]ed/i.test(String(error?.message ?? error))) throw error
