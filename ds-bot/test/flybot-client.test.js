@@ -112,7 +112,7 @@ test('field events keep flowing after a host restart (#18)', async () => {
 
 test('client UI (#19): every plugin slot renders inside an error boundary; approval copy is translated; the stack scrolls', async () => {
   const { readFileSync } = await import('node:fs')
-  const source = readFileSync(new URL('../src/client/flybot-slots.js', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../src/client/flybot-slots.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n') // a Windows checkout has CRLF
   assert.match(source, /static getDerivedStateFromError\(\)/)
   assert.match(source, /function Safe\(\{ entry, props \}\) \{\n  return h\(SlotBoundary/)
   assert.doesNotMatch(source, /\}, '(Approve|Reject|Retry)'\)/)
