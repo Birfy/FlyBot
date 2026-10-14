@@ -47,6 +47,9 @@ window.__ModuleLoader__.load({
           const offs = [flybot.fields.on('change', c => { if (c && (c.key === 'parent' || c.key === 'treeRole' || c.removed)) refresh() })]
           // The browser API has no bot events; a removed Bot shows up through field changes and the poll.
           if (typeof flybot.on === 'function') offs.push(flybot.on('bot.removed', refresh))
+          // Removals emit no field change in the browser, so the tree also refreshes every 10 s.
+          const timer = setInterval(refresh, 10000)
+          offs.push(() => clearInterval(timer))
           return () => { for (const off of offs) off?.() }
         }, [refresh])
         return h('section', { className: 'flybot-tree' },
