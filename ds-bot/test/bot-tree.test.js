@@ -19,3 +19,11 @@ test('botTree: Chief is the root; Bots without a known parent go under it; cycle
   assert.deepEqual(names(again), ['chief', ['work'], ['dev']])
   assert.deepEqual(botTree(bots, 'missing', () => undefined), [])
 })
+
+test('sidebar tree draws the structure entry\'s nodeActions after each row', async () => {
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../src/client/sidebar.js', import.meta.url), 'utf8')
+  assert.match(src, /actions: structure\?\.nodeActions/)
+  assert.match(src, /typeof actions === 'function' \? h\(NodeActions, \{ component: actions, bot \}\)/)
+  assert.match(src, /children\.map\(child => h\(TreeNode, \{[^}]*actions \}\)\)/)
+})

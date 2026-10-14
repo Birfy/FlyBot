@@ -4,7 +4,8 @@
 // ds-bot's own components render whatever is registered:
 //
 //   flybot.sidebar.section  { id, order, component({ roster, actions, call }) }   below the Bot list
-//   flybot.sidebar.structure { id, order, parentOf(botId) }   the Bot list becomes one tree under the Main Bot
+//   flybot.sidebar.structure { id, order, parentOf(botId), nodeActions? }   the Bot list becomes one tree under the Main Bot;
+//                            nodeActions({ bot }) is drawn after each tree row
 //   flybot.composer.mention { id, order, candidates(query, { sessionId, roster, call }) → rows }   rows in the "@" menu
 //   flybot.bot.details      { id, order, component({ bot, roster, call }) }        in a Bot's settings
 //   flybot.approvals        { id, order, component({ approval, decide, call }) }   custom card for a held send

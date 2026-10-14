@@ -237,7 +237,17 @@ function useListGlide(listRef, layout, key) {
 }
 
 // One Bot of the sidebar tree: its usual row, indented by depth, with a toggle when it has children.
-function TreeNode({ node, rowProps, markedUnread, collapsed, toggle }) {
+// `actions` is the structure entry's optional nodeActions component (e.g. the tree's "Copy invite
+// link"), drawn after the row; a failing one draws nothing.
+// A try/catch around createElement cannot see render errors, so this is an error boundary.
+class NodeActions extends Component {
+  constructor(props) { super(props); this.state = { failed: false } }
+  static getDerivedStateFromError() { return { failed: true } }
+  componentDidCatch(error) { console.error('flybot: nodeActions failed', error) }
+  render() { return this.state.failed ? null : h(this.props.component, { bot: this.props.bot }) }
+}
+
+function TreeNode({ node, rowProps, markedUnread, collapsed, toggle, actions }) {
   const { bot, depth, children } = node
   const closed = collapsed[bot.id] === true
   return h(Fragment, null,
@@ -245,8 +255,9 @@ function TreeNode({ node, rowProps, markedUnread, collapsed, toggle }) {
       children.length
         ? h('button', { type: 'button', className: 'bt-tree-toggle', 'aria-expanded': !closed, 'aria-label': `${closed ? t('Expand') : t('Collapse')} ${bot.name}`, onClick: () => toggle(bot.id) }, '▾')
         : h('span', { className: 'bt-tree-toggle bt-tree-leaf', 'aria-hidden': true }),
-      h(BotRow, { ...rowProps, bot, asRow: true, marked: markedUnread[bot.id] === true })),
-    closed ? null : children.map(child => h(TreeNode, { key: child.bot.id, node: child, rowProps, markedUnread, collapsed, toggle })))
+      h(BotRow, { ...rowProps, bot, asRow: true, marked: markedUnread[bot.id] === true }),
+      typeof actions === 'function' ? h(NodeActions, { component: actions, bot }) : null),
+    closed ? null : children.map(child => h(TreeNode, { key: child.bot.id, node: child, rowProps, markedUnread, collapsed, toggle, actions })))
 }
 
 export function TeamSidebar(props) {
@@ -297,7 +308,7 @@ export function TeamSidebar(props) {
           h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon))),
     wide && roster.readOnly ? h('div', { className: 'bt-hint bt-read-only', role: 'status' }, hostText(roster.readOnly)) : null,
     h('div', { ref: listRef, className: 'bt-list', role: 'region', 'aria-label': t('Bot list') },
-      tree ? h('div', { className: 'bt-tree', role: 'group', 'aria-label': t('Bot tree') }, tree.map(node => h(TreeNode, { key: node.bot.id, node, rowProps, markedUnread, collapsed, toggle })))
+      tree ? h('div', { className: 'bt-tree', role: 'group', 'aria-label': t('Bot tree') }, tree.map(node => h(TreeNode, { key: node.bot.id, node, rowProps, markedUnread, collapsed, toggle, actions: structure?.nodeActions })))
         : main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, t('Setting up your Main Bot…')),
       order.filter(entry => !(tree && entry.kind === 'bot')).map(entry => (entry.kind === 'bot'
         ? h(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true })

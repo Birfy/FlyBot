@@ -561,3 +561,78 @@ test('sidebar structure: parents from forestOf; retired and outside Bots have no
   assert.deepEqual(['c', 'w', 'd', 'old', 'x'].map(id => entry.parentOf(id)), [undefined, 'c', 'w', undefined, undefined])
   dispose()
 })
+
+// ---- per-node "Copy invite link"
+const withNavigator = async (nav, fn) => {
+  const before = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true, writable: true })
+  try { return await fn() } finally { if (before) Object.defineProperty(globalThis, 'navigator', before); else delete globalThis.navigator }
+}
+const inviteButtons = (mod, flybot, bot) => findAll(reactStub.createElement(mod.makeInviteAction(flybot), { bot }), n => n.props.className === 'flybot-tree-invite')
+
+test('invite action: structure entry carries nodeActions; hidden without social or when canInvite is false', () => {
+  const mod = loadClient()
+  const entries = []
+  const dispose = mod.registerStructure({ slots: { register: (n, e) => { entries.push(e); return () => {} } }, bots: async () => [] })
+  assert.equal(typeof entries[0].nodeActions, 'function')
+  dispose()
+  const bot = { id: 'b1', name: '研究员' }
+  delete globalThis.__flybot__
+  assert.equal(inviteButtons(mod, {}, bot).length, 0) // social not installed
+  assert.equal(inviteButtons(mod, { social: { canInvite: () => false } }, bot).length, 0) // status not ready / not invitable
+  assert.equal(inviteButtons(mod, { social: { canInvite: () => { throw new Error('x') } } }, bot).length, 0)
+  const seen = []
+  const btn = inviteButtons(mod, { social: { canInvite: id => { seen.push(id); return true } } }, bot)
+  assert.equal(btn.length, 1); assert.deepEqual(seen, ['b1'])
+  assert.equal(btn[0].props['aria-label'], 'Copy invite link for 研究员')
+  assert.equal(btn[0].props.title, 'Copy invite link')
+  // globalThis.__flybot__.social is used when ctx.flybot.social is absent
+  globalThis.__flybot__ = { social: { canInvite: () => true } }
+  assert.equal(inviteButtons(mod, {}, bot).length, 1)
+  delete globalThis.__flybot__
+  // revealed on hover, consistent with ds-bot tokens
+  assert.match(mod.INVITE_CSS, /\.bt-tree-item:hover \.flybot-tree-invite/)
+  assert.match(mod.INVITE_CSS, /var\(--bt-hover/)
+})
+
+test('invite action: click stops propagation, calls createInvite and copies text (clipboard)', async () => {
+  const mod = loadClient()
+  const copied = [], calls = []
+  const social = { canInvite: () => true, createInvite: async botId => { calls.push(botId); return { botId, link: 'https://x/i/abc', text: 'Join my bot: https://x/i/abc' } } }
+  await withNavigator({ clipboard: { writeText: async t => { copied.push(t) } } }, async () => {
+    const [btn] = inviteButtons(mod, { social }, { id: 'b1', name: 'A' })
+    let stopped = 0
+    await btn.props.onClick({ stopPropagation: () => stopped++, preventDefault() {} })
+    assert.equal(stopped, 1)
+    assert.deepEqual(calls, ['b1'])
+    assert.deepEqual(copied, ['Join my bot: https://x/i/abc'])
+    assert.deepEqual(await mod.copyInvite({ social }, 'b2'), { tone: 'ok', text: 'Copied' })
+    // without social.createInvite it uses flybot.call('social.createInvite', { botId })
+    const via = []
+    const r = await mod.copyInvite({ social: { canInvite: () => true }, call: async (name, payload) => { via.push([name, payload]); return { text: 'T' } } }, 'b3')
+    assert.deepEqual(r, { tone: 'ok', text: 'Copied' }); assert.deepEqual(via, [['social.createInvite', { botId: 'b3' }]])
+  })
+})
+
+test('invite action: textarea fallback, and errors become inline messages', async () => {
+  const mod = loadClient()
+  const social = { canInvite: () => true, createInvite: async () => ({ text: 'invite text' }) }
+  const doc = { body: { appendChild(el) { doc.added = el } }, createElement: () => ({ style: {}, setAttribute() {}, select() { doc.selected = this.value }, remove() { doc.removed = true } }), execCommand: cmd => cmd === 'copy' }
+  const beforeDoc = globalThis.document
+  globalThis.document = doc
+  try {
+    await withNavigator({ clipboard: { writeText: async () => { throw new Error('denied') } } }, async () => {
+      assert.deepEqual(await mod.copyInvite({ social }, 'b1'), { tone: 'ok', text: 'Copied' })
+      assert.equal(doc.selected, 'invite text'); assert.equal(doc.removed, true)
+    })
+    doc.execCommand = () => false
+    await withNavigator({}, async () => {
+      assert.deepEqual(await mod.copyInvite({ social }, 'b1'), { tone: 'error', text: 'Copy failed' })
+    })
+  } finally { if (beforeDoc === undefined) delete globalThis.document; else globalThis.document = beforeDoc }
+  await withNavigator({}, async () => {
+    assert.deepEqual(await mod.copyInvite({ social }, 'b1'), { tone: 'error', text: 'Clipboard unavailable' })
+    assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => { throw new Error('Not connected to Bot Social') } } }, 'b1'), { tone: 'error', text: 'Not connected to Bot Social' })
+    assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => ({}) } }, 'b1'), { tone: 'error', text: 'No invite link returned' })
+  })
+})

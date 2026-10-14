@@ -212,10 +212,18 @@ window.__ModuleLoader__.load({
     // Which local Bots can be invited to (social/status), cached for the synchronous canInvite.
     let status = { at: 0, value: null }
     let statusTask
+    const statusListeners = new Set()
     const loadStatus = () => {
-      statusTask ??= call('social/status', {}).then(value => { status = { at: Date.now(), value }; return value }).finally(() => { statusTask = undefined })
+      statusTask ??= call('social/status', {}).then(value => {
+        const changed = JSON.stringify(value) !== JSON.stringify(status.value)
+        status = { at: Date.now(), value }
+        if (changed) for (const fn of [...statusListeners]) { try { fn() } catch (error) { console.error('flybot-social: status listener failed', error) } }
+        return value
+      }).finally(() => { statusTask = undefined })
       return statusTask
     }
+    // Fires when what canInvite answers may have changed (first status, connect/disconnect, Bots added).
+    const onStatusChange = (fn) => { statusListeners.add(fn); return () => statusListeners.delete(fn) }
     // Sync: true when Bot Social is connected and botId is one of this team's Bots. Until the first
     // status answer it is false (and starts loading); the cache refreshes every 30 s.
     function canInvite(botId) {
@@ -280,7 +288,7 @@ window.__ModuleLoader__.load({
           ]
           // For other plugins (the tree's per-node "Copy invite link"): ctx.flybot.social.canInvite(botId)
           // is synchronous; flybot.call('social.createInvite', { botId }) returns { link, text, ... }.
-          const social = { canInvite, createInvite: botId => call('social.createInvite', { botId }) }
+          const social = { canInvite, onChange: onStatusChange, createInvite: botId => call('social.createInvite', { botId }) }
           globalThis.__flybot__.social = social
           if (globalThis.__flybot__.api) globalThis.__flybot__.api.social = social
           offs.push(() => {
@@ -288,6 +296,12 @@ window.__ModuleLoader__.load({
             if (globalThis.__flybot__?.api?.social === social) delete globalThis.__flybot__.api.social
           })
           void loadStatus().catch(() => {})
+          // Keep canInvite current (and onChange firing) without callers polling.
+          if (typeof setInterval === 'function') {
+            const statusTimer = setInterval(() => { void loadStatus().catch(() => {}) }, 30_000)
+            statusTimer?.unref?.() // node tests: never keeps the process alive
+            offs.push(() => clearInterval(statusTimer))
+          }
         }
         let timer
         attach()

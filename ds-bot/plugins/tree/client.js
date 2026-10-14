@@ -128,6 +128,103 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // ---- per-node "Copy invite link" (rendered by ds-bot's tree through the structure entry's nodeActions)
+    // Shown only when the social plugin is installed and social.canInvite(botId) is true (synchronous,
+    // false until social's first status check). Re-checked on every render and by a short poll.
+    const INVITE_CSS = `
+.flybot-tree-invite-wrap{flex:none;display:inline-flex;align-items:center;gap:4px;margin-left:2px}
+.flybot-tree-invite{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--bt-ink-3,rgba(20,20,20,.36));cursor:pointer;opacity:0;transition:opacity .12s ease,background-color .12s ease,color .12s ease}
+.bt-tree-item:hover .flybot-tree-invite,.flybot-tree-invite:focus-visible,.flybot-tree-invite[data-busy],.flybot-tree-invite-wrap[data-note] .flybot-tree-invite{opacity:1}
+.flybot-tree-invite:hover{background:var(--bt-hover,rgba(119,119,119,.09));color:var(--bt-ink,#141414)}
+.flybot-tree-invite:disabled{cursor:default}
+.flybot-tree-invite-note{font-size:11px;line-height:14px;white-space:nowrap;color:var(--bt-ink-2,rgba(20,20,20,.6))}
+.flybot-tree-invite-note[data-tone=error]{color:#e5484d;max-width:120px;overflow:hidden;text-overflow:ellipsis}
+`
+    const RECHECK_MS = 3000
+    const NOTE_MS = 2000
+    const socialOf = flybot => flybot?.social ?? globalThis.__flybot__?.social
+    function useInviteStyles() {
+      useEffect(() => {
+        if (typeof document === 'undefined' || document.getElementById('flybot-tree-invite-css')) return
+        const style = document.createElement('style')
+        style.id = 'flybot-tree-invite-css'
+        style.textContent = INVITE_CSS
+        document.head.appendChild(style)
+      }, [])
+    }
+    /** Copies text: navigator.clipboard, else a hidden textarea + execCommand('copy'). Throws on failure. */
+    async function copyText(text) {
+      const clip = globalThis.navigator?.clipboard
+      if (clip && typeof clip.writeText === 'function') {
+        try { await clip.writeText(text); return } catch { /* fall back */ }
+      }
+      const doc = globalThis.document
+      if (!doc?.body || typeof doc.execCommand !== 'function') throw new Error('Clipboard unavailable')
+      const area = doc.createElement('textarea')
+      area.value = text
+      area.setAttribute('readonly', '')
+      area.style.position = 'fixed'; area.style.opacity = '0'; area.style.pointerEvents = 'none'
+      doc.body.appendChild(area)
+      try {
+        area.select()
+        if (!doc.execCommand('copy')) throw new Error('Copy failed')
+      } finally { area.remove() }
+    }
+    /** createInvite + copy; resolves { tone: 'ok', text: 'Copied' } or { tone: 'error', text }. */
+    async function copyInvite(flybot, botId) {
+      try {
+        const social = socialOf(flybot)
+        const invite = typeof social?.createInvite === 'function' ? await social.createInvite(botId) : await flybot.call('social.createInvite', { botId })
+        const text = invite?.text || invite?.link || invite?.url
+        if (!text) throw new Error('No invite link returned')
+        await copyText(String(text))
+        return { tone: 'ok', text: 'Copied' }
+      } catch (error) {
+        return { tone: 'error', text: String(error?.message ?? error) || 'Could not copy' }
+      }
+    }
+    function makeInviteAction(flybot) {
+      return function InviteAction({ bot }) {
+        useInviteStyles()
+        const [, setTick] = useState(0)
+        const [busy, setBusy] = useState(false)
+        const [note, setNote] = useState(null)
+        const id = bot?.id
+        const social = socialOf(flybot)
+        let can = false
+        try { can = Boolean(id) && social?.canInvite?.(id) === true } catch { can = false }
+        useEffect(() => {
+          // Re-render when social's status changes (social.onChange); older social without the
+          // event: poll so the button appears once the status arrives and goes when it no longer applies.
+          const s = socialOf(flybot)
+          if (typeof s?.onChange === 'function') return s.onChange(() => setTick(t => t + 1))
+          const timer = setInterval(() => setTick(t => t + 1), RECHECK_MS)
+          return () => clearInterval(timer)
+        }, [social])
+        useEffect(() => {
+          if (!note) return undefined
+          const timer = setTimeout(() => setNote(null), NOTE_MS)
+          return () => clearTimeout(timer)
+        }, [note])
+        if (!can && !note) return null
+        const onClick = async (event) => {
+          event?.stopPropagation?.() // never opens the bot's chat
+          event?.preventDefault?.()
+          if (busy) return
+          setBusy(true)
+          const result = await copyInvite(flybot, id)
+          setBusy(false)
+          setNote(result)
+        }
+        return h('span', { className: 'flybot-tree-invite-wrap', 'data-note': note ? note.tone : undefined, onClick: e => e?.stopPropagation?.() },
+          note ? h('span', { className: 'flybot-tree-invite-note', role: 'status', 'data-tone': note.tone, title: note.text }, note.text) : null,
+          can ? h('button', { type: 'button', className: 'flybot-tree-invite', 'aria-label': `Copy invite link for ${bot.name}`, title: 'Copy invite link', disabled: busy, 'data-busy': busy ? '' : undefined, onClick },
+            h('svg', { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
+              h('path', { d: 'M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5' }),
+              h('path', { d: 'M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5' }))) : null)
+      }
+    }
+
     const REFRESH_MS = 10000
     // 'flybot.sidebar.section' is a FlyBot registry slot (ds-bot renders it), not a DSH
     // shell slot, so the section goes in through the browser flybot service.
@@ -167,7 +264,9 @@ window.__ModuleLoader__.load({
       let parents = new Map()
       let key = '[]'
       let stopped = false
-      const entry = () => ({ id: 'flybot-tree', order: 90, parentOf: id => parents.get(id) })
+      // nodeActions: optional per-node component ds-bot renders next to each tree row ({ bot }).
+      const nodeActions = makeInviteAction(flybot)
+      const entry = () => ({ id: 'flybot-tree', order: 90, parentOf: id => parents.get(id), nodeActions })
       let off = flybot.slots.register('flybot.sidebar.structure', entry())
       const refresh = async () => {
         let bots
@@ -212,6 +311,6 @@ window.__ModuleLoader__.load({
       ctx.effect?.(() => off, 'flybot-tree: tree helper')
       return off
     }
-    return { name: 'flybot-tree', inject, apply, forestOf, registerStructure, buildForest, treeOf, TreeView, countNodes, EMPTY, CSS }
+    return { name: 'flybot-tree', inject, apply, forestOf, registerStructure, makeInviteAction, copyInvite, copyText, INVITE_CSS, buildForest, treeOf, TreeView, countNodes, EMPTY, CSS }
   },
 })
