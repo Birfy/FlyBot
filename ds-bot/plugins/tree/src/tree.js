@@ -129,8 +129,23 @@ export function createTree(fb, { limits, rootName = 'Root', rootBotId, adoptExis
     return fb.createBot({ name: rootName, systemPrompt: withTreeBlock('', prompt), fields: { parent: null, treeRole: ROOT_ROLE } })
   }
 
+  // createChild checks limits, then awaits createBot: serialize per parent so parallel calls
+  // see each other's children (no maxChildren overflow, no duplicate-name siblings).
+  const createLocks = new Map()
+  function withParentLock(parentId, fn) {
+    const prev = createLocks.get(parentId) ?? Promise.resolve()
+    const run = prev.then(fn, fn)
+    const tail = run.then(() => {}, () => {})
+    createLocks.set(parentId, tail)
+    tail.then(() => { if (createLocks.get(parentId) === tail) createLocks.delete(parentId) })
+    return run
+  }
+
   /** Creates a child under parentId (the CALLER; the tool never takes a parent argument). */
-  async function createChild(parentId, name, roleDescription) {
+  function createChild(parentId, name, roleDescription) {
+    return withParentLock(parentId, () => createChildNow(parentId, name, roleDescription))
+  }
+  async function createChildNow(parentId, name, roleDescription) {
     const nodes = snapshot()
     const parent = nodes[parentId]
     if (!parent) throw new Error('this bot is not part of the tree')
@@ -158,13 +173,32 @@ export function createTree(fb, { limits, rootName = 'Root', rootBotId, adoptExis
     if (!change || !TREE_KEYS.has(change.key)) return
     emit(change)
   }
-  /** After deletion: the removed bot's children re-attach to its parent (from the event's last record). */
+  /**
+   * After deletion: the removed bot's children re-attach to its parent (from the event's last record).
+   * Every reparented child and its descendants get a fresh prompt (their trace no longer names the
+   * deleted bot). maxChildren is NOT enforced here: deleting a bot never orphans or drops its
+   * children; if the new parent ends up over the limit we only warn, and create_child_bot keeps
+   * refusing new children there until it is back under the limit.
+   */
   function onBotRemoved({ botId, parent }) {
     if (parent === undefined) return // not a tree bot
-    const nodes = snapshot()
     const up = parent ?? null
-    for (const child of childrenOf(nodes, botId)) fb.setField(child.id, 'parent', up)
-    if (up) refreshPrompt(up)
+    const moved = childrenOf(snapshot(), botId)
+    for (const child of moved) fb.setField(child.id, 'parent', up)
+    const nodes = snapshot()
+    if (up && nodes[up]) {
+      refreshPrompt(up, nodes)
+      const count = childrenOf(nodes, up).length
+      if (count > limits.maxChildren) warn(`flybot-tree: ${nodes[up].name} now has ${count} children after a deletion (maxChildren=${limits.maxChildren}); kept all, new children are refused until it is under the limit`)
+    }
+    const stack = moved.map(c => c.id), seen = new Set()
+    while (stack.length) {
+      const id = stack.pop()
+      if (seen.has(id)) continue
+      seen.add(id)
+      refreshPrompt(id, nodes)
+      for (const c of childrenOf(nodes, id)) stack.push(c.id)
+    }
     emit({ botId, key: 'removed' })
   }
   const subscribe = fn => { listeners.add(fn); return () => listeners.delete(fn) }

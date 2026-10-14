@@ -673,3 +673,44 @@ test('invite action: textarea fallback, and errors become inline messages', asyn
     assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => ({}) } }, 'b1'), { tone: 'error', text: 'The invite came back without its message' })
   })
 })
+
+test('issue 15 (1): control notices (stopped, report) bypass tree policy; a Main Bot can stop_bot any tree bot', async () => {
+  const m = await setup()
+  const work = await make(m, m.root, 'Work'); const life = await make(m, m.root, 'Life'); const dev = await make(m, work, 'Dev')
+  const o = await outsider(m)
+  const send = (from, to, role) => m.flybot.bot.send({ from, to, text: 'stop', role })
+  for (const [from, to] of [[m.root, dev], [o, dev], [o, work], [work, life], [dev, o]]) {
+    assert.equal((await send(from, to, 'stopped')).action, 'allow', `stopped ${from}->${to}`)
+    assert.equal((await send(from, to, 'report')).action, 'allow', `report ${from}->${to}`)
+  }
+  assert.equal((await send(m.root, dev, 'request')).action, 'deny') // ordinary requests still follow the tree
+  assert.equal((await send(o, dev)).action, 'deny')
+})
+
+test('issue 15 (2): deleting a middle node refreshes every reparented child (and its subtree); overflow warns', async () => {
+  const warnings = []
+  const m = createMockFlybot()
+  m.addBot({ name: 'Chief', isMain: true, systemPrompt: '' })
+  const { tree } = plugin.apply({ flybot: m.flybot, logger: () => ({ warn: (...a) => warnings.push(a.join(' ')) }) }, { adoptExisting: false, maxChildren: 2 })
+  m.tree = tree; m.root = await tree.ensureRoot()
+  const work = await make(m, m.root, 'Work'); await make(m, m.root, 'Life')
+  const dev = await make(m, work, 'Dev'); const ops = await make(m, work, 'Ops'); const qa = await make(m, dev, 'QA')
+  assert.match(sp(m, dev), /Work/); assert.match(sp(m, qa), /Work/)
+  m.removeBot(work)
+  for (const id of [dev, ops]) assert.equal(f(m, id, 'parent'), m.root)
+  for (const id of [dev, ops, qa]) { assert.doesNotMatch(sp(m, id), /Work/); assert.match(sp(m, id), /Chief/) }
+  assert.match(sp(m, qa), /Chief → Dev → QA/)
+  assert.ok(warnings.some(w => /maxChildren=2/.test(w)), 'overflow is logged')
+  await assert.rejects(m.call(m.root, 'create_child_bot', { name: 'New', role_description: 'x' }).then(r => { if (r.error || !r.created) throw new Error(r.error ?? 'refused') }))
+})
+
+test('issue 15 (3): parallel create_child_bot never exceeds maxChildren nor duplicates sibling names', async () => {
+  const m = await setup({ maxChildren: 3 })
+  const results = await Promise.allSettled(Array.from({ length: 10 }, (_, i) => m.call(m.root, 'create_child_bot', { name: `C${i}`, role_description: 'x' })))
+  const kids = m.tree.childrenOf(m.tree.snapshot(), m.root)
+  assert.equal(kids.length, 3)
+  const dup = await Promise.allSettled(Array.from({ length: 6 }, () => m.call(kids[0].id, 'create_child_bot', { name: 'Same', role_description: 'x' })))
+  const same = m.tree.childrenOf(m.tree.snapshot(), kids[0].id)
+  assert.equal(same.length, 1)
+  assert.ok(results.length === 10 && dup.length === 6)
+})
