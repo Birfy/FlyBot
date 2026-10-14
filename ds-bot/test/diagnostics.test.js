@@ -63,7 +63,7 @@ test('warnings are kept, cleaned, written to the log, and read back after a rest
   assert.equal(second.code, 'RATE_LIMIT')
 
   const report = await rt.diagnostics.report({ client: { surface: 'Web', language: 'zh-CN', userAgent: 'Test/1' }, clientErrors: [{ time: 1, text: 'state: HTTP 502' }] })
-  assert.match(report.markdown, /\| FlyBot \| \d+\.\d+\.\d+ \|/)
+  assert.match(report.markdown, /\| DS Bot \| \d+\.\d+\.\d+ \|/)
   assert.match(report.markdown, /\| Surface \| Web \|/)
   assert.match(report.markdown, /\| Models \| deepseek\/deepseek-chat \|/)
   assert.match(report.markdown, /WARN host \[EACCES\] state write failed/)
@@ -139,7 +139,7 @@ test('reportMarkdown says when nothing went wrong', () => {
   assert.doesNotMatch(text, /DSH \|/)
 })
 
-test('errorCode tells refusals from FlyBot faults', () => {
+test('errorCode tells refusals from DS Bot faults', () => {
   assert.equal(errorCode(new Error('Unknown Bot')), 'bot/refused')
   assert.equal(errorCode(new TypeError('x is undefined')), 'bot/internal')
   assert.equal(errorCode(Object.assign(new Error('no'), { code: 'ENOENT' })), 'bot/internal')
@@ -216,20 +216,20 @@ test('a failed group turn fails its waiter; a stopped one counts as no answer', 
 
 test('issueUrl fills the issue form, keeps the versions when the errors are too long, and falls back to the clipboard', async () => {
   const { issueUrl } = await import('../src/client/diagnostics.js')
-  const base = 'https://github.com/ThinkFlowLab/FlyBot/issues/new'
-  const short = issueUrl(base, { what: 'Writer failed\nin the group', diagnostics: '| FlyBot | 0.1.0 |' })
+  const base = 'https://github.com/Fei2411/DeepSeek-Bot/issues/new'
+  const short = issueUrl(base, { what: 'Writer failed\nin the group', diagnostics: '| DS Bot | 0.1.0 |' })
   assert.equal(short.inline, true)
   const params = new URL(short.url).searchParams
   assert.equal(params.get('template'), 'bug.yml')
   assert.equal(params.get('title'), 'Writer failed')
   assert.equal(params.get('what'), 'Writer failed\nin the group')
-  assert.equal(params.get('diagnostics'), '| FlyBot | 0.1.0 |')
+  assert.equal(params.get('diagnostics'), '| DS Bot | 0.1.0 |')
   const long = issueUrl(base, { diagnostics: '错误'.repeat(2000) })
   assert.equal(long.inline, false)
   assert.ok(long.url.length < 7000)
   assert.match(new URL(long.url).searchParams.get('diagnostics'), /clipboard/)
   assert.equal(new URL(long.url).searchParams.has('title'), false)
-  const table = '| | |\n|---|---|\n| FlyBot | 0.1.2 |\n| DSH | 0.2.0 |'
+  const table = '| | |\n|---|---|\n| DS Bot | 0.1.2 |\n| DSH | 0.2.0 |'
   const errors = issueUrl(base, { what: 'Writer failed', diagnostics: `${table}\n\nRecent host errors:\n${'错误'.repeat(2000)}` })
   assert.equal(errors.inline, false)
   assert.ok(errors.url.length < 7000)

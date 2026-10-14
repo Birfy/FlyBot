@@ -1,4 +1,4 @@
-// DSH updates: a released FlyBot may name the DSH release it was verified
+// DSH updates: a released DS Bot may name the DSH release it was verified
 // against (`dsBot.verifiedDsh` in package.json); a release that names none
 // offers nothing. The newest released bot wins: offering that version and
 // nothing newer keeps the update path away from DSH releases we have not
@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path'
 
 import {
   CHECK_TTL_MS, cleanVersion, encodeName, fetchJson, installSpecOf,
-  latestGitHubRelease, newer, registryPlan, repoSlug, sourceOf,
+  newer, registryPlan, repoSlug, sourceOf,
 } from './update.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
@@ -74,7 +74,7 @@ export function install(rt) {
   const installKind = () =>
     typeof ctx.get?.('profileContext')?.packageManager?.command === 'string' ? 'app' : 'npm'
 
-  // The newest released FlyBot's `dsBot` block, through the same channel the bot
+  // The newest released DS Bot's `dsBot` block, through the same channel the bot
   // itself updates from: its registry, or the public repo's latest release.
   async function releasedDeclaration(source) {
     if (source.kind === 'registry') {
@@ -89,10 +89,10 @@ export function install(rt) {
     const repo = repoSlug()
     if (!repo) return null
     try {
-      const [owner, name] = repo.split('/')
-      const release = await latestGitHubRelease(owner, name, { 'user-agent': `${PKG.name}/${PKG.version}` })
-      if (!release) return null
-      const manifest = await fetchJson(`https://raw.githubusercontent.com/${repo}/${release.tag}/ds-bot/package.json`, { 'user-agent': `${PKG.name}/${PKG.version}` })
+      const release = await fetchJson(`https://api.github.com/repos/${repo}/releases/latest`, { 'user-agent': `${PKG.name}/${PKG.version}` })
+      const tag = cleanVersion(release?.tag_name)
+      if (!tag) return null
+      const manifest = await fetchJson(`https://raw.githubusercontent.com/${repo}/${release.tag_name}/ds-bot/package.json`, { 'user-agent': `${PKG.name}/${PKG.version}` })
       return manifest?.dsBot?.verifiedDsh ? manifest.dsBot : null
     } catch { return null }
   }

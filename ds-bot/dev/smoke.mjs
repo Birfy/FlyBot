@@ -247,7 +247,7 @@ await step('Writer searches its own chat across parts', () => send(botNamed('Wri
 await step('earlier part pages load', () => api('earlier', { sessionId: botNamed('Writer').sessionId }), page => expect(Array.isArray(page?.items) && page.items.some(item => item.kind === 'user'), `no user lines in the part before (${JSON.stringify(page).slice(0, 80)})`))
 
 // Work still under way (the mock steward reads 阶段未完 in the latest user message): the
-// part is condensed in place with FlyBot's checkpoint, not switched, and the condensed
+// part is condensed in place with DS Bot's checkpoint, not switched, and the condensed
 // messages stay searchable. Then work that reaches a stopping point switches again.
 const writerParts = () => (botNamed('Writer').segments ?? []).length
 const partsBeforeWork = writerParts()

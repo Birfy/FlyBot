@@ -1,4 +1,4 @@
-// Delivery: how one Bot, the user, or FlyBot itself puts a message into a Bot Session.
+// Delivery: how one Bot, the user, or DS Bot itself puts a message into a Bot Session.
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SOURCE_KIND } from './constants.js'

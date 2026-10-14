@@ -7,7 +7,7 @@ import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 
 // Some routes (OpenCode Go among them) turn down every model request that names no
-// Session. FlyBot's own requests name the Session they serve, and the hooks that act
+// Session. DS Bot's own requests name the Session they serve, and the hooks that act
 // on a Session's own rounds still leave them alone.
 
 const TEAM = {
@@ -149,7 +149,7 @@ test('an image in a group is read for the group, and the group still relays its 
   assert.equal(bench.requests.length, 1)
 })
 
-test('the Session hooks pass FlyBot\'s own requests through, and still act on a Session\'s own rounds', async (t) => {
+test('the Session hooks pass DS Bot\'s own requests through, and still act on a Session\'s own rounds', async (t) => {
   const { rt, hook, stop } = start()
   t.after(stop)
   await rt.load()

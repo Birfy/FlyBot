@@ -24,7 +24,7 @@ const seed = () => ({
   revision: 0,
 })
 
-// One FlyBot host on `home`; a second start on the same home is a restart.
+// One DS Bot host on `home`; a second start on the same home is a restart.
 // Hosts by home: a home is removed only after its hosts stopped and their writes landed.
 const started = new Map()
 
@@ -164,7 +164,7 @@ test('a request cut off by a restart goes on under the same exchange; own-chat w
   assert.equal(state.exchanges.length, 0)
 })
 
-test('when only FlyBot restarts, a turn still running or finished meanwhile is not picked up', async (t) => {
+test('when only DS Bot restarts, a turn still running or finished meanwhile is not picked up', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const home = freshHome(t)
   const first = await start(home)
@@ -228,7 +228,7 @@ test('a message a shutdown cancelled is sent again once; one still waiting, take
   await send('Read the notes')
   await send('Never mind')
   const [plan, numbers, notesMessage, withdrawn] = first.agentOf('b').calls
-  // Taken up by a turn, or withdrawn while FlyBot runs (the user stopped the Bot).
+  // Taken up by a turn, or withdrawn while DS Bot runs (the user stopped the Bot).
   first.emit('b', 'user/message', { content: notesMessage.content, source: notesMessage.source })
   for (const listener of first.ctx.listeners.get('agent/inbox/discarded')) listener({ message: withdrawn })
   await settle(() => (notes(home).queued.b ?? []).length === 2)

@@ -1,5 +1,5 @@
 // Approvals. A member's group Session is hidden, so DSH's approval card never shows
-// there and the turn would wait forever: FlyBot answers those requests itself, from
+// there and the turn would wait forever: DS Bot answers those requests itself, from
 // the group chat. A Bot's own chat keeps DSH's card; its requests are only noted, so
 // the team view can say who is waiting.
 import { randomUUID } from 'node:crypto'
