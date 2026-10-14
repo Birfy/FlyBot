@@ -31,6 +31,9 @@ export function apply(ctx, config = {}) {
     disposers.push(fb.onBotCreated(() => { setTimeout(attempt, 0).unref?.() }))
   }
   const dispose = () => { for (const d of disposers.splice(0)) d?.() }
-  ctx.on?.('dispose', dispose)
+  // Cordis-style cleanup: ctx.effect runs the returned disposer when the plugin is unloaded.
+  // ctx.on('dispose') is only a fallback for hosts without ctx.effect.
+  if (typeof ctx.effect === 'function') ctx.effect(() => dispose, 'flybot-tree')
+  else ctx.on?.('dispose', dispose)
   return { tree, dispose }
 }

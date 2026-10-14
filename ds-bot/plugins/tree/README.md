@@ -14,7 +14,7 @@ Recursive bot tree plugin for FlyBot (built on ds-bot / DeepSeek Harness).
 - **Deleting a bot:** its children re-attach to its parent and every moved child (and its subtree) gets a fresh prompt/trace. `maxChildren` is not enforced on reparenting (no child is dropped); an overflow is logged as a warning and `create_child_bot` refuses new children there until it is back under the limit.
 - **`create_child_bot` is serialized per parent:** parallel calls never exceed `maxChildren` or create duplicate-name siblings.
 - Delegation is level by level: coordinators delegate to direct children whose scope fits and aggregate upward; a bot with no children does the work itself. Answers start with a one-line trace like `Chief → Work → Dev`.
-- Tools (visible only to tree bots): `list_children()` and `create_child_bot(name, role_description)`. The parent is always the calling bot. Limits: depth 5 (root = 1), 8 children per node; duplicate sibling names (case/space-insensitive) are rejected. Every new child gets the same recursive system prompt template (`src/prompt.js`).
+- Tools (visible only to tree bots): `list_children()` and `create_child_bot(name, role_description)`. The parent is always the calling bot. Limits: depth 5 (root = 1), 8 children per node; duplicate sibling names (case/space-insensitive) are rejected; names are 1–40 characters (ds-bot's roster limit). Every new child gets the same recursive system prompt template (`src/prompt.js`).
 - Frontend (`client.js`, bundle id `@flybot/tree`, injects `flybot`): the tree is drawn by ds-bot's own Bot list, so this plugin's separate "Tree" sidebar section is **off by default** (`sidebarSection: true` in the client config brings it back). It always exposes the synchronous helper `ctx.flybot.tree.forest(bots)` (also `globalThis.__flybot__.tree.forest(bots)`), see **Tree data** below. It also registers `flybot.sidebar.structure` (`{ parentOf(botId) }`, parents from `forestOf` over `ctx.flybot.bots()`, refreshed on field changes and every 10 s); ds-bot's sidebar uses it to draw its Bot list as one expandable tree with Chief on top. Retired and non-tree Bots have no parent there, so ds-bot shows them directly under Chief. The entry also has `menuItems({ bot })`, which ds-bot adds to each Bot's right-click menu: one item, `{ id: 'copy-invite', label: 'Copy invite link', visible, run }`. `visible` is `social.canInvite(bot.id) === true` (false without the social plugin); `run` calls `social.createInvite(botId)` (or `flybot.call('social.createInvite', { botId })`), copies the full message `text` (never the bare link; an invite without `text` is an error). The clipboard write starts inside the click via `ClipboardItem` with the text as a promise, so it keeps the click's permission while the invite is created; `writeText` then a textarea are the fallbacks. It returns "Invite for <name> copied, with instructions", which ds-bot shows as a toast; a failure throws and shows as the error toast. Right-clicking never opens the Bot's chat.
 
 ### Config
@@ -83,21 +83,10 @@ Top level: roots first, then members whose parent is missing (orphans). Siblings
 | root | ds-bot's Main Bot (Chief) adopted with `treeRole: 'root'` (`ensureRoot`, idempotent); fallback `Root` only without a Main Bot; earlier auto-created `Root` migrated, not deleted |
 
 ### Test
-`pnpm --filter @flybot/tree test` (or `node --test "test/*.test.js"`). `test/mock-flybot.js` is an in-memory mock of `ctx.flybot`.
+From `ds-bot/plugins/tree`: `npm test` (= `node --test "test/*.test.js"`, Node 24). From `ds-bot`: `npm test` also runs them (`test/tree-plugin.test.js`), plus `test/tree-host.test.js`, which applies the plugin to the real `ctx.flybot` host (`src/host/hooks.js`). `test/mock-flybot.js` is an in-memory mock of `ctx.flybot`. This repo has no pnpm workspace, so there is no `pnpm --filter` command.
 
-### ds-bot hook changes
-The plugin now lives in `ds-bot/plugins/tree` of FlyBot; `ds-bot/test/tree-plugin.test.js` runs its tests under ds-bot's `npm test`/CI, and `scripts/lint.mjs` lints `plugins/`. ds-bot itself is NOT changed otherwise. The official hooks (`ctx.flybot` service) must touch:
+### ds-bot integration (already in place)
+ds-bot needs no changes for this plugin. `src/host/hooks.js` is a module in ds-bot's `MODULES` list (`index.js`, after `dshUpdate`, before `remoteChat` and `channel`), and `index.js` `provideFlyBot()` exposes `rt.flybot` as the `flybot` service, so `inject: ['flybot']` resolves. `scripts/lint.mjs` lints `plugins/`, and `build-client.mjs --check` covers the client bundle.
 
-| File | Change |
-|---|---|
-| `ds-bot/index.js` | add `hooks` to `MODULES` (after `store`, before `tools`); provide service `flybot` (e.g. `ctx.set('flybot', rt.flybot)`), add to plugin docs |
-| `ds-bot/src/host/hooks.js` (new) | fields get/set + `change` events, `send.use` middleware chain (allow/deny/hold, `bypass`), tool registry with `visibleTo`, `bot.list/create` |
-| `ds-bot/src/host/store.js` | persist `state.bots[id].fields` in `state.json` (+ legacy load default `{}`) |
-| `ds-bot/src/host/roster.js` | `createBot` accepts `fields` / `systemPrompt`; `deleteBot` emits field removal so the tree prunes |
-| `ds-bot/src/host/delivery.js` | run the send chain inside `rt.deliver` for `request` role (single choke point: `message_bot`, groups, schedules) |
-| `ds-bot/src/host/tools.js` | `message_bot` reports deny/hold reasons; `list_bots` may hide non-reachable bots |
-| `ds-bot/src/host/approvals.js` | `hold` → approval card (used by social) |
-| `ds-bot/src/host/agents.js` | per-agent tool visibility through the existing `agent.ctx.tools.restrict({ deny })` using `visibleTo(botId)`; tool `execute` gets `{ botId }` from `rt.selfOf(exec.agent.id)` |
-| `ds-bot/src/host/prompt.js` | append the bot's `systemPrompt` field to its system prompt |
-| `ds-bot/src/client/sidebar.js` + `index.js` | render `ctx.slots` entries of `flybot.sidebar.section` in `TeamSidebar`; client `ctx.flybot` (tree data + field events over `channel.js`); rebuild `client.js` (`build-client.mjs --check` in CI) |
-| `ds-bot/test/fake-ctx.js` | add a `flybot` service stub for host tests |
+### Cleanup
+`apply()` registers its disposer with `ctx.effect(() => dispose, 'flybot-tree')`, so unloading the plugin removes the send middleware, tools, event listeners and root-adoption timers. On a host without `ctx.effect` it falls back to `ctx.on('dispose')`. `apply()` also returns `{ tree, dispose }`.

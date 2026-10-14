@@ -192,14 +192,14 @@ test('fix 4: create_child_bot enforces minLength/maxLength dropped by tools.regi
   const c = args => m.call(m.root, 'create_child_bot', args)
   assert.match((await c({ name: '', role_description: 'x' })).error, /name must be at least 1/)
   assert.match((await c({ name: '   ', role_description: 'x' })).error, /name must be at least 1/)
-  assert.match((await c({ name: 'x'.repeat(61), role_description: 'x' })).error, /name must be at most 60/)
+  assert.match((await c({ name: 'x'.repeat(41), role_description: 'x' })).error, /name must be at most 40/)
   assert.match((await c({ name: 'A', role_description: '' })).error, /role_description must be at least 1/)
   assert.match((await c({ name: 'A', role_description: 'r'.repeat(1001) })).error, /role_description must be at most 1000/)
   assert.match((await c({ name: 'A' })).error, /role_description is required/)
   assert.match((await c({ name: 5, role_description: 'x' })).error, /name must be a string/)
   assert.match((await c({ name: 'A', role_description: 'x', parent: 'bot9' })).error, /unknown argument: parent/)
   assert.equal(m.bots.size, 1) // nothing created
-  assert.ok((await c({ name: 'x'.repeat(60), role_description: 'r'.repeat(1000) })).created.id)
+  assert.ok((await c({ name: 'x'.repeat(40), role_description: 'r'.repeat(1000) })).created.id)
   assert.match((await m.call(m.root, 'list_children', { junk: 1 })).error, /unknown argument/)
 })
 
@@ -713,4 +713,39 @@ test('issue 15 (3): parallel create_child_bot never exceeds maxChildren nor dupl
   const same = m.tree.childrenOf(m.tree.snapshot(), kids[0].id)
   assert.equal(same.length, 1)
   assert.ok(results.length === 10 && dup.length === 6)
+})
+
+test('issue 20: name limit matches the roster (40); checkCreate enforces it too', async () => {
+  const { MAX_NAME_LENGTH } = await import('../src/limits.js')
+  assert.equal(MAX_NAME_LENGTH, 40)
+  const L = { maxDepth: 5, maxChildren: 8 }
+  assert.match(checkCreate({ parentName: 'R', parentDepth: 1, siblings: [], name: 'x'.repeat(41), limits: L }), /at most 40/)
+  assert.equal(checkCreate({ parentName: 'R', parentDepth: 1, siblings: [], name: ` ${'x'.repeat(40)} `, limits: L }), null)
+  const m = await setup()
+  await assert.rejects(m.tree.createChild(m.root, 'y'.repeat(41), 'r'), /at most 40/)
+})
+
+test('issue 20: dispose via ctx.effect (cordis), ctx.on("dispose") only as fallback', async () => {
+  const m = createMockFlybot()
+  m.addBot({ name: 'Chief', isMain: true })
+  const effects = [], ons = []
+  plugin.apply({ flybot: m.flybot, effect: (fn, label) => effects.push([fn(), label]), on: e => ons.push(e) }, { autoRoot: false })
+  assert.equal(effects.length, 1); assert.equal(effects[0][1], 'flybot-tree'); assert.equal(ons.length, 0)
+  assert.equal(m.middlewares.length, 1)
+  effects[0][0]() // the effect's disposer unregisters middleware and tools
+  assert.equal(m.middlewares.length, 0)
+  assert.equal(m.tools.size, 0)
+  const m2 = createMockFlybot(); const ons2 = []
+  plugin.apply({ flybot: m2.flybot, on: (e, fn) => ons2.push([e, fn]) }, { autoRoot: false })
+  assert.equal(ons2[0][0], 'dispose'); ons2[0][1]()
+  assert.equal(m2.middlewares.length, 0)
+})
+
+test('issue 6: concurrent ensureRoot() calls create a single root', async () => {
+  const m = createMockFlybot()
+  m.addBot({ name: 'Worker' }) // team has bots but no Main Bot: fallback root is created
+  const { tree } = plugin.apply({ flybot: m.flybot }, { adoptExisting: false, autoRoot: false })
+  const ids = await Promise.all(Array.from({ length: 5 }, () => tree.ensureRoot()))
+  assert.equal(new Set(ids).size, 1)
+  assert.equal(m.flybot.bot.list().filter(b => b.name === 'Root').length, 1)
 })
