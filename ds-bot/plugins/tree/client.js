@@ -20,7 +20,8 @@ window.__ModuleLoader__.load({
         const own = b.fields?.['flybot-tree'] ?? {}
         const parent = own.parent, role = own.treeRole
         if (parent === undefined && role === undefined) continue
-        nodes[b.id] = { id: b.id, name: b.name, role: role ?? '', parent: parent ?? null }
+        // treeRole 'root' marks the root (ds-bot's Main Bot, Chief).
+        nodes[b.id] = { id: b.id, name: b.name, role: role === 'root' ? 'Main bot · root of the tree' : (role ?? ''), parent: parent ?? null }
       }
       return { nodes }
     }
@@ -35,7 +36,7 @@ window.__ModuleLoader__.load({
       return (byParent.get(null) || []).map(r => walk(r, new Set()))
     }
 
-    const EMPTY = 'No tree yet. Ask Root to take on a task and it will create child bots.'
+    const EMPTY = 'No child bots yet. Ask Chief to take on a task and it will create child bots.'
     const countNodes = forest => forest.reduce((n, r) => n + 1 + countNodes(r.children), 0)
     // Styles reuse ds-bot's sidebar tokens (--bt-ink, --bt-ink-2, --bt-ink-3, --bt-hover, --bt-line,
     // --bt-tag-bg/-ink), so light and dark themes follow the app; fallbacks only for a bare page.
@@ -97,9 +98,11 @@ window.__ModuleLoader__.load({
           h('span', { className: 'flybot-tree-title' }, 'Tree'),
           h('span', { className: 'flybot-tree-count', title: `${count} ${count === 1 ? 'bot' : 'bots'}` }, String(count))),
         expanded
-          ? (count === 0
-              ? h('div', { className: 'flybot-tree-empty' }, EMPTY)
-              : h('ul', { className: 'flybot-tree-list', role: 'tree' }, forest.map(r => h(Node, { key: r.id, node: r, depth: 0, open: openBot }))))
+          ? [
+              forest.length ? h('ul', { key: 'list', className: 'flybot-tree-list', role: 'tree' }, forest.map(r => h(Node, { key: r.id, node: r, depth: 0, open: openBot }))) : null,
+              // No root, or a root (Chief) without children yet.
+              count - forest.length === 0 ? h('div', { key: 'empty', className: 'flybot-tree-empty' }, EMPTY) : null,
+            ]
           : null)
     }
 

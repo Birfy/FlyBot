@@ -22,7 +22,10 @@ export function createAdapter(flybot) {
   return {
     listBots: () => bot.list() ?? [],
     createBot: async spec => await bot.create(spec),
+    getBot: id => bot.get?.(id) ?? (bot.list() ?? []).find(b => b.id === id),
+    getSystemPrompt: id => (bot.get?.(id) ?? (bot.list() ?? []).find(b => b.id === id))?.systemPrompt ?? '',
     setSystemPrompt: (id, text) => bot.setSystemPrompt(id, text),
+    onBotCreated: fn => fb.on('bot.created', fn),
     getField: (id, key) => fields.get(id, key),
     setField: (id, key, value) => fields.set(id, key, value),
     onFieldChange: fn => fb.on('change', fn),

@@ -25,7 +25,7 @@ export function createMockFlybot() {
   const tools = new Map()
   const scopes = []
   let seq = 0
-  const view = b => b && { id: b.id, name: b.name, isMain: false, createdBy: null, systemPrompt: b.systemPrompt ?? '', fields: clone(b.fields) }
+  const view = b => b && { id: b.id, name: b.name, isMain: b.isMain === true, createdBy: null, systemPrompt: b.systemPrompt ?? '', fields: clone(b.fields) }
   const fire = (ev, payload) => { for (const fn of [...listeners[ev]]) fn({ ...payload }) }
   const onFor = plugin => (ev, fn, { all = false } = {}) => {
     if (!listeners[ev]) throw new Error(`flybot: unknown event ${ev}`)
@@ -101,6 +101,13 @@ export function createMockFlybot() {
   }
   const flybot = build('shared')
   // Test helpers (not part of the real API).
+  // Like ds-bot's setup: the first Bot, 'Chief', is a Main Bot (state.mainBotIds). Fires bot.created.
+  const addBot = ({ name, isMain = false, systemPrompt = '', fields: f = {} } = {}) => {
+    const id = `bot${++seq}`
+    bots.set(id, { id, name, isMain, systemPrompt, fields: clone(f) })
+    fire('bot.created', view(bots.get(id)))
+    return id
+  }
   const removeBot = id => { const last = view(bots.get(id)); bots.delete(id); fire('bot.removed', { ...last, botId: id, bot: last }) }
   const call = async (botId, name, args = {}) => {
     const t = tools.get(name)
@@ -109,5 +116,5 @@ export function createMockFlybot() {
     if (!t || !visible) throw new Error(`tool ${name} not visible to ${botId}`)
     return t.execute(args, { botId })
   }
-  return { flybot, bots, tools, middlewares, scopes, remote, removeBot, call }
+  return { flybot, bots, tools, middlewares, scopes, remote, removeBot, addBot, call }
 }

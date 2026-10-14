@@ -8,6 +8,7 @@ import { reactStub, renderToString, findAll } from './render.js'
 
 async function setup(config = {}) {
   const m = createMockFlybot()
+  m.addBot({ name: 'Chief', isMain: true, systemPrompt: 'Chief own prompt' })
   const { tree } = plugin.apply({ flybot: m.flybot }, config)
   const root = await tree.ensureRoot()
   return { ...m, tree, root }
@@ -59,7 +60,7 @@ test('tools: create under caller only, list, duplicates, depth 5, 8 children', a
   for (let i = 1; i < 8; i++) assert.ok(await make(m, m.root, `C${i}`))
   assert.match((await m.call(m.root, 'create_child_bot', { name: 'C9', role_description: 'x' })).error, /maxChildren=8/)
   assert.match(sp(m, dev), /recursive bot tree/)
-  assert.match(sp(m, dev), /Root → Work → Dev/)
+  assert.match(sp(m, dev), /Chief → Work → Dev/)
   assert.match(sp(m, work), /COORDINATOR[\s\S]*- Dev: Dev stuff/)
 })
 
@@ -90,11 +91,12 @@ test('fix 1: fields are written under fields["flybot-tree"] via flybot.scope, ne
 
 test('fix 1: change events: only own plugin unless { all: true }', async () => {
   const m = createMockFlybot()
+  m.addBot({ name: 'Chief', isMain: true })
   const { tree } = plugin.apply({ flybot: m.flybot })
   const seen = []; tree.subscribe(c => seen.push(c.plugin + ':' + c.key))
   const root = await tree.ensureRoot()
   m.flybot.scope('other').fields.set(root, 'parent', 'zzz')
-  assert.ok(seen.includes('flybot-tree:parent'))
+  assert.ok(seen.includes('flybot-tree:treeRole'))
   assert.ok(!seen.some(s => s.startsWith('other:')))
   const all = []; m.flybot.on('change', c => all.push(c.plugin), { all: true })
   m.flybot.scope('other').fields.set(root, 'x', 1)
@@ -130,21 +132,23 @@ test('send middleware: parent <-> direct child only', async () => {
   assert.equal((await send(o, m.root)).action, 'allow')
 })
 
-test('fix 3: tree bot -> local non-tree bot (e.g. Chief) is denied; remote still passes', async () => {
+test('fix 3: non-root tree bot -> local non-tree bot is denied; root (Chief) may message any local bot; remote passes', async () => {
   const m = await setup()
-  const a = await make(m, m.root, 'A')
-  const chief = await outsider(m, 'Chief')
-  const h = m.middlewares[0].handle
-  const r = h({ from: a, to: chief, target: { remote: false, id: chief } })
-  assert.equal(r.action, 'deny'); assert.match(r.reason, /outside the tree/)
-  assert.equal((await m.flybot.bot.send({ from: m.root, to: chief, text: 'x' })).action, 'deny')
-  assert.equal((await m.flybot.bot.send({ from: chief, to: m.root, text: 'x' })).action, 'allow')
+  const a = await make(m, m.root, 'A'); const b = await make(m, a, 'B')
   const other = await outsider(m, 'Other')
-  assert.equal((await m.flybot.bot.send({ from: chief, to: other, text: 'x' })).action, 'allow') // non-tree traffic untouched
-  // remote targets: real shape (no id) and '@handle'
+  const h = m.middlewares[0].handle
+  const r = h({ from: a, to: other, target: { remote: false, id: other } })
+  assert.equal(r.action, 'deny'); assert.match(r.reason, /outside the tree/)
+  assert.equal((await m.flybot.bot.send({ from: b, to: other, text: 'x' })).action, 'deny')
+  assert.equal((await m.flybot.bot.send({ from: m.root, to: other, text: 'x' })).action, 'allow') // Chief is the root and the main bot
+  assert.equal((await m.flybot.bot.send({ from: other, to: m.root, text: 'x' })).action, 'allow') // outside -> root
+  assert.equal((await m.flybot.bot.send({ from: other, to: a, text: 'x' })).action, 'deny') // outside -> non-root
+  const other2 = await outsider(m, 'Other2')
+  assert.equal((await m.flybot.bot.send({ from: other, to: other2, text: 'x' })).action, 'allow') // non-tree traffic untouched
+  assert.equal((await m.flybot.bot.send({ from: m.root, to: b, text: 'x' })).action, 'deny') // root still only direct children in the tree
   assert.equal(h({ from: a, to: { kind: 'remote', handle: '@coder.bob.home', home: '@bob.home' }, target: { remote: true, handle: '@coder.bob.home', home: '@bob.home' } }), undefined)
   assert.equal((await m.flybot.bot.send({ from: a, to: '@coder.bob.home', text: 'x' })).action, 'allow')
-  assert.equal(h({ from: a, to: '@coder.bob.home' }), undefined) // isRemote fallback, no target
+  assert.equal(h({ from: a, to: '@coder.bob.home' }), undefined)
 })
 
 test('send middleware: social bypass only when configured', async () => {
@@ -201,6 +205,7 @@ test('fix 4: create_child_bot enforces minLength/maxLength dropped by tools.regi
 
 test('field-change events reach tree subscribers; dispose unregisters', async () => {
   const m = createMockFlybot()
+  m.addBot({ name: 'Chief', isMain: true })
   const { tree, dispose } = plugin.apply({ flybot: m.flybot })
   const seen = []; tree.subscribe(c => seen.push(c.key))
   const root = await tree.ensureRoot(); await make(m, root, 'A')
@@ -317,10 +322,15 @@ test('sidebar: header shows the node count; nodes render name, one-line role, gu
 test('sidebar: empty state (no tree bots, or no root) and collapsed header', () => {
   const mod = loadClient()
   const empty = renderToString(reactStub.createElement(mod.TreeView, { forest: [] }))
-  assert.match(empty, /No tree yet\. Ask Root to take on a task and it will create child bots\./)
+  assert.match(empty, /No child bots yet\. Ask Chief to take on a task and it will create child bots\./)
   assert.match(empty, /class="flybot-tree-count"[^>]*>0</)
   const orphans = mod.buildForest({ a: { id: 'a', name: 'A', parent: 'gone' } }) // no root
-  assert.match(renderToString(reactStub.createElement(mod.TreeView, { forest: orphans })), /No tree yet/)
+  assert.match(renderToString(reactStub.createElement(mod.TreeView, { forest: orphans })), /No child bots yet/)
+  // Chief adopted as root, no children yet: Chief's row plus the empty state
+  const { nodes } = { nodes: { c: { id: 'c', name: 'Chief', role: 'Main bot · root of the tree', parent: null } } }
+  const chiefOnly = renderToString(reactStub.createElement(mod.TreeView, { forest: mod.buildForest(nodes) }))
+  assert.match(chiefOnly, /class="flybot-tree-name">Chief</)
+  assert.match(chiefOnly, /No child bots yet/)
   const closed = renderToString(reactStub.createElement(mod.TreeView, { forest: sample(mod), expanded: false }))
   assert.match(closed, /aria-expanded="false"/)
   assert.doesNotMatch(closed, /flybot-tree-name/)
@@ -347,15 +357,87 @@ test('sidebar: clicking a node opens its chat via actions.openSession; toggles c
   assert.ok(plain.every(n => n.props.disabled === true))
 })
 
-test('root is created automatically on apply (once, even with concurrent ensureRoot)', async () => {
+test('root: Chief (Main Bot) is adopted as root, no bot created; own prompt kept; idempotent', async () => {
   const m = createMockFlybot()
+  const helper = m.addBot({ name: 'Helper' })
+  const chief = m.addBot({ name: 'Chief', isMain: true, systemPrompt: 'Chief own prompt' })
   const { tree } = plugin.apply({ flybot: m.flybot })
   const [a, b] = await Promise.all([tree.ensureRoot(), tree.ensureRoot()])
-  assert.equal(a, b)
+  assert.equal(a, chief); assert.equal(b, chief)
   await new Promise(r => setTimeout(r, 10))
+  assert.equal(m.bots.size, 2) // nothing created
+  assert.equal(f(m, chief, 'treeRole'), 'root')
+  assert.equal(f(m, helper, 'treeRole'), undefined)
+  assert.match(sp(m, chief), /^Chief own prompt\n\n<!-- flybot-tree:start -->/) // injected, not overwritten
+  assert.match(sp(m, chief), /ROOT of a recursive bot tree/)
+  const before = sp(m, chief)
+  await tree.ensureRoot(); await tree.ensureRoot()
+  assert.equal(sp(m, chief), before) // one block, idempotent
+  const kid = await make(m, chief, 'Work')
+  assert.match(sp(m, chief), /^Chief own prompt/)
+  assert.match(sp(m, chief), /COORDINATOR[\s\S]*- Work:/)
+  assert.equal(sp(m, chief).split('flybot-tree:start').length, 2)
+  assert.match(sp(m, kid), /Chief → Work/)
+  // the user later edits Chief's own text: the tree block survives a refresh and the edit stays
+  m.bots.get(chief).systemPrompt = sp(m, chief).replace('Chief own prompt', 'Edited by user')
+  await make(m, chief, 'Life')
+  assert.match(sp(m, chief), /^Edited by user/)
+  assert.match(sp(m, chief), /- Life:/)
+})
+
+test('root: adopted when Chief appears later (bot.created), config.rootBotId wins, autoRoot:false is off', async () => {
+  const m = createMockFlybot()
+  plugin.apply({ flybot: m.flybot })
+  await new Promise(r => setTimeout(r, 10))
+  assert.equal(m.bots.size, 0) // team not loaded: nothing created
+  const chief = m.addBot({ name: 'Chief', isMain: true })
+  await new Promise(r => setTimeout(r, 10))
+  assert.equal(f(m, chief, 'treeRole'), 'root')
   assert.equal(m.bots.size, 1)
-  assert.equal([...m.bots.values()][0].name, 'Root')
-  const off = createMockFlybot(); plugin.apply({ flybot: off.flybot }, { autoRoot: false })
+
+  const n = createMockFlybot()
+  n.addBot({ name: 'Chief', isMain: true }); const pick = n.addBot({ name: 'Lead' })
+  const { tree } = plugin.apply({ flybot: n.flybot }, { rootBotId: pick })
+  assert.equal(await tree.ensureRoot(), pick)
+  const off = createMockFlybot(); const c2 = off.addBot({ name: 'Chief', isMain: true }); plugin.apply({ flybot: off.flybot }, { autoRoot: false })
   await new Promise(r => setTimeout(r, 10))
-  assert.equal(off.bots.size, 0)
+  assert.equal(f(off, c2, 'treeRole'), undefined)
+})
+
+test('root: fallback creates a Root only when the team has bots but no Main Bot (once)', async () => {
+  const m = createMockFlybot()
+  m.addBot({ name: 'Solo' })
+  const { tree } = plugin.apply({ flybot: m.flybot }, { autoRoot: false })
+  const [a, b] = await Promise.all([tree.ensureRoot(), tree.ensureRoot()])
+  assert.equal(a, b)
+  assert.equal(m.bots.size, 2)
+  assert.equal(m.bots.get(a).name, 'Root'); assert.equal(f(m, a, 'treeRole'), 'root')
+  assert.equal(await tree.ensureRoot(), a)
+})
+
+test('migration: an earlier auto-created Root hands its children to Chief, keeps the bot, idempotent', async () => {
+  const m = createMockFlybot()
+  const chief = m.addBot({ name: 'Chief', isMain: true, systemPrompt: 'Chief own prompt' })
+  // state from an earlier install: separate Root (pre-block prompt) with two children
+  const old = m.addBot({ name: 'Root', systemPrompt: 'You are Root, a bot in a recursive bot tree. ...', fields: { 'flybot-tree': { parent: null, treeRole: 'Top-level coordinator for everything.' } } })
+  const w = m.addBot({ name: 'Work', fields: { 'flybot-tree': { parent: old, treeRole: 'work' } } })
+  const l = m.addBot({ name: 'Life', fields: { 'flybot-tree': { parent: old, treeRole: 'life' } } })
+  const { tree } = plugin.apply({ flybot: m.flybot }, { autoRoot: false })
+  assert.equal(await tree.ensureRoot(), chief)
+  assert.equal(f(m, w, 'parent'), chief); assert.equal(f(m, l, 'parent'), chief)
+  assert.ok(m.bots.has(old)) // not deleted
+  assert.deepEqual(m.bots.get(old).fields, {}) // tree fields cleared
+  assert.equal(sp(m, old), '')
+  assert.match(sp(m, chief), /COORDINATOR[\s\S]*- Work:[\s\S]*- Life:/)
+  assert.deepEqual((await m.call(chief, 'list_children')).children.map(c => c.name).sort(), ['Life', 'Work'])
+  await assert.rejects(m.call(old, 'list_children'), /not visible/)
+  const snap = JSON.stringify([...m.bots.values()])
+  await tree.ensureRoot()
+  assert.equal(JSON.stringify([...m.bots.values()]), snap) // idempotent
+  // a block-style old Root keeps its own text, loses only the block
+  const n = createMockFlybot(); const c = n.addBot({ name: 'Chief', isMain: true })
+  const o2 = n.addBot({ name: 'Root', systemPrompt: 'mine\n\n<!-- flybot-tree:start -->\nYou are Root, a bot in a recursive bot tree.\n<!-- flybot-tree:end -->', fields: { 'flybot-tree': { parent: null, treeRole: 'x' } } })
+  const t2 = plugin.apply({ flybot: n.flybot }, { autoRoot: false }).tree
+  assert.equal(await t2.ensureRoot(), c)
+  assert.equal(sp(n, o2), 'mine')
 })

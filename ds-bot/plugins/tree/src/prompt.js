@@ -1,7 +1,9 @@
 // System prompt template. Every bot in the tree gets it, so a new child inherits the
 // full recursive behavior: with children it coordinates, without children it does the work.
-export function systemPrompt({ name, role, trace, children }) {
-  const head = [`You are ${name}, a bot in a recursive bot tree. Your role: ${role || '(general)'}`, `Your position: ${trace}`]
+export function systemPrompt({ name, role, trace, children, root = false }) {
+  const head = root
+    ? [`Bot tree: you (${name}) are also the ROOT of a recursive bot tree of child bots. For tasks you delegate into the tree, follow these tree rules.`, `Your position: ${trace}`]
+    : [`You are ${name}, a bot in a recursive bot tree. Your role: ${role || '(general)'}`, `Your position: ${trace}`]
   const tools = 'Tree tools: list_children() shows your current direct children (it may be newer than this prompt). create_child_bot(name, role_description) creates a child directly under you.'
   if (!children.length) {
     return [...head, '',
@@ -20,3 +22,15 @@ export function systemPrompt({ name, role, trace, children }) {
     `5. Begin with a one-line trace of the delegation path, e.g. "${trace} → <child>".`,
     'You may message only your parent and your direct children.', tools].join('\n')
 }
+
+// The tree's text is kept in a marked block inside the bot's systemPrompt, so text written by the
+// user or other plugins (e.g. on Chief) is never overwritten; only the block is replaced/removed.
+export const BLOCK_START = '<!-- flybot-tree:start -->'
+export const BLOCK_END = '<!-- flybot-tree:end -->'
+const BLOCK_RE = /\n*<!-- flybot-tree:start -->[\s\S]*?<!-- flybot-tree:end -->\n*/g
+export function withTreeBlock(current, block) {
+  const rest = String(current ?? '').replace(BLOCK_RE, '\n\n').trim()
+  if (!block) return rest
+  return [rest, `${BLOCK_START}\n${block}\n${BLOCK_END}`].filter(Boolean).join('\n\n')
+}
+export const hasTreeBlock = text => String(text ?? '').includes(BLOCK_START)
