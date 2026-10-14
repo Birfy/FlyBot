@@ -32,3 +32,11 @@ test('roster and model guards keep a friend\'s Bot on its relay route', async ()
     assert.match(src('models.js'), /bot\.remote\?\.handle\) return `flybot-remote\//)
     assert.match(src('roster.js'), /bot\.remote !== undefined\) \{ delete patch\.model/)
 })
+
+test('a time-context snapshot appended after the typed text does not swallow it', () => {
+    const clock = user('Current time: 2026-10-14, 19:47:33 GMT+08:00 (Asia/Shanghai).', { kind: 'ds-bot-time-context', form: 'snapshot', sections: [] }, 'm2');
+    const t = remoteTurn([user('hi', { kind: 'user' }), clock]);
+    assert.equal(t.kind, 'send');
+    assert.equal(t.text, 'hi');
+    assert.equal(t.messageId, 'm1');
+});

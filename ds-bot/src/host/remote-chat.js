@@ -27,8 +27,13 @@ const textOf = content => (Array.isArray(content) ? content.filter(block => bloc
  * messageId, text } is a message the user typed in the chat; { kind: 'none' } is anything
  * else (a kickoff, a one-off request without a durable message), which writes nothing.
  */
+const isContextSnapshot = source => source?.form === 'snapshot' || source?.kind === 'ds-bot-time-context' || source?.kind === 'time-context'
+
 export function remoteTurn(messages) {
-  const last = [...(messages ?? [])].reverse().find(message => message?.role === 'user')
+  // Context snapshots the host appends as user messages (the time context, refreshed every
+  // few minutes) are not what the user typed: skip them, or the turn reads as 'none' and
+  // the user's message is silently dropped.
+  const last = [...(messages ?? [])].reverse().find(message => message?.role === 'user' && !isContextSnapshot(message.source))
   if (last === undefined || typeof last.id !== 'string') return { kind: 'none' }
   const source = last.source
   if (source?.form === REMOTE_FORM && typeof source.text === 'string') return { kind: 'echo', text: source.text, messageId: last.id }
