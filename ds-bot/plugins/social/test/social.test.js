@@ -562,3 +562,20 @@ test('Friends\' Bots (#21): one group per home, rows drawn by ds-bot\'s own Bot 
   assert.ok(all.some(n => n.props.className === 'fs-home-name' && n.children.includes('Danyang')))
   assert.ok(!all.some(n => /remote/.test(String(n.props.className ?? '')) && n.children.includes('remote')))
 })
+
+test('nits (#20): approval.homes keys match with or without @; legacy send falls back to a new conversation', async (t) => {
+  const { ctx, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0, approval: { default: 'hold', homes: { 'BOB.home': 'auto' } } }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  assert.equal((await ctx.flybot.bot.send({ from: 'a', to: '@coder.bob.home', text: 'hi' })).action, 'allow')
+  social.dispose()
+  server.tools.send_message = () => { throw new Error('closed') }
+  const legacy = createSocial(ctx.flybot, { autoAccept: false, botId: 'b9', inboxPollMs: 0, requireApproval: false }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }) })
+  t.after(() => legacy.dispose())
+  await ctx.flybot.bot.send({ from: 'a', to: '@bob.bot', text: 'one' })
+  await ctx.flybot.bot.send({ from: 'a', to: '@bob.bot', text: 'two' })
+  assert.equal(server.calls.filter(c => c.name === 'start_conversation').length, 2)
+})

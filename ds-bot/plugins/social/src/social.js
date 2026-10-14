@@ -187,7 +187,9 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   try { if (settingsPath) settings = { autoAccept: {}, via: {}, ...JSON.parse(readFileSync(settingsPath, 'utf8')) } } catch { /* none yet */ }
   const saveSettings = () => { if (settingsPath) { try { writeCredentials(settingsPath, settings) } catch (error) { warn('settings not saved', error) } } }
   // Unset: on (config.autoAccept: false makes it opt-in instead).
-  const autoAcceptOf = friendHome => settings.autoAccept[norm(friendHome)] ?? (config.approval?.homes?.[norm(friendHome)] ? config.approval.homes[norm(friendHome)] === 'auto' : config.autoAccept !== false)
+  // Config keys may be written with or without '@' and in any case.
+  const approvalHomes = Object.fromEntries(Object.entries(config.approval?.homes ?? {}).map(([key, value]) => [norm(key), value]))
+  const autoAcceptOf = friendHome => settings.autoAccept[norm(friendHome)] ?? (approvalHomes[norm(friendHome)] ? approvalHomes[norm(friendHome)] === 'auto' : config.autoAccept !== false)
 
   // ------------------------------------------------------------ members
   const memberOf = botId => flybot.fields.get(botId, 'member')
@@ -271,7 +273,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     if (override === false) return 'hold'
     // Auto-accept (on unless the owner switched it off for this friend in the Friends panel).
     if (autoAcceptOf(friendHome)) return 'auto'
-    const homeSetting = config.approval?.homes?.[friendHome]
+    const homeSetting = approvalHomes[norm(friendHome)]
     if (homeSetting) return homeSetting
     if (config.requireApproval === false) return 'auto'
     return config.approval?.default ?? 'hold'

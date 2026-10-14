@@ -324,7 +324,7 @@ export function install(rt) {
           await rt.diagnostics.clear()
           return ok(true)
         default:
-          // FlyBot plugins' endpoints (src/host/flybot.js).
+          // FlyBot plugins' endpoints (src/host/hooks.js).
           if (endpoint.startsWith('flybot/')) return ok(await rt.flybotEndpoint(endpoint.slice('flybot/'.length), body))
           return fail(`Unknown endpoint ${endpoint}`, 'bot/not-found')
       }

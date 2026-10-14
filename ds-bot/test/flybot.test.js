@@ -341,3 +341,14 @@ test('host API (#18): reserved names and the shared scope throw, listeners get c
   const stale = (await call('flybot/changes', { since: 999, epoch: 'old' })).value
   assert.ok(stale.changes.length >= 1, 'an unknown epoch replays from the start')
 })
+
+test('send edge cases (#20): a bogus middleware verdict denies; a remote send with no transport throws', async (t) => {
+  const { fb, stop } = await start()
+  t.after(stop)
+  const off = fb.bot.send.use({ name: 'weird', handle: () => ({ action: 'maybe' }) })
+  const out = await fb.bot.send({ from: 'a', to: 'b', text: 'x' })
+  assert.equal(out.action, 'deny')
+  assert.match(out.reason, /weird returned "maybe"/)
+  off()
+  await assert.rejects(fb.bot.send({ from: 'a', to: '@nobody.home', text: 'x' }), /no transport/)
+})

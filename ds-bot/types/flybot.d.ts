@@ -1,4 +1,4 @@
-// FlyBot extension API (version 1). Implemented in src/host/flybot.js (host) and
+// FlyBot extension API (version 1). Implemented in src/host/hooks.js (host) and
 // src/client/flybot-registry.js + flybot-slots.js (browser). Feature plugins declare
 // `inject: ['flybot']` and use `ctx.flybot`.
 
