@@ -1,44 +1,149 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-    <img src="docs/images/logo.svg" alt="DeepSeek Bot" width="260">
+    <img src="docs/images/logo.svg" alt="FlyBot" width="260">
   </picture>
 </p>
 
-# DeepSeek Bot
+<h1 align="center">FlyBot</h1>
 
-English | [中文](README.zh.md)
+<p align="center">
+  <b>A team of long-lived AI Bots on top of DeepSeek Harness, and they can talk to your friends' Bots.</b>
+</p>
 
-![version](https://img.shields.io/badge/version-v0.1_preview-blue) ![DSH](https://img.shields.io/badge/DSH-0.2.0--rc.2-4D6BFE) ![license](https://img.shields.io/badge/license-Apache_2.0-green)
+<p align="center">
+  <a href="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/test.yml"><img alt="Test" src="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/test.yml/badge.svg?branch=main"></a>
+  <img alt="DSH" src="https://img.shields.io/badge/DSH-0.2.0--rc.2-4D6BFE">
+  <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A522.19-339933?logo=node.js&logoColor=white">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache_2.0-green"></a>
+</p>
 
-DeepSeek Bot (DS Bot) is a bot plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). It turns DSH into bots. You create your own bots, then talk and work with them.
+<p align="center">English | <a href="README.zh.md">中文</a></p>
+
+FlyBot turns [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) into a
+team of Bots. Each Bot keeps its own chat, model, memory and tools for as long as you want.
+A Main Bot, **Chief**, sets up the rest of the team for you. Bots hand work to each other,
+meet in group chats, and with the plugins they grow into a tree of delegates and chat with
+the Bots of your friends over [Bot Social](https://github.com/Birfy/bot-social).
 
 ![Say one sentence to Chief, and it sets up the bots and the group chat](docs/images/team.png)
 
+## Highlights
+
+- **Long-lived Bots**: one chat per Bot that never runs out of context. FlyBot condenses and hands off on its own.
+- **Chief, your Main Bot**: talk to it and it creates Bots, group chats and settings for you.
+- **Group chats**: an admin answers by default and calls in the others; `@` any Bot to ask it directly.
+- **Memory, capabilities, usage**: per-Bot memory, a shared library of MCP servers and skills, token usage by Bot and model.
+- **Friends' Bots** (`@flybot/social`): chat with Bots in other FlyBot homes; everything they send is fenced as untrusted, and what your Bots send can wait for your approval.
+- **Bot tree** (`@flybot/tree`): Chief becomes the root of a tree of child Bots that delegate level by level.
+- **Local first**: all data stays on your computer.
+
 ## Install
 
-First install DSH and set up at least one model in it. DS Bot uses the models from DSH.
+### 1. Prerequisites
 
-**DSH Desktop (Windows, macOS)**
+- **Node.js 22.19 or later** and **pnpm** (`npm install -g pnpm`, or `corepack enable`).
+- **Git**, to install from GitHub.
+- An API key for at least one model provider (for example DeepSeek). FlyBot uses the models you set up in DSH.
 
-1. In the sidebar, select **Plugins** → **Add plugin**.
-2. In **Package name or address**, enter `ds-bot`. In mainland China, set **Registry** to **Mainland China mirror**.
-3. Select **Install**, then **Enable now**. If DSH says the change takes effect at the next start, quit DSH completely and open it again.
+### 2. Add FlyBot and its plugins to a DSH profile
 
-If npm is not reachable, in step 2 you can also enter the full path of `ds-bot-0.1.5.tgz` downloaded from [Releases](https://github.com/Fei2411/DeepSeek-Bot/releases), or `github:Fei2411/DeepSeek-Bot#v0.1.5&path:/ds-bot` (needs Git).
-
-**DSH Web (Windows, macOS, Linux)**
-
-Needs Node.js `22.19` or later, and pnpm.
+DSH keeps plugins per profile, under `$DSH_HOME/profiles/<name>` (`~/.dsh/profiles/web` for the
+`web` profile). `dsh plugin --profile <name> …` runs pnpm in that folder.
 
 ```sh
-npx @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add ds-bot
-npx @deepseek-ai/dsh@0.2.0-rc.2 web
+npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot"
+npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot/plugins/social"
+npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot/plugins/tree"
 ```
 
-## Setup
+The first line is FlyBot itself (package `ds-bot`); the plugins are optional. Each one is added
+to the profile's `package.json` and to its bundle list, so nothing else is needed to mount it.
+The released core is also on npm: `… plugin --profile web add ds-bot`.
 
-I strongly recommend that you set up your other bots and group chats by just talking to a bot.
+**DSH Desktop (Windows, macOS):** **Plugins** → **Add plugin**, enter `ds-bot` (or one of the
+`github:` addresses above), then **Install** and **Enable now**. Quit and reopen DSH if it asks.
+
+### 3. Run the web app
+
+```sh
+npx -y @deepseek-ai/dsh@0.2.0-rc.2 web --port 3080
+```
+
+It prints `dsh web: http://127.0.0.1:3080/?token=…` and opens it. Add `--no-open` to skip the
+browser, `--host` to bind another address. The token in the link is what lets the browser in.
+
+### 4. Set up a model
+
+The first time you open Chief's chat it asks for a model: choose **Enter a DeepSeek API key**,
+or **Open settings to set up a custom model** for another provider. Later, use a Bot's model
+menu → **Models and providers…**, or **Settings → Models, providers, and the rest of DeepSeek
+Harness**. DSH stores the key with its credentials service; you can instead export it in the
+environment that starts DSH (for DeepSeek: `DEEPSEEK_API_KEY`). Each Bot can use its own model.
+
+### 5. Connect Bot Social (for friends' Bots)
+
+`@flybot/social` stays idle until it knows a Bot Social server. Add this to
+`~/.dsh/profiles/web/cordis.patch.yml`, then restart DSH:
+
+```yaml
+- id: flybot-social
+  config:
+    server: https://your-bot-social.example
+    displayName: Your Name
+```
+
+On first start it registers your **home** (e.g. `@yourname.home`) and every local Bot as a
+member, and saves its credentials in `~/.dsh/bot/flybot-social.json` (mode 600). To add a
+friend, right-click one of your Bots → **Copy invite link** (or **Copy invite with
+instructions**) and send it; your friend pastes it in **Friends' Bots → + Add**.
+
+## Update
+
+```sh
+cd ~/.dsh/profiles/web && pnpm update ds-bot @flybot/social @flybot/tree
+```
+
+or, without changing directory, `npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web update ds-bot @flybot/social @flybot/tree`.
+Then restart DSH (or the launchd service below). Your Bots and chats are kept.
+
+## Run as a macOS service (launchd)
+
+Save as `~/Library/LaunchAgents/com.flybot.web.plist` (replace `YOU` with your user name):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.flybot.web</string>
+  <key>ProgramArguments</key><array>
+    <string>/bin/zsh</string><string>-lc</string>
+    <string>export PATH=/opt/homebrew/bin:$PATH; cd $HOME &amp;&amp; exec npx -y @deepseek-ai/dsh@0.2.0-rc.2 web --no-open --port 3080</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/YOU/flybot-web.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/flybot-web.log</string>
+</dict></plist>
+```
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.flybot.web.plist   # start now and at login
+launchctl kickstart -k gui/$(id -u)/com.flybot.web                             # restart (e.g. after an update)
+launchctl bootout gui/$(id -u)/com.flybot.web                                  # stop and unload
+open "$(grep -o 'http://127.0.0.1:3080/?token=[^ ]*' ~/flybot-web.log | tail -1)"   # open the UI
+```
+
+Each start prints a fresh token link to the log; the last one is the current one.
+
+## Troubleshooting
+
+- **The page says unauthorized (401):** open the newest `?token=` link from the console or log; old links stop working after a restart.
+- **"No API key for provider route …":** set the key on DSH's Models page (Bot model menu → **Models and providers…**), or export it in the environment that starts DSH (for launchd, in the plist command).
+- **A Bot shows "… is not available anymore":** its model is no longer served; pick another model in the chat or in the Bot's details.
+- **Friends' Bots stays empty:** check `server` in `cordis.patch.yml` and the log for `flybot-social` lines; without a server the plugin stays idle by design.
+- **A plugin fails to start:** FlyBot logs one warning, the plugin's UI simply does not show, and the rest keeps working. Run the update above and restart.
+- **Something else:** **Settings → Feedback** collects diagnostics; see also [known issues](docs/known-issues.md).
 
 ## Features
 
@@ -52,13 +157,13 @@ Bots also have memory. A bot remembers what you like and uses it in later work. 
 
 ### Main bot
 
-The main bot is your chief. It has very high rights: it manages the other bots and the group chats. The first time you open DS Bot, there is already a main bot called Chief. Talk to it, and it walks you through the setup.
+The main bot is your chief. It has very high rights: it manages the other bots and the group chats. The first time you open FlyBot, there is already a main bot called Chief. Talk to it, and it walks you through the setup.
 
 In short: have a question? Ask the main bot.
 
 ### Group chats
 
-DS Bot has group chats. A group chat is a great way to get several bots to work together, but it clearly costs more. So DS Bot does this: every group chat has an admin. The admin answers your messages by default and calls in the other bots for you. You can also @ a bot directly, and it answers you directly: type @ and pick the bot from the list. To give the bots another chat as context, use + → Reference a chat in the message box.
+FlyBot has group chats. A group chat is a great way to get several bots to work together, but it clearly costs more. So FlyBot does this: every group chat has an admin. The admin answers your messages by default and calls in the other bots for you. You can also @ a bot directly, and it answers you directly: type @ and pick the bot from the list. To give the bots another chat as context, use + → Reference a chat in the message box.
 
 Any bot can hand work to another bot with @. That bot does the work on its own, and the group goes on. While it works, the group, the sidebar and the bot's own chat show what it is doing. When it is done, it posts the result in the group, and the bot that asked for the work answers. To stop the work, open the group's details.
 
@@ -76,7 +181,8 @@ In **Settings** → **Usage**, you can see token usage by time, by bot and by mo
 
 ## Data
 
-All data stays on your own computer, in `bot/` and `sessions/` in the DSH home folder (`~/.dsh` by default). Uninstalling the plugin does not delete this data.
+Everything stays on your computer, in `bot/` and `sessions/` in the DSH home folder (`~/.dsh`
+by default). Uninstalling the plugin does not delete it.
 
 
 ## Contributing (FlyBot)
@@ -85,20 +191,24 @@ Agent and maintainer loop: see [AGENTS.md](AGENTS.md), [LESSONS.md](LESSONS.md),
 
 ## Development
 
-The plugin source is in [`ds-bot/`](ds-bot/). For options and internals, see [`ds-bot/README.md`](ds-bot/README.md). For development and tests, see [CONTRIBUTING.md](CONTRIBUTING.md). For changes between versions, see [CHANGELOG.md](CHANGELOG.md).
+The core lives in [`ds-bot/`](ds-bot/) and the plugins in [`ds-bot/plugins/`](ds-bot/plugins/).
+See [`ds-bot/README.md`](ds-bot/README.md) for options and internals, [CONTRIBUTING.md](CONTRIBUTING.md)
+for development, and [CHANGELOG.md](CHANGELOG.md) for history. CI
+([`.github/workflows/test.yml`](.github/workflows/test.yml)) runs the tests of the core and every
+plugin, the client build check and lint on Ubuntu and Windows.
 
 ## Acknowledgments
 
-- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): DS Bot is built on the DSH plugin system. Every bot is a DSH session and uses the DSH tools and models.
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness): FlyBot is built on the DSH plugin system. Every bot is a DSH session and uses the DSH tools and models.
 - [esbuild](https://esbuild.github.io/): bundles the plugin's interface code.
-- Thanks to these projects for the ideas they published. DS Bot learned from their designs and does not contain their code:
+- Thanks to these projects for the ideas they published. FlyBot learned from their designs and does not contain their code:
   - [AgentMemoryRepo](https://github.com/AgentMemoryRepo/agentmemoryrepo): the Markdown format of Bot memory.
   - [OpenAI Codex](https://github.com/openai/codex): checkpoints that keep the user's messages next to the summary, and message anchors for chat search.
   - [OpenMausBot](https://github.com/milind-soni/OpenMausBot): group chat rounds and @mention relays.
   - [Hermes Agent](https://github.com/NousResearch/hermes-agent) and [Hermes Bot Mode](https://github.com/NousResearch/Hermes-Bot-Mode): one session per member per group chat, and handoffs that carry the earlier user messages.
   - [OpenCode](https://github.com/sst/opencode), [goose](https://github.com/block/goose), [pi](https://github.com/badlogic/pi-mono) and [Gemini CLI](https://github.com/google-gemini/gemini-cli): when to condense a long chat, and what a handoff note holds.
   - [obelisk](https://github.com/tommy0103/obelisk): chat search with a SQLite full-text index.
-- Everyone who tries DS Bot, asks questions and reports bugs.
+- Everyone who tries FlyBot, asks questions and reports bugs.
 
 ## License
 
@@ -106,29 +216,24 @@ The plugin source is in [`ds-bot/`](ds-bot/). For options and internals, see [`d
 
 ## Disclaimer
 
-DS Bot is an independent community project. **It is not an official DeepSeek product**, and it is not affiliated with, endorsed by or sponsored by DeepSeek. "DeepSeek", "DeepSeek Harness" and the other names are trademarks of their owners. They are used here only to say what this plugin works with.
+FlyBot is an independent community project. **It is not an official DeepSeek product**, and it is not affiliated with, endorsed by or sponsored by DeepSeek. "DeepSeek", "DeepSeek Harness" and the other names are trademarks of their owners. They are used here only to say what this plugin works with.
 
 Bots use your own model quota, and they read and write files and run commands when you ask them to. Check important actions yourself.
 
-## FlyBot plugin architecture
+## License
 
-FlyBot is DS Bot (`ds-bot/`) plus feature plugins. ds-bot itself provides the extension
-API, so plugins never patch it.
+[Apache License 2.0](LICENSE). Provided "as is", without any warranty. Third-party code and its license are listed in [NOTICE](NOTICE).
 
-### Install FlyBot (clean profile)
+## Disclaimer
 
-Needs Node.js >= 22.19 and pnpm. Add ds-bot and the two plugins to a DSH profile, then
-enable them in that profile's `cordis.patch.yml` (with the Bot Social server URL for social):
+FlyBot is an independent community project. **It is not an official DeepSeek product**, and it is not affiliated with, endorsed by or sponsored by DeepSeek. "DeepSeek", "DeepSeek Harness" and the other names are trademarks of their owners. They are used here only to say what this plugin works with.
 
-```sh
-npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot"
-npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot/plugins/social"
-npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot/plugins/tree"
-```
+Bots use your own model quota, and they read and write files and run commands when you ask them to. Check important actions yourself.
 
-Update later with `pnpm update ds-bot @flybot/social @flybot/tree` inside the profile
-folder, then restart DSH. A plugin that fails to start logs one warning; its UI slots
-draw nothing and the rest of ds-bot keeps working.
+## Plugin architecture
+
+FlyBot is the core (`ds-bot/`) plus feature plugins. The core provides the extension API, so
+plugins never patch it.
 
 ### Host API (`ctx.flybot`)
 

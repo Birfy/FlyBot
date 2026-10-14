@@ -1,4 +1,4 @@
-# Contributing to DS Bot
+# Contributing to FlyBot
 
 Thank you for helping. This file explains how to set up the plugin, how to test a change and which rules a change must follow. For what the plugin does and how users install it, see [README.md](README.md).
 
@@ -47,7 +47,7 @@ You need:
 - For the test bench only: pnpm `11` and a checkout of DeepSeek Harness at the DSH version that the plugin is tested with.
 
 ```sh
-git clone https://github.com/Fei2411/DeepSeek-Bot.git ds-bot-repo
+git clone https://github.com/ThinkFlowLab/FlyBot.git ds-bot-repo
 cd ds-bot-repo/ds-bot
 
 # The plugin's own build tool (esbuild only).
@@ -124,21 +124,21 @@ For a change to the Bot browser, check it in DSH Desktop. On Linux, the scripts 
 
 ## Report a problem
 
-The easiest way is from DS Bot itself: open **Settings → Feedback**, write what happened and select **Report on GitHub**. It opens a new issue with the DS Bot and DSH versions, your system, the models and the recent errors already filled in. **Copy** puts the same text on the clipboard, and **Download** saves the full error log (`<DSH_HOME>/bot/logs/diagnostics.jsonl`).
+The easiest way is from FlyBot itself: open **Settings → Feedback**, write what happened and select **Report on GitHub**. It opens a new issue with the core (`ds-bot`) and DSH versions, your system, the models and the recent errors already filled in. **Copy** puts the same text on the clipboard, and **Download** saves the full error log (`<DSH_HOME>/bot/logs/diagnostics.jsonl`). For now the core's **Report on GitHub** button opens the issue form of the upstream `ds-bot` repository (Fei2411/DeepSeek-Bot). Problems with FlyBot or its plugins belong in [ThinkFlowLab/FlyBot issues](https://github.com/ThinkFlowLab/FlyBot/issues): copy the report there instead (see #33 / #34).
 
 If you open an issue by hand, include:
 
 - The DSH version (DSH Desktop or `@deepseek-ai/dsh`), your operating system, and whether you use DSH Desktop or DSH Web.
-- How you installed DS Bot (npm, release file, Git address or command line) and its version.
+- How you installed FlyBot (npm, release file, Git address or command line) and its version.
 - What you did, what you expected and what happened, with the exact error text.
 - A screenshot of the whole window, with the chat and the error.
 - The steps that make it happen again.
 
-DS Bot removes API keys, tokens, saved secrets and your home folder from its diagnostics. Read the text before you post it, and remove personal data from screenshots.
+FlyBot removes API keys, tokens, saved secrets and your home folder from its diagnostics. Read the text before you post it, and remove personal data from screenshots.
 
 For a security problem, do not open a public issue. Use **Report a vulnerability** on the repository's **Security** tab.
 
-Issues are for bug reports. Questions, ideas and feature requests belong in [Discussions](https://github.com/Fei2411/DeepSeek-Bot/discussions).
+Issues are for bug reports. Questions, ideas and feature requests belong in [Discussions](https://github.com/ThinkFlowLab/FlyBot/discussions).
 
 
 ## Agent docs map
@@ -152,4 +152,4 @@ Issues are for bug reports. Questions, ideas and feature requests belong in [Dis
 
 ## License
 
-DS Bot is licensed under the [Apache License 2.0](LICENSE). When you submit a contribution, you agree that it is licensed under the same license, as section 5 of the license says.
+FlyBot is licensed under the [Apache License 2.0](LICENSE). When you submit a contribution, you agree that it is licensed under the same license, as section 5 of the license says.
