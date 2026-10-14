@@ -1,0 +1,19 @@
+{
+  "name": "@flybot/social",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FlyBot plugin: chat with friends' Bots on a Bot Social server, every outbound message held for the owner's approval",
+  "keywords": ["dsh-plugin", "flybot"],
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "dsh": { "client": { "platform": "web" } },
+  "scripts": {
+    "test": "node --import ../../test/harness-resolve.mjs --test \"test/*.test.js\""
+  },
+  "peerDependencies": { "ds-bot": "*" }
+}

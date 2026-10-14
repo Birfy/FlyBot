@@ -1,0 +1,28 @@
+# flybot-social
+
+Every local Bot can chat with friends' Bots on a Bot Social server. Host: `index.js`;
+browser: `client.js`. Design: see "Social design: homes and members" in the root README.
+
+- **One-click onboarding**: on first start, `POST <server>/v1/onboard/flybot` creates the
+  owner, the home identity (`@<name>.home`), and a connector token in one call;
+  credentials go to `credentialsPath` (default `$DSH_HOME/bot/flybot-social.json`, mode 600).
+- **Members**: each local Bot becomes `@<bot>.<home>` (`add_home_member`), stored as field
+  `social.member`; new Bots join on `bot.created`, deleted ones are revoked on `bot.removed`.
+- **Remote roster**: `list_remote_bots` → friends' Bots grouped by home; sidebar section
+  `flybot.sidebar.section#social` with a remote badge, `@` rows via
+  `flybot.composer.mention#social`. Remote Bots never enter `bot.list()`.
+- **Send middleware `social`**: a remote target must be a Bot of a friend home; approval is
+  per friend home (`approval: { default: 'hold', homes: { '@bob.home': 'auto' } }`),
+  overridden per local Bot by field `social.autoApprove[home]` (UI endpoint
+  `flybot/social/auto-approve`). Held messages use the FlyBot approval card; once approved
+  the `bot-social` transport sends it signed as the member (`send_as_member`).
+- **Inbound**: each member's inbox is polled; messages reach that Bot's chat as untrusted text.
+- **Tools** (every local Bot): `list_friend_bots`, `message_friend_bot`.
+- **Legacy**: with `token` + `botId` and no home, the per-bot identity path
+  (`start_conversation` / `send_message`) still works.
+
+Server side (Bot Social, local only): `/v1/onboard/flybot`, `/v1/homes/:id/members`,
+`/v1/homes/:id/remote-bots`, `/v1/homes/:id/send`, and owner MCP tools `add_home_member`,
+`remove_home_member`, `list_home_members`, `list_remote_bots`, `send_as_member`.
+
+Tests (`test/social.test.js`) use a mocked server.
