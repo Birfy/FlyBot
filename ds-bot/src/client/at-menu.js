@@ -3,6 +3,7 @@
 // "@Name", and the chats that "+ → Reference a chat" opens in the same menu.
 // Both are sources of the shell's trigger menu; the shell's own file and session
 // rows stay beside them, because a source cannot be hidden for one Session.
+import { mentionCandidates, remoteMentionRows } from './flybot-registry.js'
 import { t } from './i18n.js'
 import { currentPart, relativeShort } from './text.js'
 
@@ -34,6 +35,8 @@ export function mentionRows(roster, sessionId, query = '') {
   if (here.room && bots.length > 1 && [everyone, ...ROOM_ALL].some(word => word.toLowerCase().startsWith(needle))) {
     rows.push({ room: here.room, text: `@${everyone} ` })
   }
+  // Friends' remote Bots are members of every chat, marked remote.
+  rows.push(...remoteMentionRows(roster, query))
   return rows
 }
 
@@ -78,14 +81,26 @@ export function atSources({ roster, sessions, launched, iconFor }) {
     order: -20,
     showGroupTitle: false,
     async candidates(session, { query }) {
-      return (mentionRows(roster.getSnapshot(), session.sessionId, query) ?? []).map(row => ({
-        name: row.bot ? row.bot.name : t('Everyone'),
+      const snapshot = roster.getSnapshot()
+      const team = (mentionRows(snapshot, session.sessionId, query) ?? []).map(row => ({
+        name: row.bot ? row.bot.name : row.remote ? `${row.remote.name} (${row.remote.handle})` : t('Everyone'),
         ...(row.bot?.role ? { description: row.bot.role } : {}),
+        ...(row.remote ? { description: `Remote · ${row.remote.home ?? row.remote.handle}` } : {}),
         ...(row.room ? { description: t('{count} members', { count: row.room.members.length }) } : {}),
         icon: iconFor(row),
         section: t('Bots'),
         value: row.text,
       }))
+      // FlyBot plugins' rows (remote Bots...), only where the team's menu shows.
+      if (mentionRows(snapshot, session.sessionId, '') === null) return team
+      const extra = (await mentionCandidates(query, { sessionId: session.sessionId, roster: snapshot })).map(row => ({
+        name: row.name,
+        ...(row.description ? { description: row.description } : {}),
+        icon: row.icon ?? 'session',
+        section: row.section ?? 'FlyBot',
+        value: row.value,
+      }))
+      return [...team, ...extra]
     },
     onPick: ({ candidate }) => (candidate.value ? { text: candidate.value } : undefined),
   }

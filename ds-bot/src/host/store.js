@@ -112,6 +112,8 @@ export function install(rt) {
       migrated = true
     }
     for (const bot of Object.values(state.bots)) {
+      // FlyBot fields (hooks.js): a corrupt value resets; absent stays absent.
+      if ('fields' in bot && (bot.fields === null || typeof bot.fields !== 'object' || Array.isArray(bot.fields))) delete bot.fields
       if (!Array.isArray(bot.capabilities)) {
         bot.capabilities = []
         migrated = true

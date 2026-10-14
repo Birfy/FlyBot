@@ -47,6 +47,8 @@ export function install(rt) {
         '# Your identity',
         `You are ${bot.name}, a Bot on the user's team in DS Bot.${bot.role ? ` Your role: ${bot.role}.` : ''}`,
         bot.instructions ? `\n${bot.instructions}` : '',
+        // FlyBot plugins' prompt text for this Bot (flybot.bot.setSystemPrompt).
+        bot.systemPrompt ? `\n${bot.systemPrompt}` : '',
         '',
         rt.isMain(self) ? `${MAIN_RULES}\n\n${TEAM_RULES}` : TEAM_RULES,
       ].join('\n')
