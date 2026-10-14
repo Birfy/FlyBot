@@ -5,13 +5,15 @@
 // root bot is created only when the team has no Main Bot at all.
 import { checkCreate } from './limits.js'
 import { systemPrompt, withTreeBlock, hasTreeBlock } from './prompt.js'
+import { forestOf } from './forest.js'
+export { forestOf }
 
 export const TREE_KEYS = new Set(['parent', 'treeRole'])
 export const ROOT_ROLE = 'root'
 const LEGACY_ROOT_ROLE = 'Top-level coordinator for everything.'
 const ROOT_LABEL = 'Main bot and root of the tree'
 
-export function createTree(fb, { limits, rootName = 'Root', rootBotId } = {}) {
+export function createTree(fb, { limits, rootName = 'Root', rootBotId, adoptExisting = true, warn = () => {} } = {}) {
   const listeners = new Set()
 
   function snapshot() {
@@ -59,6 +61,7 @@ export function createTree(fb, { limits, rootName = 'Root', rootBotId } = {}) {
       for (const c of fb.listBots()) if (fb.getField(c.id, 'parent') === b.id) { fb.setField(c.id, 'parent', chiefId); moved.push(c.id) }
       fb.setField(b.id, 'parent', null)
       fb.setField(b.id, 'treeRole', null)
+      fb.setField(b.id, 'retired', true) // out of the tree for good; adoption skips it
       const prompt = fb.getSystemPrompt(b.id)
       if (hasTreeBlock(prompt)) writeBlock(b.id, '')
       else if (/a bot in a recursive bot tree/.test(prompt)) fb.setSystemPrompt(b.id, '') // pre-block installs: the whole prompt was ours
@@ -73,10 +76,38 @@ export function createTree(fb, { limits, rootName = 'Root', rootBotId } = {}) {
     if (fb.getField(chief.id, 'parent') !== undefined) fb.setField(chief.id, 'parent', null)
     if (fb.getField(chief.id, 'treeRole') !== ROOT_ROLE) fb.setField(chief.id, 'treeRole', ROOT_ROLE)
     migrateLegacyRoots(chief.id)
+    if (adoptExisting) adoptUnattached(chief.id)
     const nodes = snapshot()
     for (const id of [chief.id, ...childrenOf(nodes, chief.id).map(c => c.id)]) refreshPrompt(id, nodes)
     return chief.id
   }
+
+  /**
+   * Every local bot with no tree fields (and not retired) becomes a child of the root, up to
+   * maxChildren; the rest stay unattached with a warning. Remote bots are never in bot.list().
+   */
+  function adoptUnattached(rootId) {
+    const adopted = [], skipped = []
+    for (const b of fb.listBots()) {
+      if (b.id === rootId || fb.isRemote?.(b.id)) continue
+      if (fb.getField(b.id, 'retired') === true) continue
+      if (fb.getField(b.id, 'parent') !== undefined || fb.getField(b.id, 'treeRole') !== undefined) continue
+      if (b.isMain === true && !rootBotId) continue // another Main Bot stays outside the tree
+      if (childrenOf(snapshot(), rootId).length >= limits.maxChildren) { skipped.push(b.name); continue }
+      fb.setField(b.id, 'treeRole', String(b.role ?? '').trim())
+      fb.setField(b.id, 'parent', rootId)
+      adopted.push(b.id)
+    }
+    if (skipped.length) warn(`flybot-tree: ${skipped.length} bot(s) left outside the tree because the root already has maxChildren=${limits.maxChildren} children: ${skipped.join(', ')}`)
+    if (adopted.length) { const nodes = snapshot(); for (const id of adopted) refreshPrompt(id, nodes) }
+    return { adopted, skipped }
+  }
+
+  /**
+   * Synchronous nested view for UIs: [{ id, name, role, root, createdAt, children }], roots first,
+   * siblings ordered by createdAt (then name). Bots whose parent is missing are listed at the top level.
+   */
+  function forest() { return forestOf(fb.listBots().map(b => ({ ...b, fields: { 'flybot-tree': { parent: fb.getField(b.id, 'parent'), treeRole: fb.getField(b.id, 'treeRole'), retired: fb.getField(b.id, 'retired') } } }))) }
 
   let rootTask
   /**
@@ -138,5 +169,5 @@ export function createTree(fb, { limits, rootName = 'Root', rootBotId } = {}) {
   }
   const subscribe = fn => { listeners.add(fn); return () => listeners.delete(fn) }
 
-  return { limits, snapshot, childrenOf, depthOf, traceOf, ensureRoot, adoptChief, findChief, migrateLegacyRoots, promptFor, createChild, isMember, isRoot, isTreeEdge, onFieldChange, onBotRemoved, subscribe }
+  return { limits, forest, adoptUnattached, snapshot, childrenOf, depthOf, traceOf, ensureRoot, adoptChief, findChief, migrateLegacyRoots, promptFor, createChild, isMember, isRoot, isTreeEdge, onFieldChange, onBotRemoved, subscribe }
 }

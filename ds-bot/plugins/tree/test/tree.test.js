@@ -9,7 +9,7 @@ import { reactStub, renderToString, findAll } from './render.js'
 async function setup(config = {}) {
   const m = createMockFlybot()
   m.addBot({ name: 'Chief', isMain: true, systemPrompt: 'Chief own prompt' })
-  const { tree } = plugin.apply({ flybot: m.flybot }, config)
+  const { tree } = plugin.apply({ flybot: m.flybot }, { adoptExisting: false, ...config })
   const root = await tree.ensureRoot()
   return { ...m, tree, root }
 }
@@ -222,8 +222,8 @@ test('client: injects flybot, registers into FlyBot slots (not the shell slots s
   assert.equal(mod.name, 'flybot-tree')
   const reg = []
   const effects = []
-  const off = mod.apply({ flybot: { slots: { register: (name, entry) => { reg.push([name, entry]); return () => reg.splice(0) } } }, effect: fn => effects.push(fn) })
-  assert.equal(reg[0][0], 'flybot.sidebar.section')
+  const off = mod.apply({ flybot: { slots: { register: (name, entry) => { reg.push([name, entry]); return () => { const i = reg.findIndex(r => r[1] === entry); if (i >= 0) reg.splice(i, 1) } } } }, effect: fn => effects.push(fn) }, { sidebarSection: true })
+  assert.deepEqual(reg.map(r => r[0]), ['flybot.sidebar.section', 'flybot.sidebar.structure'])
   assert.equal(reg[0][1].id, 'flybot-tree'); assert.equal(typeof reg[0][1].component, 'function')
   assert.equal(effects.length, 1)
   off(); assert.equal(reg.length, 0)
@@ -340,7 +340,7 @@ test('sidebar: clicking a node opens its chat via actions.openSession; toggles c
   const mod = loadClient()
   const opened = []
   let entry
-  mod.apply({ flybot: { slots: { register: (n, e) => { entry = e; return () => {} } }, bots: async () => [], fields: { on: () => () => {} } } })
+  mod.apply({ flybot: { slots: { register: (n, e) => { if (n === 'flybot.sidebar.section') entry = e; return () => {} } }, bots: async () => [], fields: { on: () => () => {} } } }, { sidebarSection: true })
   const Section = entry.component
   const tree = reactStub.createElement(Section, { actions: { openSession: id => opened.push(id) } })
   const buttons = findAll(tree, n => n.props.className === 'flybot-tree-head')
@@ -367,7 +367,7 @@ test('root: Chief (Main Bot) is adopted as root, no bot created; own prompt kept
   await new Promise(r => setTimeout(r, 10))
   assert.equal(m.bots.size, 2) // nothing created
   assert.equal(f(m, chief, 'treeRole'), 'root')
-  assert.equal(f(m, helper, 'treeRole'), undefined)
+  assert.equal(f(m, helper, 'parent'), chief) // existing bot adopted as Chief's child
   assert.match(sp(m, chief), /^Chief own prompt\n\n<!-- flybot-tree:start -->/) // injected, not overwritten
   assert.match(sp(m, chief), /ROOT of a recursive bot tree/)
   const before = sp(m, chief)
@@ -426,7 +426,7 @@ test('migration: an earlier auto-created Root hands its children to Chief, keeps
   assert.equal(await tree.ensureRoot(), chief)
   assert.equal(f(m, w, 'parent'), chief); assert.equal(f(m, l, 'parent'), chief)
   assert.ok(m.bots.has(old)) // not deleted
-  assert.deepEqual(m.bots.get(old).fields, {}) // tree fields cleared
+  assert.deepEqual(m.bots.get(old).fields, { 'flybot-tree': { retired: true } }) // tree fields cleared, retired
   assert.equal(sp(m, old), '')
   assert.match(sp(m, chief), /COORDINATOR[\s\S]*- Work:[\s\S]*- Life:/)
   assert.deepEqual((await m.call(chief, 'list_children')).children.map(c => c.name).sort(), ['Life', 'Work'])
@@ -440,4 +440,124 @@ test('migration: an earlier auto-created Root hands its children to Chief, keeps
   const t2 = plugin.apply({ flybot: n.flybot }, { autoRoot: false }).tree
   assert.equal(await t2.ensureRoot(), c)
   assert.equal(sp(n, o2), 'mine')
+})
+
+test('sidebar section is off by default; sync tree.forest(bots) helper is exposed', () => {
+  const mod = loadClient()
+  const reg = []
+  const flybot = { slots: { register: (n) => { reg.push(n); return () => {} } } }
+  globalThis.__flybot__ = {}
+  const off = mod.apply({ flybot })
+  assert.deepEqual(reg, ['flybot.sidebar.structure']) // no separate Tree section: ds-bot's list draws the tree
+  assert.equal(typeof flybot.tree.forest, 'function')
+  assert.equal(globalThis.__flybot__.tree, flybot.tree)
+  const bots = [
+    { id: 'c', name: 'Chief', createdAt: 1, fields: { 'flybot-tree': { treeRole: 'root' } } },
+    { id: 'p', name: '程序员', createdAt: 5, fields: { 'flybot-tree': { parent: 'c', treeRole: '' } } },
+    { id: 'r', name: '研究员', createdAt: 3, fields: { 'flybot-tree': { parent: 'c', treeRole: 'research' } } },
+    { id: 'd', name: 'Dev', createdAt: 9, fields: { 'flybot-tree': { parent: 'p', treeRole: 'dev' } } },
+    { id: 'old', name: 'Root', createdAt: 2, fields: { 'flybot-tree': { retired: true } } },
+    { id: 'x', name: 'Outside', createdAt: 4, fields: {} },
+  ]
+  const f = flybot.tree.forest(bots) // synchronous
+  assert.ok(!(f instanceof Promise))
+  assert.deepEqual(f, [{ id: 'c', name: 'Chief', role: 'Main bot · root of the tree', root: true, createdAt: 1, children: [
+    { id: 'r', name: '研究员', role: 'research', root: false, createdAt: 3, children: [] },
+    { id: 'p', name: '程序员', role: '', root: false, createdAt: 5, children: [{ id: 'd', name: 'Dev', role: 'dev', root: false, createdAt: 9, children: [] }] },
+  ] }])
+  off()
+  assert.equal(flybot.tree, undefined)
+  delete globalThis.__flybot__
+})
+
+test('client forestOf is an identical copy of src/forest.js', async () => {
+  const src = readFileSync(new URL('../src/forest.js', import.meta.url), 'utf8')
+  const fn = src.slice(src.indexOf('export function forestOf')).replace('export function forestOf', 'function forestOf').trim()
+  const client = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const block = client.slice(client.indexOf('forest-of:start'), client.indexOf('// ---- forest-of:end'))
+  const copy = block.slice(block.indexOf('function forestOf')).split('\n').map(l => l.replace(/^ {4}/, '')).join('\n').trim()
+  assert.equal(copy, fn)
+  const { forestOf } = await import('../src/forest.js')
+  assert.deepEqual(forestOf([{ id: 'a', name: 'A', fields: { 'flybot-tree': { parent: 'a', treeRole: 'x' } } }]).map(n => n.id), ['a']) // self-parent -> top level
+})
+
+test('adoption: existing local bots without tree fields become children of Chief; retired/remote/main skipped; maxChildren respected', async () => {
+  const m = createMockFlybot()
+  const chief = m.addBot({ name: 'Chief', isMain: true })
+  const names = ['研究员', '数据分析师', '文案', '程序员']
+  const ids = names.map(name => m.addBot({ name, systemPrompt: `${name} own` }))
+  const retired = m.addBot({ name: 'Root', fields: { 'flybot-tree': { retired: true } } })
+  const main2 = m.addBot({ name: 'Second main', isMain: true })
+  const warns = []
+  const { tree } = plugin.apply({ flybot: m.flybot, logger: () => ({ warn: (...a) => warns.push(a.join(' ')) }) }, { autoRoot: false, maxChildren: 3 })
+  await tree.ensureRoot()
+  const kids = (await m.call(chief, 'list_children')).children.map(c => c.name)
+  assert.deepEqual(kids, ['研究员', '数据分析师', '文案']) // maxChildren=3
+  assert.equal(f(m, ids[3], 'parent'), undefined) // left unattached
+  assert.match(warns.join('\n'), /1 bot\(s\) left outside the tree[\s\S]*maxChildren=3[\s\S]*程序员/)
+  assert.equal(f(m, retired, 'parent'), undefined); assert.equal(f(m, main2, 'parent'), undefined)
+  assert.match(sp(m, ids[0]), /^研究员 own\n\n<!-- flybot-tree:start -->/) // own prompt kept, tree block added
+  assert.match(sp(m, chief), /COORDINATOR[\s\S]*- 研究员/)
+  // message rules: adopted children reach only Chief and their own children; Chief reaches them
+  const send = (from, to) => m.flybot.bot.send({ from, to, text: 'x' })
+  assert.equal((await send(chief, ids[0])).action, 'allow')
+  assert.equal((await send(ids[0], chief)).action, 'allow')
+  assert.equal((await send(ids[0], ids[1])).action, 'deny') // siblings
+  assert.equal((await send(ids[0], ids[3])).action, 'deny') // tree bot -> local non-tree bot
+  // idempotent; host-side sync forest
+  await tree.ensureRoot()
+  assert.equal((await m.call(chief, 'list_children')).children.length, 3)
+  const fo = tree.forest()
+  assert.equal(fo[0].id, chief); assert.deepEqual(fo[0].children.map(c => c.name), ['研究员', '数据分析师', '文案'])
+})
+
+test('adoption on bot.created: a bot created without a parent joins Chief; create_child_bot keeps its parent; adoptExisting:false is off', async () => {
+  const m = createMockFlybot()
+  const chief = m.addBot({ name: 'Chief', isMain: true })
+  const { tree } = plugin.apply({ flybot: m.flybot })
+  await new Promise(r => setTimeout(r, 10))
+  const w = (await m.call(chief, 'create_child_bot', { name: 'Work', role_description: 'w' })).created.id
+  const d = (await m.call(w, 'create_child_bot', { name: 'Dev', role_description: 'd' })).created.id
+  const later = await m.flybot.bot.create({ name: '文案' }) // e.g. ds-bot UI / create_bot
+  await new Promise(r => setTimeout(r, 10))
+  assert.equal(f(m, later, 'parent'), chief)
+  assert.equal(f(m, d, 'parent'), w)
+  assert.deepEqual(tree.forest()[0].children.map(c => c.name), ['Work', '文案'])
+
+  const n = createMockFlybot(); n.addBot({ name: 'Chief', isMain: true })
+  plugin.apply({ flybot: n.flybot }, { adoptExisting: false })
+  const solo = await n.flybot.bot.create({ name: 'Solo' })
+  await new Promise(r => setTimeout(r, 10))
+  assert.equal(f(n, solo, 'parent'), undefined)
+})
+
+test('migration marks the old auto-created Root retired; adoption skips it; never deleted', async () => {
+  const m = createMockFlybot()
+  const chief = m.addBot({ name: 'Chief', isMain: true })
+  const old = m.addBot({ name: 'Root', fields: { 'flybot-tree': { parent: null, treeRole: 'Top-level coordinator for everything.' } } })
+  const w = m.addBot({ name: 'Work', fields: { 'flybot-tree': { parent: old, treeRole: 'work' } } })
+  const { tree } = plugin.apply({ flybot: m.flybot }, { autoRoot: false })
+  await tree.ensureRoot(); await tree.ensureRoot()
+  assert.ok(m.bots.has(old))
+  assert.deepEqual(m.bots.get(old).fields, { 'flybot-tree': { retired: true } })
+  assert.equal(f(m, w, 'parent'), chief)
+  assert.deepEqual(tree.forest()[0].children.map(c => c.name), ['Work'])
+})
+
+test('sidebar structure: parents from forestOf; retired and outside Bots have none (ds-bot puts them under Chief)', async () => {
+  const mod = loadClient()
+  const bots = [
+    { id: 'c', name: 'Chief', createdAt: 1, fields: { 'flybot-tree': { treeRole: 'root' } } },
+    { id: 'w', name: 'Work', createdAt: 2, fields: { 'flybot-tree': { parent: 'c', treeRole: 'work' } } },
+    { id: 'd', name: 'Dev', createdAt: 3, fields: { 'flybot-tree': { parent: 'w', treeRole: 'dev' } } },
+    { id: 'old', name: 'Root', createdAt: 0, fields: { 'flybot-tree': { retired: true } } },
+    { id: 'x', name: 'Outside', createdAt: 4, fields: {} },
+  ]
+  const entries = []
+  const dispose = mod.registerStructure({ slots: { register: (n, e) => { entries.push([n, e]); return () => {} } }, bots: async () => bots })
+  await new Promise(r => setTimeout(r, 10))
+  const [name, entry] = entries.at(-1)
+  assert.equal(name, 'flybot.sidebar.structure')
+  assert.deepEqual(['c', 'w', 'd', 'old', 'x'].map(id => entry.parentOf(id)), [undefined, 'c', 'w', undefined, undefined])
+  dispose()
 })

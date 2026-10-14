@@ -25,7 +25,7 @@ export function createMockFlybot() {
   const tools = new Map()
   const scopes = []
   let seq = 0
-  const view = b => b && { id: b.id, name: b.name, isMain: b.isMain === true, createdBy: null, systemPrompt: b.systemPrompt ?? '', fields: clone(b.fields) }
+  const view = b => b && { id: b.id, name: b.name, isMain: b.isMain === true, createdAt: b.createdAt, createdBy: null, systemPrompt: b.systemPrompt ?? '', fields: clone(b.fields) }
   const fire = (ev, payload) => { for (const fn of [...listeners[ev]]) fn({ ...payload }) }
   const onFor = plugin => (ev, fn, { all = false } = {}) => {
     if (!listeners[ev]) throw new Error(`flybot: unknown event ${ev}`)
@@ -84,7 +84,7 @@ export function createMockFlybot() {
         create: async ({ name, systemPrompt, fields: f } = {}) => {
           await Promise.resolve() // really async, like the host
           const id = `bot${++seq}`
-          bots.set(id, { id, name, systemPrompt: systemPrompt ?? '', fields: f && Object.keys(f).length ? { [plugin]: clone(f) } : {} })
+          bots.set(id, { id, name, createdAt: seq, systemPrompt: systemPrompt ?? '', fields: f && Object.keys(f).length ? { [plugin]: clone(f) } : {} })
           for (const [key, value] of Object.entries(f ?? {})) fire('change', { botId: id, plugin, key, value: clone(value), prev: undefined })
           fire('bot.created', view(bots.get(id)))
           return id
@@ -104,7 +104,7 @@ export function createMockFlybot() {
   // Like ds-bot's setup: the first Bot, 'Chief', is a Main Bot (state.mainBotIds). Fires bot.created.
   const addBot = ({ name, isMain = false, systemPrompt = '', fields: f = {} } = {}) => {
     const id = `bot${++seq}`
-    bots.set(id, { id, name, isMain, systemPrompt, fields: clone(f) })
+    bots.set(id, { id, name, isMain, createdAt: seq, systemPrompt, fields: clone(f) })
     fire('bot.created', view(bots.get(id)))
     return id
   }

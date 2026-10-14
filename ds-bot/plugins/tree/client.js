@@ -131,12 +131,87 @@ window.__ModuleLoader__.load({
     const REFRESH_MS = 10000
     // 'flybot.sidebar.section' is a FlyBot registry slot (ds-bot renders it), not a DSH
     // shell slot, so the section goes in through the browser flybot service.
+    // ---- forest-of:start (identical copy of src/forest.js forestOf; a test keeps them in sync)
+    function forestOf(bots) {
+      const nodes = new Map()
+      let index = 0
+      for (const b of bots ?? []) {
+        const at = index++
+        const own = b?.fields?.['flybot-tree'] ?? {}
+        if (own.retired === true || (own.parent === undefined && own.treeRole === undefined)) continue
+        nodes.set(b.id, { id: b.id, name: b.name, role: own.treeRole === 'root' ? 'Main bot · root of the tree' : (own.treeRole ?? ''), root: own.treeRole === 'root', createdAt: typeof b.createdAt === 'number' ? b.createdAt : null, key: typeof b.createdAt === 'number' ? b.createdAt : at, parent: own.parent ?? null, children: [] })
+      }
+      const top = []
+      for (const n of nodes.values()) {
+        const p = n.parent !== null && n.parent !== n.id ? nodes.get(n.parent) : undefined
+        if (p) p.children.push(n); else top.push(n)
+      }
+      const order = (a, b) => (a.key - b.key) || String(a.name).localeCompare(String(b.name))
+      const seen = new Set()
+      const finish = n => {
+        if (seen.has(n.id)) return null // cycle guard
+        seen.add(n.id)
+        const { parent: _parent, key: _key, ...rest } = n
+        return { ...rest, children: n.children.sort(order).map(finish).filter(Boolean) }
+      }
+      top.sort((a, b) => (Number(b.root) - Number(a.root)) || order(a, b))
+      return top.map(finish).filter(Boolean)
+    }
+    // ---- forest-of:end
+
+    // ds-bot draws its own Bot list as one tree from the registry slot 'flybot.sidebar.structure'
+    // ({ parentOf(botId) }): parents come from forestOf over the browser bots (fields included), so
+    // retired and non-tree Bots have no parent and ds-bot shows them directly under Chief. The entry is
+    // re-registered whenever the structure changes (field changes and a 10 s poll), which re-renders.
+    function registerStructure(flybot) {
+      let parents = new Map()
+      let key = '[]'
+      let stopped = false
+      const entry = () => ({ id: 'flybot-tree', order: 90, parentOf: id => parents.get(id) })
+      let off = flybot.slots.register('flybot.sidebar.structure', entry())
+      const refresh = async () => {
+        let bots
+        try { bots = typeof flybot.bots === 'function' ? await flybot.bots() : [] } catch { return }
+        if (stopped) return
+        const next = new Map()
+        const walk = (node, parent) => { if (parent) next.set(node.id, parent); for (const c of node.children) walk(c, node.id) }
+        for (const top of forestOf(bots)) walk(top, null)
+        const nextKey = JSON.stringify([...next])
+        if (nextKey === key) return
+        key = nextKey
+        parents = next
+        off()
+        off = flybot.slots.register('flybot.sidebar.structure', entry())
+      }
+      const offs = []
+      try { offs.push(flybot.fields?.on?.('change', c => { if (c && (c.key === 'parent' || c.key === 'treeRole' || c.key === 'retired' || c.removed)) refresh() })) } catch { /* no change feed */ }
+      const timer = setInterval(refresh, REFRESH_MS)
+      timer?.unref?.()
+      void refresh()
+      return () => {
+        stopped = true
+        clearInterval(timer)
+        for (const o of offs) { try { o?.() } catch { /* already gone */ } }
+        off()
+      }
+    }
+
     const inject = ['flybot']
-    function apply(ctx) {
-      const off = ctx.flybot.slots.register('flybot.sidebar.section', { id: 'flybot-tree', order: 90, component: makeSection(ctx.flybot) })
-      ctx.effect?.(() => off, 'flybot-tree: sidebar section')
+    // The tree lives in ds-bot's own Bot list now, so this plugin's separate sidebar section is off by
+    // default (config.sidebarSection: true brings it back). Always: a SYNCHRONOUS helper for ds-bot's
+    // sidebar, ctx.flybot.tree.forest(bots) / globalThis.__flybot__.tree.forest(bots), where `bots` are
+    // the roster's bots (each carries fields['flybot-tree'] and createdAt). See README "Tree data".
+    function apply(ctx, config = {}) {
+      const helper = { forest: bots => forestOf(bots) }
+      const offs = []
+      if (ctx.flybot && typeof ctx.flybot === 'object') { ctx.flybot.tree = helper; offs.push(() => { if (ctx.flybot.tree === helper) delete ctx.flybot.tree }) }
+      if (globalThis.__flybot__) { globalThis.__flybot__.tree = helper; offs.push(() => { if (globalThis.__flybot__?.tree === helper) delete globalThis.__flybot__.tree }) }
+      if (config?.sidebarSection === true) offs.push(ctx.flybot.slots.register('flybot.sidebar.section', { id: 'flybot-tree', order: 90, component: makeSection(ctx.flybot) }))
+      if (ctx.flybot?.slots) offs.push(registerStructure(ctx.flybot))
+      const off = () => { for (const fn of offs.splice(0)) fn?.() }
+      ctx.effect?.(() => off, 'flybot-tree: tree helper')
       return off
     }
-    return { name: 'flybot-tree', inject, apply, buildForest, treeOf, TreeView, countNodes, EMPTY, CSS }
+    return { name: 'flybot-tree', inject, apply, forestOf, registerStructure, buildForest, treeOf, TreeView, countNodes, EMPTY, CSS }
   },
 })

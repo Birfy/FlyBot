@@ -11,7 +11,8 @@ export const inject = ['flybot']
 
 export function apply(ctx, config = {}) {
   const fb = createAdapter(ctx.flybot)
-  const tree = createTree(fb, { limits: resolveLimits(config), rootName: config.rootName, rootBotId: config.rootBotId })
+  const warn = (...args) => (ctx.logger?.('flybot-tree')?.warn ?? console.warn)(...args)
+  const tree = createTree(fb, { limits: resolveLimits(config), rootName: config.rootName, rootBotId: config.rootBotId, adoptExisting: config.adoptExisting !== false, warn })
   const disposers = [
     fb.useSend('tree', treeSendMiddleware(tree, { bypassSocial: config.bypassSocial === true, isRemote: fb.isRemote })),
     ...registerTreeTools(fb, tree),
@@ -20,9 +21,9 @@ export function apply(ctx, config = {}) {
   ]
   // The root is ds-bot's Main Bot (Chief). Adopt it once the team is loaded: right away, a few
   // retries later, and whenever a Bot is created (Chief may be created after startup).
+  // Each attempt also adopts unattached local bots as the root's children (config.adoptExisting).
   // config.autoRoot: false turns this off; config.rootBotId picks the root explicitly.
   if (config.autoRoot !== false) {
-    const warn = (ctx.logger?.('flybot-tree')?.warn ?? console.warn)
     const attempt = () => tree.ensureRoot().catch(error => warn('flybot-tree: could not set up the root:', error?.message ?? error))
     const timers = [0, 1000, 5000, 15000].map(ms => setTimeout(attempt, ms))
     timers.forEach(t => t.unref?.())

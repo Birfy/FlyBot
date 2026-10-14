@@ -40,8 +40,13 @@ test('the social and tree web entries activate under real Cordis once ds-bot pro
     root.plugin({ name: id, inject: mod.inject, apply: (ctx) => { try { return mod.apply(ctx) } catch (error) { failures.push([id, error.message]); throw error } } })
   }
   // ds-bot's browser half provides the flybot service, possibly after the plugins load.
-  root.plugin({ name: 'ds-bot', apply: ctx => ctx.provide('flybot', { slots: registry, bots: async () => [], fields: { on: () => () => {} }, call: async () => ({}) }) })
+  const flybot = { slots: registry, bots: async () => [], fields: { on: () => () => {} }, call: async () => ({}) }
+  root.plugin({ name: 'ds-bot', apply: ctx => ctx.provide('flybot', flybot) })
   await new Promise(resolve => setTimeout(resolve, 100))
   assert.deepEqual(failures, [])
-  assert.deepEqual(registry.entries('flybot.sidebar.section').map(entry => entry.id).sort(), ['flybot-tree', 'social'])
+  // The tree is drawn by ds-bot's Bot list: tree registers no separate section by default,
+  // but it activated and exposed its synchronous helper.
+  assert.deepEqual(registry.entries('flybot.sidebar.section').map(entry => entry.id).sort(), ['social'])
+  assert.equal(typeof flybot.tree?.forest, 'function')
+  assert.equal(typeof globalThis.__flybot__.tree?.forest, 'function')
 })
