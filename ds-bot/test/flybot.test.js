@@ -373,3 +373,28 @@ test('tools (#4): a tool visibleTo hides is taken out of that Bot\'s tool list, 
   await new Promise(resolve => setTimeout(resolve, 20))
   assert.deepEqual(masks.at(-1), ['c', 'lifted'])
 })
+
+test('deleting a friend\'s Bot\'s chat reopens a fresh one at once, so its row never waits on "opening its chat…"', async (t) => {
+  const { ctx, fb, call, stop } = await start()
+  t.after(stop)
+  // The relay route serves the friend's Bot, as remote-chat.js's adapter does in DSH.
+  ctx.llm.listProviders = () => [{ id: 'flybot-remote', name: 'Friends\' Bots' }]
+  ctx.llm.listModels = async () => [{ id: '@helper.friend.home', name: '助手' }]
+  let sessions = 0
+  ctx.sessionController.create = async () => ({ sessionId: `remote-${++sessions}` })
+  const social = fb.scope('social')
+  social.remote.publish([{ handle: '@helper.friend.home', name: '助手', home: '@friend.home' }])
+  const until = async (check) => { for (let i = 0; i < 100 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 10)) }
+  await until(() => social.remote.chats.of('@helper.friend.home'))
+  const first = social.remote.chats.of('@helper.friend.home')
+  assert.ok(first)
+  const deleted = await call('delete-bot', { id: first })
+  assert.equal(deleted.ok, true)
+  // No new publish: the plugin's roster is unchanged and cached.
+  await until(() => social.remote.chats.of('@helper.friend.home'))
+  const again = social.remote.chats.list().find(chat => chat.handle === '@helper.friend.home')
+  assert.ok(again, 'the chat is back without a new publish')
+  assert.notEqual(again.id, first)
+  assert.equal(again.name, '助手')
+  assert.equal(again.plugin, 'social')
+})
