@@ -109,3 +109,14 @@ test('field events keep flowing after a host restart (#18)', async () => {
   await tick()
   assert.deepEqual(seen, ['d', 'after'])
 })
+
+test('client UI (#19): every plugin slot renders inside an error boundary; approval copy is translated; the stack scrolls', async () => {
+  const { readFileSync } = await import('node:fs')
+  const source = readFileSync(new URL('../src/client/flybot-slots.js', import.meta.url), 'utf8')
+  assert.match(source, /static getDerivedStateFromError\(\)/)
+  assert.match(source, /function Safe\(\{ entry, props \}\) \{\n  return h\(SlotBoundary/)
+  assert.doesNotMatch(source, /\}, '(Approve|Reject|Retry)'\)/)
+  assert.match(source, /\.bt-flybot-approvals \{[^}]*max-height:[^}]*overflow-y: auto/)
+  // One remote list: the old built-in "Remote members" section is gone.
+  assert.doesNotMatch(source, /Remote members/)
+})

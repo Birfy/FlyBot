@@ -13,9 +13,10 @@
 //   flybot.approvals        { id, order, component({ approval, decide, call }) }   custom card for a held send
 //
 // Types: ds-bot/types/flybot.d.ts (FlyBotClientRegistry).
-import { createElement as h, Fragment, useEffect, useState } from 'react'
+import { Component, createElement as h, Fragment, useEffect, useState } from 'react'
 import { call as callHost } from './api.js'
-import { registry as baseRegistry, remoteMembersByHome } from './flybot-registry.js'
+import { registry as baseRegistry } from './flybot-registry.js'
+import { t } from './i18n.js'
 
 import { createClientApi as createClientApiWith } from './flybot-registry.js'
 
@@ -41,70 +42,19 @@ function useSlot(name) {
 }
 
 // Renders a plugin component without letting its failure take the sidebar down.
+// A plugin component that throws (in render or in an effect) draws nothing; the rest of
+// the sidebar keeps working.
+class SlotBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { failed: false }
+  }
+  static getDerivedStateFromError() { return { failed: true } }
+  componentDidCatch(error) { console.error(`flybot: ${this.props.id} failed`, error) }
+  render() { return this.state.failed ? null : this.props.children }
+}
 function Safe({ entry, props }) {
-  try {
-    return h(entry.component, props)
-  } catch (error) {
-    console.error(`flybot: ${entry.id} failed`, error)
-    return null
-  }
-}
-
-// Friends' remote Bots, grouped by home, each with a remote badge. Built in, so they
-// show whichever plugin published them.
-export function RemoteMembers({ roster }) {
-  const homes = remoteMembersByHome(roster)
-  const [open, setOpen] = useState('')
-  if (homes.length === 0) return null
-  return h('div', { className: 'bt-flybot-section bt-remote-members', 'data-flybot': 'remote-members' },
-    h('div', { className: 'bt-flybot-title' }, 'Remote members'),
-    homes.map(home => h('div', { key: home.home, className: 'bt-remote-home', title: home.home },
-      h('div', { className: 'bt-remote-home-name' }, home.name),
-      home.bots.map(bot => h(Fragment, { key: bot.handle },
-        h('button', { type: 'button', className: 'bt-remote-member', title: `Message ${bot.handle}`, 'aria-expanded': open === bot.handle, onClick: () => setOpen(open === bot.handle ? '' : bot.handle) },
-          h('span', { className: 'bt-remote-name' }, bot.name),
-          h('span', { className: 'bt-remote-badge' }, 'remote')),
-        open === bot.handle ? h(RemoteCompose, { bot, roster, onDone: () => setOpen('') }) : null)))))
-}
-
-const MAX_FILE_BYTES = 20 * 1024 * 1024
-const readBase64 = file => new Promise((resolve, reject) => {
-  const reader = new FileReader()
-  reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''))
-  reader.onerror = () => reject(reader.error)
-  reader.readAsDataURL(file)
-})
-
-// Composer for one remote member: text plus files, sent from a team Bot through
-// bot.send, so the plugin's approval (with the file names and sizes) still applies.
-export function RemoteCompose({ bot, roster, onDone }) {
-  const bots = roster.bots ?? []
-  const [from, setFrom] = useState((bots.find(b => b.isMain) ?? bots[0])?.id ?? '')
-  const [text, setText] = useState('')
-  const [files, setFiles] = useState([])
-  const [status, setStatus] = useState('')
-  const submit = async (event) => {
-    event.preventDefault()
-    const big = files.find(file => file.size > MAX_FILE_BYTES)
-    if (big) return setStatus(`${big.name} is over 20 MB`)
-    setStatus('Sending…')
-    try {
-      const payload = await Promise.all(files.map(async file => ({ name: file.name, mime: file.type, content_base64: await readBase64(file) })))
-      const result = await call(`${bot.plugin ?? 'social'}/send`, { from, to: bot.handle, text: text || `${payload.length} file(s)`, files: payload })
-      const value = result?.value ?? result
-      setStatus(value?.action === 'hold' ? 'Waiting for your approval' : value?.action === 'deny' ? `Not sent: ${value.reason}` : 'Sent')
-      if (value?.action !== 'deny') { setText(''); setFiles([]); setTimeout(onDone, 1500) }
-    } catch (error) {
-      setStatus(String(error?.message ?? error))
-    }
-  }
-  return h('form', { className: 'bt-remote-compose', onSubmit: submit },
-    h('select', { value: from, 'aria-label': 'Send as', onChange: e => setFrom(e.target.value) }, bots.map(b => h('option', { key: b.id, value: b.id }, b.name))),
-    h('textarea', { value: text, placeholder: `Message ${bot.handle}`, onChange: e => setText(e.target.value) }),
-    h('input', { type: 'file', multiple: true, 'aria-label': 'Attach files', onChange: e => setFiles([...e.target.files].slice(0, 5)) }),
-    files.length ? h('div', null, files.map(file => `${file.name} · ${fileSize(file.size)}`).join(', ')) : null,
-    h('button', { type: 'submit', disabled: !from || (!text.trim() && files.length === 0) }, 'Send'),
-    status ? h('div', { role: 'status' }, status) : null)
+  return h(SlotBoundary, { id: entry.id }, h(entry.component, props))
 }
 
 // The first 'flybot.sidebar.structure' entry, or undefined: the sidebar then lists Bots flat.
@@ -160,22 +110,22 @@ export function FlyBotApprovals() {
       await refresh()
     }
   }
-  return h('div', { className: 'bt-flybot-approvals', role: 'region', 'aria-label': 'Messages waiting for your approval' },
+  return h('div', { className: 'bt-flybot-approvals', role: 'region', 'aria-label': t('Messages waiting for your approval') },
     pending.map((approval) => {
       const custom = entries.find(entry => entry.policy === undefined || entry.policy === approval.by)
       if (custom) return h('div', { key: approval.id }, h(Safe, { entry: custom, props: { approval, decide: decision => decide(approval.id, decision), call } }))
       const to = typeof approval.request.to === 'object' ? approval.request.to.handle : approval.request.to
       return h('div', { key: approval.id, className: 'bt-flybot-approval' },
-        h('div', { className: 'bt-flybot-approval-head' }, approval.status === 'failed' ? `Not sent to ${to} · ${approval.error ?? 'failed'}` : `Message to ${to} · ${approval.reason}`),
+        h('div', { className: 'bt-flybot-approval-head' }, approval.status === 'failed' ? t('Not sent to {to} · {reason}', { to, reason: approval.error ?? t('failed') }) : t('Message to {to} · {reason}', { to, reason: approval.reason })),
         h('div', { className: 'bt-flybot-approval-text' }, approval.request.text),
         approval.request.attachments?.length
-          ? h('ul', { className: 'bt-flybot-approval-files', 'aria-label': 'Attached files' }, approval.request.attachments.map((file, index) =>
+          ? h('ul', { className: 'bt-flybot-approval-files', 'aria-label': t('Attached files') }, approval.request.attachments.map((file, index) =>
             h('li', { key: index, title: file.path ?? file.name }, `${file.name} · ${fileSize(file.size)}`, file.path ? h('div', { className: 'bt-flybot-approval-path' }, file.path) : null)))
           : null,
         h('div', { className: 'bt-flybot-approval-actions' },
-          approval.status === 'failed' ? h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'retry') }, 'Retry') : null,
-          approval.status === 'failed' ? null : h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'approve') }, 'Approve'),
-          approval.status === 'failed' ? null : h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'reject') }, 'Reject')))
+          approval.status === 'failed' ? h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'retry') }, t('Retry')) : null,
+          approval.status === 'failed' ? null : h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'approve') }, t('Approve')),
+          approval.status === 'failed' ? null : h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'reject') }, t('Reject'))))
     }),
     error ? h('div', { className: 'bt-flybot-approval-error', role: 'alert' }, error) : null)
 }
@@ -186,14 +136,10 @@ export const FLYBOT_CSS = `
 .bt-flybot-approval-files { margin: 0 0 8px; padding-left: 18px; font-size: 12px; }
 .bt-file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0 30px; }
 .bt-file-chip { font-size: 12px; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--bt-line, rgba(0,0,0,.15)); background: transparent; cursor: pointer; }
-.bt-remote-compose { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 8px; font-size: 12px; }
-.bt-remote-compose textarea { font: inherit; min-height: 48px; }
-.bt-remote-badge { font-size: 10px; padding: 0 5px; margin-left: 6px; border-radius: 6px; background: rgba(120,120,160,.18); text-transform: lowercase; }
-.bt-remote-member { display: flex; align-items: center; padding: 2px 12px; font-size: 13px; }
-.bt-remote-home-name { padding: 4px 12px 0; font-size: 11px; opacity: .7; }
 
 .bt-flybot-section { margin-top: 8px; border-top: 1px solid var(--bt-line, rgba(0,0,0,.08)); padding-top: 6px; }
-.bt-flybot-approvals { position: fixed; right: 16px; bottom: 16px; z-index: 50; display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
+.bt-flybot-approvals { position: fixed; right: 16px; bottom: 16px; z-index: 50; display: flex; flex-direction: column; gap: 8px; max-width: 360px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.bt-flybot-approval-error { color: var(--bt-danger, #d33); font-size: 12px; }
 .bt-flybot-approval { background: var(--bt-card, #fff); border: 1px solid var(--bt-line, rgba(0,0,0,.12)); border-radius: 10px; padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); font-size: 13px; }
 .bt-flybot-approval-head { font-weight: 600; margin-bottom: 4px; }
 .bt-flybot-approval-text { white-space: pre-wrap; max-height: 120px; overflow: auto; margin-bottom: 8px; }

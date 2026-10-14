@@ -91,6 +91,13 @@ var ZH = {
   "Bot list": "Bot 列表",
   "Bot tree": "Bot 树",
   "no longer shared": "已不再共享",
+  "Messages waiting for your approval": "等你批准的消息",
+  "Not sent to {to} · {reason}": "未发给 {to} · {reason}",
+  "Message to {to} · {reason}": "发给 {to} 的消息 · {reason}",
+  failed: "失败",
+  "Attached files": "附件",
+  Retry: "重试",
+  Approve: "批准",
   "Friend's Bot": "好友的 Bot",
   "Expand": "展开",
   "Collapse": "收起",
@@ -1284,82 +1291,23 @@ function useSlot(name) {
   (0, import_react.useEffect)(() => slots.subscribe(() => setVersion(slots.version())), [slots]);
   return slots.entries(name);
 }
-function Safe({ entry, props }) {
-  try {
-    return (0, import_react.createElement)(entry.component, props);
-  } catch (error) {
-    console.error(`flybot: ${entry.id} failed`, error);
-    return null;
+var SlotBoundary = class extends import_react.Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
   }
-}
-function RemoteMembers({ roster }) {
-  const homes = remoteMembersByHome(roster);
-  const [open, setOpen] = (0, import_react.useState)("");
-  if (homes.length === 0) return null;
-  return (0, import_react.createElement)(
-    "div",
-    { className: "bt-flybot-section bt-remote-members", "data-flybot": "remote-members" },
-    (0, import_react.createElement)("div", { className: "bt-flybot-title" }, "Remote members"),
-    homes.map((home) => (0, import_react.createElement)(
-      "div",
-      { key: home.home, className: "bt-remote-home", title: home.home },
-      (0, import_react.createElement)("div", { className: "bt-remote-home-name" }, home.name),
-      home.bots.map((bot) => (0, import_react.createElement)(
-        import_react.Fragment,
-        { key: bot.handle },
-        (0, import_react.createElement)(
-          "button",
-          { type: "button", className: "bt-remote-member", title: `Message ${bot.handle}`, "aria-expanded": open === bot.handle, onClick: () => setOpen(open === bot.handle ? "" : bot.handle) },
-          (0, import_react.createElement)("span", { className: "bt-remote-name" }, bot.name),
-          (0, import_react.createElement)("span", { className: "bt-remote-badge" }, "remote")
-        ),
-        open === bot.handle ? (0, import_react.createElement)(RemoteCompose, { bot, roster, onDone: () => setOpen("") }) : null
-      ))
-    ))
-  );
-}
-var MAX_FILE_BYTES = 20 * 1024 * 1024;
-var readBase64 = (file) => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ""));
-  reader.onerror = () => reject(reader.error);
-  reader.readAsDataURL(file);
-});
-function RemoteCompose({ bot, roster, onDone }) {
-  const bots = roster.bots ?? [];
-  const [from, setFrom] = (0, import_react.useState)((bots.find((b) => b.isMain) ?? bots[0])?.id ?? "");
-  const [text, setText] = (0, import_react.useState)("");
-  const [files, setFiles] = (0, import_react.useState)([]);
-  const [status, setStatus] = (0, import_react.useState)("");
-  const submit = async (event) => {
-    event.preventDefault();
-    const big = files.find((file) => file.size > MAX_FILE_BYTES);
-    if (big) return setStatus(`${big.name} is over 20 MB`);
-    setStatus("Sending…");
-    try {
-      const payload = await Promise.all(files.map(async (file) => ({ name: file.name, mime: file.type, content_base64: await readBase64(file) })));
-      const result = await call2(`${bot.plugin ?? "social"}/send`, { from, to: bot.handle, text: text || `${payload.length} file(s)`, files: payload });
-      const value = result?.value ?? result;
-      setStatus(value?.action === "hold" ? "Waiting for your approval" : value?.action === "deny" ? `Not sent: ${value.reason}` : "Sent");
-      if (value?.action !== "deny") {
-        setText("");
-        setFiles([]);
-        setTimeout(onDone, 1500);
-      }
-    } catch (error) {
-      setStatus(String(error?.message ?? error));
-    }
-  };
-  return (0, import_react.createElement)(
-    "form",
-    { className: "bt-remote-compose", onSubmit: submit },
-    (0, import_react.createElement)("select", { value: from, "aria-label": "Send as", onChange: (e) => setFrom(e.target.value) }, bots.map((b) => (0, import_react.createElement)("option", { key: b.id, value: b.id }, b.name))),
-    (0, import_react.createElement)("textarea", { value: text, placeholder: `Message ${bot.handle}`, onChange: (e) => setText(e.target.value) }),
-    (0, import_react.createElement)("input", { type: "file", multiple: true, "aria-label": "Attach files", onChange: (e) => setFiles([...e.target.files].slice(0, 5)) }),
-    files.length ? (0, import_react.createElement)("div", null, files.map((file) => `${file.name} · ${fileSize(file.size)}`).join(", ")) : null,
-    (0, import_react.createElement)("button", { type: "submit", disabled: !from || !text.trim() && files.length === 0 }, "Send"),
-    status ? (0, import_react.createElement)("div", { role: "status" }, status) : null
-  );
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error) {
+    console.error(`flybot: ${this.props.id} failed`, error);
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+};
+function Safe({ entry, props }) {
+  return (0, import_react.createElement)(SlotBoundary, { id: entry.id }, (0, import_react.createElement)(entry.component, props));
 }
 function useSidebarStructure() {
   return useSlot("flybot.sidebar.structure")[0];
@@ -1411,7 +1359,7 @@ function FlyBotApprovals() {
   };
   return (0, import_react.createElement)(
     "div",
-    { className: "bt-flybot-approvals", role: "region", "aria-label": "Messages waiting for your approval" },
+    { className: "bt-flybot-approvals", role: "region", "aria-label": t("Messages waiting for your approval") },
     pending.map((approval) => {
       const custom = entries2.find((entry) => entry.policy === void 0 || entry.policy === approval.by);
       if (custom) return (0, import_react.createElement)("div", { key: approval.id }, (0, import_react.createElement)(Safe, { entry: custom, props: { approval, decide: (decision) => decide(approval.id, decision), call: call2 } }));
@@ -1419,15 +1367,15 @@ function FlyBotApprovals() {
       return (0, import_react.createElement)(
         "div",
         { key: approval.id, className: "bt-flybot-approval" },
-        (0, import_react.createElement)("div", { className: "bt-flybot-approval-head" }, approval.status === "failed" ? `Not sent to ${to} · ${approval.error ?? "failed"}` : `Message to ${to} · ${approval.reason}`),
+        (0, import_react.createElement)("div", { className: "bt-flybot-approval-head" }, approval.status === "failed" ? t("Not sent to {to} · {reason}", { to, reason: approval.error ?? t("failed") }) : t("Message to {to} · {reason}", { to, reason: approval.reason })),
         (0, import_react.createElement)("div", { className: "bt-flybot-approval-text" }, approval.request.text),
-        approval.request.attachments?.length ? (0, import_react.createElement)("ul", { className: "bt-flybot-approval-files", "aria-label": "Attached files" }, approval.request.attachments.map((file, index) => (0, import_react.createElement)("li", { key: index, title: file.path ?? file.name }, `${file.name} · ${fileSize(file.size)}`, file.path ? (0, import_react.createElement)("div", { className: "bt-flybot-approval-path" }, file.path) : null))) : null,
+        approval.request.attachments?.length ? (0, import_react.createElement)("ul", { className: "bt-flybot-approval-files", "aria-label": t("Attached files") }, approval.request.attachments.map((file, index) => (0, import_react.createElement)("li", { key: index, title: file.path ?? file.name }, `${file.name} · ${fileSize(file.size)}`, file.path ? (0, import_react.createElement)("div", { className: "bt-flybot-approval-path" }, file.path) : null))) : null,
         (0, import_react.createElement)(
           "div",
           { className: "bt-flybot-approval-actions" },
-          approval.status === "failed" ? (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "retry") }, "Retry") : null,
-          approval.status === "failed" ? null : (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "approve") }, "Approve"),
-          approval.status === "failed" ? null : (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "reject") }, "Reject")
+          approval.status === "failed" ? (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "retry") }, t("Retry")) : null,
+          approval.status === "failed" ? null : (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "approve") }, t("Approve")),
+          approval.status === "failed" ? null : (0, import_react.createElement)("button", { type: "button", disabled: busy === approval.id, onClick: () => decide(approval.id, "reject") }, t("Reject"))
         )
       );
     }),
@@ -1439,14 +1387,10 @@ var FLYBOT_CSS = `
 .bt-flybot-approval-files { margin: 0 0 8px; padding-left: 18px; font-size: 12px; }
 .bt-file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0 30px; }
 .bt-file-chip { font-size: 12px; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--bt-line, rgba(0,0,0,.15)); background: transparent; cursor: pointer; }
-.bt-remote-compose { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 8px; font-size: 12px; }
-.bt-remote-compose textarea { font: inherit; min-height: 48px; }
-.bt-remote-badge { font-size: 10px; padding: 0 5px; margin-left: 6px; border-radius: 6px; background: rgba(120,120,160,.18); text-transform: lowercase; }
-.bt-remote-member { display: flex; align-items: center; padding: 2px 12px; font-size: 13px; }
-.bt-remote-home-name { padding: 4px 12px 0; font-size: 11px; opacity: .7; }
 
 .bt-flybot-section { margin-top: 8px; border-top: 1px solid var(--bt-line, rgba(0,0,0,.08)); padding-top: 6px; }
-.bt-flybot-approvals { position: fixed; right: 16px; bottom: 16px; z-index: 50; display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
+.bt-flybot-approvals { position: fixed; right: 16px; bottom: 16px; z-index: 50; display: flex; flex-direction: column; gap: 8px; max-width: 360px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.bt-flybot-approval-error { color: var(--bt-danger, #d33); font-size: 12px; }
 .bt-flybot-approval { background: var(--bt-card, #fff); border: 1px solid var(--bt-line, rgba(0,0,0,.12)); border-radius: 10px; padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); font-size: 13px; }
 .bt-flybot-approval-head { font-weight: 600; margin-bottom: 4px; }
 .bt-flybot-approval-text { white-space: pre-wrap; max-height: 120px; overflow: auto; margin-bottom: 8px; }
