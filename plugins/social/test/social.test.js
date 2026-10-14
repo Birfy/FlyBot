@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { createHash } from 'node:crypto'
 import { test } from 'node:test'
-import { apply as applyDsBot } from '../../../index.js'
-import { fakeContext } from '../../../test/fake-ctx.js'
+import { apply as applyDsBot } from 'ds-bot'
+import { fakeContext } from './fake-ctx.js'
 import { inject, name } from '../index.js'
 import { createSocial, startSocial } from '../src/social.js'
 import { createMcpClient, untrustedText } from '../src/mcp-client.js'
@@ -172,7 +172,7 @@ test('any local Bot can message any Bot of a friend home; the send is held, then
   assert.equal(ctx.flybot.bot.isRemote('a'), false)
   assert.match(await tool('list_friend_bots', {}, 'b'), /Bob \(@bob\.home, Bob\):\n- @coder\.bob\.home \(Coder\)\n- @writer\.bob\.home \(Writer\)/)
   const seen = []
-  ctx.flybot.bot.send.use({ name: 'spy', before: ['social'], handle: msg => { seen.push(msg.target) } })
+  ctx.flybot.bot.send.use({ name: 'spy', priority: ctx.flybot.bot.send.priority.ROUTING, handle: msg => { seen.push(msg.target) } })
   assert.match(await tool('message_friend_bot', { to: '@coder.bob.home', message: 'review my PR?' }, 'b'), /Waiting for the user's approval/)
   assert.deepEqual(seen[0], { remote: true, handle: '@coder.bob.home', home: '@bob.home' })
   const [pending] = ctx.flybot.approvals.list()
@@ -228,7 +228,7 @@ test('friends\' remote Bots are chat members: in the roster, @-mentioned through
   assert.equal(ctx.flybot.bot.list().some(bot => bot.id.startsWith('@')), false)
   // The user's "@coder.bob.home" in Writer's chat goes out through bot.send and the social policy (held).
   const seen = []
-  ctx.flybot.bot.send.use({ name: 'spy', before: ['social'], handle: msg => { seen.push({ from: msg.from, target: msg.target, via: msg.via }) } })
+  ctx.flybot.bot.send.use({ name: 'spy', priority: ctx.flybot.bot.send.priority.ROUTING, handle: msg => { seen.push({ from: msg.from, target: msg.target, via: msg.via }) } })
   ctx.emitArgs('session/event', { id: 'b' }, { type: 'user/message', seq: 4, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '@coder.bob.home can you review this? cc @nobody.home' }] } })
   ctx.emitArgs('session/event', { id: 'b' }, { type: 'user/message', seq: 4, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '@coder.bob.home can you review this? cc @nobody.home' }] } })
   for (let i = 0; i < 50 && ctx.flybot.approvals.list().length === 0; i++) await settle()

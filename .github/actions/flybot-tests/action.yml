@@ -1,8 +1,9 @@
 name: FlyBot tests
 description: >-
-  Node, npm ci, the DSH harness, lint, the client bundle check, ds-bot's suite and the social
-  and tree plugin suites (optionally as one coverage run). Used by Test (the PR gate); the
-  Compatibility legs (nightly.yml) can use it too, to run the same checks.
+  Node, npm ci, the DSH harness, lint, the client bundle check and core's (ds-bot) suite
+  (optionally as a coverage run), plus the peer plugin suites under plugins/ unless
+  plugins is 'false'. Test (the PR gate) runs core here and each plugin in its own
+  `plugins (<name>)` job; the Compatibility legs (nightly.yml) can use it for everything.
 inputs:
   node:
     description: Node.js version
@@ -14,6 +15,10 @@ inputs:
     description: "'true': run all suites in one coverage run and upload lcov"
     required: false
     default: 'false'
+  plugins:
+    description: "'false': core only (the plugins/* suites run elsewhere)"
+    required: false
+    default: 'true'
 runs:
   using: composite
   steps:
@@ -42,25 +47,33 @@ runs:
       shell: bash
       working-directory: core
       run: node scripts/build-client.mjs --check
-    # ds-bot's suite (incl. tree-host / tree-plugin / bot-tree: the tree plugin on a real
-    # ds-bot), then each plugin's own suite (social; tree's test/tree.test.js).
+    # Core's suite (incl. bot-tree: the public flybot.sidebar.structure slot), then each peer
+    # plugin's own suite and lint (plugins/social, plugins/tree; each also tests against core/).
     - name: Unit tests
       if: inputs.coverage != 'true'
       shell: bash
       working-directory: core
       run: npm test
+    - name: Plugin lint
+      if: inputs.plugins != 'false'
+      shell: bash
+      run: node scripts/lint-plugins.mjs
     - name: Plugin tests (social)
-      if: inputs.coverage != 'true'
+      if: inputs.plugins != 'false'
       shell: bash
-      working-directory: core/plugins/social
-      run: node --import ../../test/harness-resolve.mjs --test "test/*.test.js"
+      working-directory: plugins/social
+      env:
+        DSH_HARNESS: ${{ github.workspace }}/core/dev/harness
+      run: npm test
     - name: Plugin tests (tree)
-      if: inputs.coverage != 'true'
+      if: inputs.plugins != 'false'
       shell: bash
-      working-directory: core/plugins/tree
-      run: node --test "test/*.test.js"
-    # The same three suites in one run, so coverage spans ds-bot and both plugins.
-    - name: Unit and plugin tests with coverage
+      working-directory: plugins/tree
+      env:
+        DSH_HARNESS: ${{ github.workspace }}/core/dev/harness
+      run: npm test
+    # Core's suite as a coverage run (each plugin runs its own suite).
+    - name: Unit tests with coverage
       if: inputs.coverage == 'true'
       shell: bash
       working-directory: core
@@ -72,9 +85,9 @@ runs:
         node --import ./test/harness-resolve.mjs --test --experimental-test-coverage \
           --test-reporter=spec --test-reporter-destination=stdout \
           --test-reporter=lcov --test-reporter-destination=lcov.info \
-          "test/*.test.js" "plugins/social/test/*.test.js" "plugins/tree/test/*.test.js" | tee test-output.txt
+          "test/*.test.js" | tee test-output.txt
         {
-          echo "### Coverage: ds-bot + social + tree (Node $NODE_V, DSH $DSH)"
+          echo "### Coverage: core (ds-bot) (Node $NODE_V, DSH $DSH)"
           echo '```'
           grep -E 'file +\| line %|all files' test-output.txt | sed 's/^ℹ //' | head -2
           echo '```'

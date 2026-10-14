@@ -5,9 +5,10 @@ All notable changes to DS Bot are listed here. The format follows [Keep a Change
 ## [Unreleased]
 
 ### Changed
-- The core is now pristine upstream ds-bot (`ds-bot/`, pinned at Fei2411/DeepSeek-Bot@2b10c70) plus FlyBot's ordered patch series (`patches/ds-bot/`), applied into the committed `core/` (#34). Install paths move from `path:/ds-bot` to `path:/core` and `path:/core/plugins/{social,tree}`. The core's version is `0.1.5-flybot.1`.
+- The core is now pristine upstream ds-bot (`ds-bot/`, pinned at Fei2411/DeepSeek-Bot@2b10c70) plus FlyBot's ordered patch series (`patches/ds-bot/`), applied into the committed `core/` (#34). Install paths move from `path:/ds-bot` to `path:/core` and `path:/plugins/{social,tree}`. The core's version is `0.1.5-flybot.1`.
 - Send middleware can set a `priority` (`ROUTING` 100, `DEFAULT` 500, `APPROVAL` 900; `flybot.bot.send.priority`); names in `before`/`after` still work and win over priority. `@flybot/social` runs at `APPROVAL`.
 - `types/flybot.d.ts` documents the browser `flybot` service and its slots.
+- The plugins are peer packages at the repo root: `@flybot/tree` (`plugins/tree`, by recursive-bot) and `@flybot/social` (`plugins/social`, moved out of `core/plugins/social`). Each needs `ds-bot >=0.1.5-flybot.1`, tests itself against `core/`, and has its own CI job (`plugins (tree)`, `plugins (social)`, both required by `tests-ok`). Reinstall the social plugin from `path:/plugins/social`.
 
 ## [0.1.5] - 2026-10-13
 

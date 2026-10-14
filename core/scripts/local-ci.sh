@@ -52,8 +52,8 @@ npm test
 
 step="plugin tests (social)"
 echo "=== $step ==="
-(cd plugins/social && node --import ../../test/harness-resolve.mjs --test "test/*.test.js")
+(cd ../plugins/social && npm test)
 
 step="plugin tests (tree)"
 echo "=== $step ==="
-(cd plugins/tree && node --test "test/*.test.js")
+(cd ../plugins/tree && npm test)

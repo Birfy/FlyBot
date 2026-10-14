@@ -7,16 +7,26 @@
 //   on('change' | 'bot.created' | 'bot.removed', fn, { all? }) -> dispose
 //     'change' hears only this plugin's fields unless { all: true }
 //     'bot.removed' payload: { botId, bot: BotView } after deletion
-//   bot.send.use({ name, before?, after?, handle(msg) }) -> dispose
+//   bot.send.use({ name, priority?, before?, after?, handle(msg) }) -> dispose   (bands: bot.send.priority)
 //     msg.target: { remote: false, id } | { remote: true, handle, home }
 //   bot.isRemote(ref) -> boolean ({ kind: 'remote' } or '@handle'; local ids never)
 //   tools.register({ name, description, parameters, visibleTo(botId) SYNC, execute(args, { botId }) })
 //     NOTE: JSON Schema minLength/maxLength are dropped by register; execute() validates them.
 export const NS = 'flybot-tree'
+// The ctx.flybot API version this plugin is written against (types/flybot.d.ts, FLYBOT_API_VERSION).
+export const FLYBOT_API = 1
+// Send-middleware priority: tree is a ROUTING policy (parent/child edges), so it runs before
+// DEFAULT policies and APPROVAL holds (social). Bands come from the core
+// (flybot.bot.send.priority: ROUTING 100 / DEFAULT 500 / APPROVAL 900, ds-bot >=0.1.5-flybot.1);
+// the fallback only covers hosts or mocks without the field.
+export const SEND_PRIORITY_FALLBACK = Object.freeze({ ROUTING: 100, DEFAULT: 500, APPROVAL: 900 })
 
 export function createAdapter(flybot) {
   if (!flybot) throw new Error('@flybot/tree needs ctx.flybot (ds-bot flybot hooks)')
   if (typeof flybot.scope !== 'function') throw new Error('@flybot/tree needs ctx.flybot.scope (flybot API v1)')
+  if (flybot.version !== undefined && flybot.version !== FLYBOT_API) {
+    throw new Error(`@flybot/tree needs flybot API v${FLYBOT_API}, ds-bot provides v${flybot.version}`)
+  }
   const fb = flybot.scope(NS)
   const { bot, fields, tools } = fb
   return {
@@ -35,7 +45,7 @@ export function createAdapter(flybot) {
       fn({ botId: e?.botId ?? e?.bot?.id, parent: own?.parent ?? (own?.treeRole !== undefined ? null : undefined) })
     }),
     isRemote: ref => bot.isRemote?.(ref) === true,
-    useSend: (name, handle) => bot.send.use({ name, before: ['social'], handle }),
+    useSend: (name, handle) => bot.send.use({ name, priority: (bot.send.priority ?? SEND_PRIORITY_FALLBACK).ROUTING, handle }),
     registerTool: spec => tools.register(spec),
   }
 }

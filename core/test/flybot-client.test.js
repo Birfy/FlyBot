@@ -74,7 +74,7 @@ test('remote members: @ rows insert the handle, the sidebar groups by home, bubb
 
 test('every client bundle registers under its package name, as the DSH module loader looks it up', async () => {
   const { readFileSync } = await import('node:fs')
-  for (const dir of ['.', 'plugins/social', 'plugins/tree']) {
+  for (const dir of ['.']) { // @flybot/social and @flybot/tree check their own (plugins/*, #34)
     const pkg = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8'))
     const client = readFileSync(new URL(`../${dir}/client.js`, import.meta.url), 'utf8')
     const id = client.match(/__ModuleLoader__\.load\(\{\s*id:\s*'([^']+)'/)?.[1]

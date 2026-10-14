@@ -38,8 +38,7 @@
     "src/client/styles.js",
     "src/client/icons.js",
     "test/flybot-client.test.js",
-    "test/bot-tree.test.js",
-    "test/web-entries.test.js"
+    "test/bot-tree.test.js"
   ],
   "0004-flybot-api-types": [
     "types/flybot.d.ts"
@@ -50,13 +49,6 @@
     "src/host/delivery.js",
     "test/remote-chat.test.js",
     "test/inbound-ui.test.js"
-  ],
-  "0006-flybot-plugins": [
-    "plugins/",
-    "test/social-plugin.test.js",
-    "test/tree-plugin.test.js",
-    "test/tree-host.test.js",
-    "scripts/lint.mjs"
   ],
   "0007-version-and-tooling": [
     "package.json",
