@@ -143,7 +143,7 @@ test('an own chat\'s approval stays with DSH and is listed while it waits', asyn
   release('rejected')
   assert.equal(await outcome, 'rejected')
   assert.deepEqual((await host.call('state', {})).value.work.approvals, [])
-  // Sessions off the team are not DS Bot's to answer.
+  // Sessions off the team are not FlyBot's to answer.
   assert.equal(await host.askApproval('elsewhere'), 'from-dsh')
 })
 

@@ -1,23 +1,23 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-    <img src="docs/images/logo.svg" alt="DeepSeek Bot" width="260">
+    <img src="docs/images/logo.svg" alt="FlyBot" width="260">
   </picture>
 </p>
 
-# DeepSeek Bot
+# FlyBot
 
 [English](README.md) | 中文
 
 ![版本](https://img.shields.io/badge/版本-v0.1_预览-blue) ![DSH](https://img.shields.io/badge/DSH-0.2.0--rc.2-4D6BFE) ![许可](https://img.shields.io/badge/许可-Apache_2.0-green)
 
-DeepSeek Bot（简称 DS Bot）是一个基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（简称 dsh）的 bot 插件，插件将 dsh 改造为 bot 形式。你可以与自己创建的 bot 交流、工作。
+FlyBot 是一个基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（简称 dsh）的 bot 插件，插件将 dsh 改造为 bot 形式。你可以与自己创建的 bot 交流、工作。
 
 ![和 Chief 说一句话，它就把 bot 和群聊建好](docs/images/team.zh.png)
 
 ## 安装
 
-先装好 dsh，并在 dsh 里配好至少一个模型。ds bot 直接使用 dsh 里的模型。
+先装好 dsh，并在 dsh 里配好至少一个模型。FlyBot 直接使用 dsh 里的模型。
 
 **dsh Desktop（Windows、macOS）**
 
@@ -52,13 +52,13 @@ npx @deepseek-ai/dsh@0.2.0-rc.2 web
 
 ### Main bot
 
-这个 bot 作为你的 chief，它拥有非常高的权限，可以管理其他 bot 和群聊。第一次进入 ds bot 时，默认会有一个 main bot 叫 Chief。你可以直接和它对话，让它引导你完成配置。
+这个 bot 作为你的 chief，它拥有非常高的权限，可以管理其他 bot 和群聊。第一次进入 FlyBot 时，默认会有一个 main bot 叫 Chief。你可以直接和它对话，让它引导你完成配置。
 
 总之，有问题，找 main bot。
 
 ### 群聊
 
-ds bot 拥有群聊功能。群聊是非常好的多 bot 协作方式，但它会带来非常明显的费用问题。ds bot 为此特意做了优化：在一个群聊中，你需要设置一个管理员。你的消息默认由管理员回复，它会帮你调用其他 bot。你也可以直接 @ 你需要沟通的 bot，它会直接回应你：输入 @，从列表里选 bot 就行。想让 bot 参考另一段对话，点输入框的 + → 引用对话。
+FlyBot 拥有群聊功能。群聊是非常好的多 bot 协作方式，但它会带来非常明显的费用问题。FlyBot 为此特意做了优化：在一个群聊中，你需要设置一个管理员。你的消息默认由管理员回复，它会帮你调用其他 bot。你也可以直接 @ 你需要沟通的 bot，它会直接回应你：输入 @，从列表里选 bot 就行。想让 bot 参考另一段对话，点输入框的 + → 引用对话。
 
 任何 bot 都可以用 @ 把活派给另一个 bot。接活的 bot 自己去做，群聊照常进行。它干活时，群聊、侧边栏和它自己的聊天里都能看到它在做什么。做完后，它把结果发到群里，由派活的 bot 接着回应。要停下它的工作，打开群聊详情。
 
@@ -84,16 +84,16 @@ ds bot 拥有群聊功能。群聊是非常好的多 bot 协作方式，但它�
 
 ## 致谢
 
-- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)：ds bot 建在 dsh 的插件系统上。每个 bot 都是一个 dsh 会话，用的是 dsh 的工具和模型。
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)：FlyBot 建在 dsh 的插件系统上。每个 bot 都是一个 dsh 会话，用的是 dsh 的工具和模型。
 - [esbuild](https://esbuild.github.io/)：用来打包插件的界面代码。
-- 感谢下面这些项目公开的设计思路。ds bot 参考了它们的思路，没有使用它们的代码：
+- 感谢下面这些项目公开的设计思路。FlyBot 参考了它们的思路，没有使用它们的代码：
   - [AgentMemoryRepo](https://github.com/AgentMemoryRepo/agentmemoryrepo)：bot 记忆的 Markdown 格式。
   - [OpenAI Codex](https://github.com/openai/codex)：压缩时把用户原话留在摘要旁边，以及搜索聊天记录用的消息锚点。
   - [OpenMausBot](https://github.com/milind-soni/OpenMausBot)：群聊轮流发言和 @ 接力。
   - [Hermes Agent](https://github.com/NousResearch/hermes-agent) 和 [Hermes Bot Mode](https://github.com/NousResearch/Hermes-Bot-Mode)：每个成员在每个群里一个会话，以及交接时带上用户之前的原话。
   - [OpenCode](https://github.com/sst/opencode)、[goose](https://github.com/block/goose)、[pi](https://github.com/badlogic/pi-mono)、[Gemini CLI](https://github.com/google-gemini/gemini-cli)：长对话什么时候压缩，交接笔记写哪些内容。
   - [obelisk](https://github.com/tommy0103/obelisk)：用 SQLite 全文索引搜索聊天记录。
-- 每一位试用 ds bot、提问题、报 bug 的人。
+- 每一位试用 FlyBot、提问题、报 bug 的人。
 
 ## 许可
 
@@ -101,13 +101,13 @@ ds bot 拥有群聊功能。群聊是非常好的多 bot 协作方式，但它�
 
 ## 声明
 
-ds bot 是独立的社区项目，**不是 DeepSeek 官方产品**，与 DeepSeek 没有隶属、认可或赞助关系。“DeepSeek”“DeepSeek Harness”等名称是各自所有者的商标，这里只用来说明本插件和什么一起用。
+FlyBot 是独立的社区项目，**不是 DeepSeek 官方产品**，与 DeepSeek 没有隶属、认可或赞助关系。“DeepSeek”“DeepSeek Harness”等名称是各自所有者的商标，这里只用来说明本插件和什么一起用。
 
 bot 会消耗你自己的模型额度，也会按你的要求读写文件、运行命令。重要的操作请自己检查。
 
 ## FlyBot 插件架构
 
-FlyBot = DS Bot（`ds-bot/`）+ 功能插件。扩展接口由 ds-bot 自己提供，插件无需改动 ds-bot。
+FlyBot = FlyBot（`ds-bot/`）+ 功能插件。扩展接口由 ds-bot 自己提供，插件无需改动 ds-bot。
 
 ### 安装 FlyBot（全新 profile）
 
@@ -115,9 +115,9 @@ FlyBot = DS Bot（`ds-bot/`）+ 功能插件。扩展接口由 ds-bot 自己提�
 `cordis.patch.yml` 里启用（social 需要填 Bot Social 服务器地址）：
 
 ```sh
-npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot"
-npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot/plugins/social"
-npx @deepseek-ai/dsh plugin --profile web add "github:Birfy/FlyBot#flybot-plugins&path:/ds-bot/plugins/tree"
+npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot"
+npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot/plugins/social"
+npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/ds-bot/plugins/tree"
 ```
 
 之后在 profile 目录里运行 `pnpm update ds-bot @flybot/social @flybot/tree` 更新，再重启 DSH。
