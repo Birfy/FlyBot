@@ -22,7 +22,7 @@ FlyBot agent work uses a small, visible loop. Adapt the *habits* below; do not c
 
 ## What this project is
 
-DS Bot is a team of long-lived Bots, built on DeepSeek Harness (DSH). It has two parts:
+FlyBot is a team of long-lived Bots, built on DeepSeek Harness (DSH). It has two parts:
 
 - `ds-bot/`: pristine upstream ds-bot (Fei2411/DeepSeek-Bot), pinned in `ds-bot.pin.json`. **Never edit it.**
 - `patches/ds-bot/`: FlyBot's ordered patches on it; see `patches/ds-bot/README.md`.
