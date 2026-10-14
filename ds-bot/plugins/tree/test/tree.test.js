@@ -213,8 +213,10 @@ test('client registers the sidebar slot and builds a forest', () => {
   globalThis.window = { __ModuleLoader__: { load: ({ id, factory }) => { assert.equal(id, '@flybot/tree'); mod = factory(() => ({ createElement() {}, useEffect() {}, useState() {}, useCallback() {} })) } } }
   new Function(readFileSync(new URL('../client.js', import.meta.url), 'utf8'))()
   const reg = []
-  mod.apply({ slots: { register: (o, c) => reg.push([o, c]) }, flybot: {} })
-  assert.equal(reg[0][0].name, 'flybot.sidebar.section')
+  assert.deepEqual(mod.inject, ['flybot'])
+  mod.apply({ flybot: { slots: { register: (name, entry) => { reg.push([name, entry]); return () => {} } } } })
+  assert.equal(reg[0][0], 'flybot.sidebar.section')
+  assert.equal(reg[0][1].id, 'flybot-tree')
   const fo = mod.buildForest({ r: { id: 'r', name: 'Root', parent: null }, w: { id: 'w', name: 'Work', parent: 'r' }, d: { id: 'd', name: 'Dev', parent: 'w' } })
   assert.equal(fo[0].children[0].children[0].name, 'Dev')
 })

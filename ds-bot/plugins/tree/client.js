@@ -44,8 +44,9 @@ window.__ModuleLoader__.load({
         const refresh = useCallback(async () => { try { setForest(buildForest((await treeOf(flybot)).nodes)) } catch { /* keep last */ } }, [])
         useEffect(() => {
           refresh()
-          const offs = [flybot.fields.on('change', c => { if (c && (c.key === 'parent' || c.key === 'treeRole')) refresh() })]
-          offs.push(flybot.on('bot.removed', refresh))
+          const offs = [flybot.fields.on('change', c => { if (c && (c.key === 'parent' || c.key === 'treeRole' || c.removed)) refresh() })]
+          // The browser API has no bot events; a removed Bot shows up through field changes and the poll.
+          if (typeof flybot.on === 'function') offs.push(flybot.on('bot.removed', refresh))
           return () => { for (const off of offs) off?.() }
         }, [refresh])
         return h('section', { className: 'flybot-tree' },
@@ -54,9 +55,13 @@ window.__ModuleLoader__.load({
       }
     }
 
-    const inject = ['slots', 'flybot']
+    // 'flybot.sidebar.section' is a FlyBot registry slot (ds-bot renders it), not a DSH
+    // shell slot, so the section goes in through the browser flybot service.
+    const inject = ['flybot']
     function apply(ctx) {
-      ctx.slots.register({ name: 'flybot.sidebar.section', id: 'flybot-tree', order: 100 }, makeSection(ctx.flybot))
+      const off = ctx.flybot.slots.register('flybot.sidebar.section', { id: 'flybot-tree', order: 100, component: makeSection(ctx.flybot) })
+      ctx.effect?.(() => off, 'flybot-tree: sidebar section')
+      return off
     }
     return { inject, apply, buildForest, treeOf }
   },
