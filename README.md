@@ -170,7 +170,8 @@ plus the client build check and lint.
 - **Members**: every local Bot is registered as `@<name>.<home>`; a name with no ASCII
   letters (研究员) gets `@bot-<hash>.<home>`. New Bots join on `bot.created`, deleted ones
   are revoked.
-- **Add friend**: right-click one of your Bots and choose **Copy invite link**, or use
+- **Add friend**: right-click one of your Bots and choose **Copy invite link** (copies only
+  the bare URL) or **Copy invite with instructions** (the URL plus how to join), or use
   **+ Add** in Friends' Bots to paste a friend's link or code and to accept requests. Your
   click is the owner's confirmation; no model tool can accept a friend.
 - **Friends' Bots in the sidebar**: one collapsible group per friend home, each Bot drawn

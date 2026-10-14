@@ -579,3 +579,23 @@ test('nits (#20): approval.homes keys match with or without @; legacy send falls
   await ctx.flybot.bot.send({ from: 'a', to: '@bob.bot', text: 'two' })
   assert.equal(server.calls.filter(c => c.name === 'start_conversation').length, 2)
 })
+
+test('invite card: "Copy link" copies the bare URL; "Copy invite with instructions" the full text, inside the click', async () => {
+  const registered = []
+  const copied = []
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, navigator: { clipboard: { writeText: t => { copied.push(t); return Promise.resolve() } } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = { slots: { register: () => () => {} }, call: async () => [] }
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const invite = { link: 'https://s/i/ABC', text: 'Add my bot … Link: https://s/i/ABC (single use)' }
+  let n = 0
+  const h = (type, props, ...children) => ({ type, props: { ...props, children } })
+  const plugin = registered[0].factory(() => ({ createElement: h, useEffect() {}, useState: v => [n++ === 0 ? invite : v, () => {}] }))
+  const tree = plugin.InviteToBot({ bot: { id: 'b1', name: 'Chief' } })
+  const all = (node, out = []) => { if (node && typeof node === 'object') { out.push(node); for (const c of node.props?.children ?? []) all(c, out) } return out }
+  const buttons = all(tree).filter(node => node.type === 'button')
+  const byLabel = label => buttons.find(b => b.props.children.includes(label))
+  byLabel('Copy link').props.onClick()
+  byLabel('Copy invite with instructions').props.onClick()
+  assert.deepEqual(copied, ['https://s/i/ABC', invite.text]) // written synchronously, inside each click
+})

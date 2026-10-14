@@ -171,18 +171,22 @@ window.__ModuleLoader__.load({
       } finally { area.remove() }
     }
     /**
-     * createInvite + copy the full instruction message (`text`, never the bare link); resolves
-     * { tone: 'ok', text: 'Copied' } or { tone: 'error', text }. Where ClipboardItem exists the
-     * clipboard write starts synchronously, inside the click, with the text arriving as a promise:
-     * the write keeps the click's permission even when the invite takes seconds to create.
+     * createInvite + copy it; resolves { tone: 'ok', text: 'Copied' } or { tone: 'error', text }.
+     * kind 'link' (the default, "Copy invite link") copies only the bare URL; kind 'text'
+     * ("Copy invite with instructions") copies the full message. A missing field is an error,
+     * never a silent swap for the other one. Where ClipboardItem exists the clipboard write
+     * starts synchronously, inside the click, with the text arriving as a promise: the write
+     * keeps the click's permission even when the invite takes seconds to create.
      */
-    async function copyInvite(flybot, botId) {
+    async function copyInvite(flybot, botId, kind = 'link') {
       const social = socialOf(flybot)
       const message = (async () => {
         const invite = typeof social?.createInvite === 'function' ? await social.createInvite(botId) : await flybot.call('social.createInvite', { botId })
-        if (typeof invite?.text !== 'string' || !invite.text.trim()) throw new Error('The invite came back without its message')
-        return invite.text
+        const value = kind === 'text' ? invite?.text : (invite?.link ?? invite?.url)
+        if (typeof value !== 'string' || !value.trim()) throw new Error(kind === 'text' ? 'The invite came back without its message' : 'The invite came back without its link')
+        return value
       })()
+      message.catch(() => {})
       try {
         const clip = globalThis.navigator?.clipboard
         const Item = globalThis.ClipboardItem
@@ -199,22 +203,37 @@ window.__ModuleLoader__.load({
         return { tone: 'error', text: String(error?.message ?? error) || 'Could not copy' }
       }
     }
-    /** Right-click menu items for a tree node: "Copy invite link" when social.canInvite(bot.id) is true. */
+    /**
+     * Right-click menu items for a tree node, shown when social.canInvite(bot.id) is true:
+     * "Copy invite link" (bare URL) and "Copy invite with instructions" (full message).
+     */
     function makeMenuItems(flybot) {
       return function menuItems({ bot }) {
         const id = bot?.id
         let can = false
         try { can = Boolean(id) && socialOf(flybot)?.canInvite?.(id) === true } catch { can = false }
-        return [{
-          id: 'copy-invite',
-          label: 'Copy invite link',
-          visible: can,
-          run: async () => {
-            const result = await copyInvite(flybot, id)
-            if (result.tone === 'error') throw new Error(`Could not copy the invite link: ${result.text}`)
-            return `Invite for ${bot.name} copied, with instructions`
+        return [
+          {
+            id: 'copy-invite',
+            label: 'Copy invite link',
+            visible: can,
+            run: async () => {
+              const result = await copyInvite(flybot, id, 'link')
+              if (result.tone === 'error') throw new Error(`Could not copy the invite link: ${result.text}`)
+              return `Invite link for ${bot.name} copied`
+            },
           },
-        }]
+          {
+            id: 'copy-invite-text',
+            label: 'Copy invite with instructions',
+            visible: can,
+            run: async () => {
+              const result = await copyInvite(flybot, id, 'text')
+              if (result.tone === 'error') throw new Error(`Could not copy the invite: ${result.text}`)
+              return `Invite for ${bot.name} copied, with instructions`
+            },
+          },
+        ]
       }
     }
     // Earlier hover button (kept for plugins that still render it; the tree registers menuItems instead).
@@ -247,7 +266,7 @@ window.__ModuleLoader__.load({
           event?.preventDefault?.()
           if (busy) return
           setBusy(true)
-          const result = await copyInvite(flybot, id)
+          const result = await copyInvite(flybot, id, 'link')
           setBusy(false)
           setNote(result)
         }

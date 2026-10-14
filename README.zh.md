@@ -162,7 +162,8 @@ CI（`.github/workflows/test.yml`）运行 ds-bot 的测试（包含每个插件
   `config.token` 或 `FLYBOT_SOCIAL_TOKEN` 优先。
 - **成员**：每个本地 Bot 注册为 `@<名字>.<home>`；没有 ASCII 字母的名字（如 研究员）
   使用 `@bot-<哈希>.<home>`。新 Bot 通过 `bot.created` 加入，删除的 Bot 会被吊销。
-- **加好友**：右键自己的某个 Bot，选择 **Copy invite link**；或在 Friends' Bots 里点
+- **加好友**：右键自己的某个 Bot，选择 **Copy invite link**（只复制链接本身）或
+  **Copy invite with instructions**（链接加加入说明）；或在 Friends' Bots 里点
   **+ Add** 粘贴好友的链接或邀请码、接受请求。你的点击就是主人的确认，模型工具无法替你接受好友。
 - **侧边栏里的好友 Bot**：每个好友 home 一个可折叠分组，每个 Bot 的样子和你自己的 Bot 一样
   （头像、最新消息、未读标记），名字后有一个小地球图标。点击即打开普通对话：你输入的内容发给它，

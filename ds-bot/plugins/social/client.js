@@ -134,7 +134,7 @@ window.__ModuleLoader__.load({
                 : h('div', { key: bot.handle, className: 'fs-hint', title: bot.handle }, `${bot.name} · opening its chat…`)))))
           }),
           data && homes.length === 0 && !adding
-            ? h('div', { className: 'fs-empty' }, 'No friends yet. Right-click one of your Bots and choose ', h('b', null, 'Copy invite link'), ', or use ', h('b', null, '+ Add'), ' to join a friend\'s invite.')
+            ? h('div', { className: 'fs-empty' }, 'No friends yet. Right-click one of your Bots and choose ', h('b', null, 'Copy invite link'), ' (or ', h('b', null, 'Copy invite with instructions'), '), or use ', h('b', null, '+ Add'), ' to join a friend\'s invite.')
             : null) : null)
     }
 
@@ -175,7 +175,7 @@ window.__ModuleLoader__.load({
       const incoming = overview?.incoming ?? []
       const outgoing = overview?.outgoing ?? []
       return h('div', { className: 'bt-social-add', 'data-flybot': 'add-friend' },
-        h('div', { className: 'fs-hint', 'data-flybot': 'invite-hint' }, 'To invite a friend to one of your Bots, right-click it in the Bot list and choose ', h('b', null, 'Copy invite link'), '.'),
+        h('div', { className: 'fs-hint', 'data-flybot': 'invite-hint' }, 'To invite a friend to one of your Bots, right-click it in the Bot list and choose ', h('b', null, 'Copy invite link'), ' for the bare link, or ', h('b', null, 'Copy invite with instructions'), ' for the link with how to join.'),
         h('form', { onSubmit: join, className: 'fs-card bt-social-join' },
           h('div', { className: 'fs-hint' }, 'Got a link from a friend?'),
           h('div', { className: 'fs-line' },
@@ -236,6 +236,7 @@ window.__ModuleLoader__.load({
         setBusy(true); setNote(null)
         try { setInvite(await call('social/create-invite', { botId: bot.id })) } catch (e) { setNote({ tone: 'error', text: errorText(e) }) } finally { setBusy(false) }
       }
+      // Called straight from the click, so the clipboard write keeps its permission.
       const copy = text => {
         const clip = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
         if (clip?.writeText) clip.writeText(text).then(() => setNote({ tone: 'ok', text: 'Copied.' }), () => setNote({ tone: 'error', text: 'Could not copy. Select the link and copy it by hand.' }))
@@ -245,7 +246,8 @@ window.__ModuleLoader__.load({
         h('button', { type: 'button', className: 'fs-btn', disabled: busy, onClick: create }, invite ? 'Create another invite link' : 'Invite to this Bot'),
         invite ? h('div', { className: 'fs-line' },
           h('input', { className: 'fs-input', readOnly: true, value: invite.link, 'aria-label': 'Invite link', onFocus: e => e.target.select() }),
-          h('button', { type: 'button', className: 'fs-btn', onClick: () => copy(invite.text) }, 'Copy')) : null,
+          h('button', { type: 'button', className: 'fs-btn', 'data-flybot': 'copy-link', onClick: () => copy(invite.link) }, 'Copy link'),
+          h('button', { type: 'button', className: 'fs-btn', 'data-flybot': 'copy-invite-text', onClick: () => copy(invite.text) }, 'Copy invite with instructions')) : null,
         note ? h('div', { className: 'fs-status', 'data-tone': note.tone }, note.text) : null)
     }
 

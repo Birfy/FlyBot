@@ -562,7 +562,7 @@ test('sidebar structure: parents from forestOf; retired and outside Bots have no
   dispose()
 })
 
-// ---- per-node "Copy invite link"
+// ---- per-node "Copy invite link" (bare URL) and "Copy invite with instructions"
 const withNavigator = async (nav, fn) => {
   const before = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
   Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true, writable: true })
@@ -579,36 +579,47 @@ test('menu item: structure entry carries menuItems with copy-invite, visible onl
   dispose()
   const b = { id: 'b1', name: '研究员' }
   delete globalThis.__flybot__
-  const item = flybot => mod.makeMenuItems(flybot)({ bot: b })[0]
-  assert.equal(item({}).id, 'copy-invite')
-  assert.equal(item({}).label, 'Copy invite link')
+  const items = flybot => mod.makeMenuItems(flybot)({ bot: b })
+  const item = flybot => items(flybot)[0]
+  const full = flybot => items(flybot)[1]
+  assert.deepEqual(items({}).map(i => [i.id, i.label]), [['copy-invite', 'Copy invite link'], ['copy-invite-text', 'Copy invite with instructions']])
   assert.equal(item({}).visible, false)
+  assert.equal(full({}).visible, false)
   assert.equal(item({ social: { canInvite: () => false } }).visible, false)
   assert.equal(item({ social: { canInvite: () => { throw new Error('x') } } }).visible, false)
   const seen = []
   assert.equal(item({ social: { canInvite: id => { seen.push(id); return true } } }).visible, true)
   assert.deepEqual(seen, ['b1'])
   const copied = []
+  const social = { canInvite: () => true, createInvite: async id => ({ text: 'join ' + id + ' at https://s/i/X', link: 'https://s/i/X' }) }
   await withNavigator({ clipboard: { writeText: async t => { copied.push(t) } } }, async () => {
-    const note = await item({ social: { canInvite: () => true, createInvite: async id => ({ text: 'join ' + id, link: 'L' }) } }).run({ bot: b })
-    assert.equal(note, 'Invite for 研究员 copied, with instructions')
+    // "Copy invite link": the bare URL only, no instructions.
+    assert.equal(await item({ social }).run({ bot: b }), 'Invite link for 研究员 copied')
+    // "Copy invite with instructions": the full message.
+    assert.equal(await full({ social }).run({ bot: b }), 'Invite for 研究员 copied, with instructions')
   })
-  assert.deepEqual(copied, ['join b1'])
+  assert.deepEqual(copied, ['https://s/i/X', 'join b1 at https://s/i/X'])
   await assert.rejects(item({ social: { canInvite: () => true, createInvite: async () => { throw new Error('offline') } } }).run({ bot: b }), /offline/)
-  // Never falls back to the bare link: an invite without its message is an error.
+  // Neither falls back to the other field.
   await withNavigator({ clipboard: { writeText: async t => { copied.push(t) } } }, async () => {
-    await assert.rejects(item({ social: { canInvite: () => true, createInvite: async () => ({ link: 'L', url: 'L' }) } }).run({ bot: b }), /without its message/)
+    await assert.rejects(full({ social: { canInvite: () => true, createInvite: async () => ({ link: 'L' }) } }).run({ bot: b }), /without its message/)
+    await assert.rejects(item({ social: { canInvite: () => true, createInvite: async () => ({ text: 'T' }) } }).run({ bot: b }), /without its link/)
   })
-  assert.deepEqual(copied, ['join b1'])
-  // ClipboardItem path: the write starts inside the click and resolves to the full text.
+  assert.equal(copied.length, 2)
+  // ClipboardItem path: the write starts inside the click (before the invite resolves).
   const writes = []
+  let started = 0
   globalThis.ClipboardItem = class { constructor(parts) { this.parts = parts } }
   try {
-    await withNavigator({ clipboard: { write: async ([it]) => { writes.push(await (await it.parts['text/plain']).text()) }, writeText: async () => { throw new Error('unused') } } }, async () => {
-      await item({ social: { canInvite: () => true, createInvite: async id => ({ text: 'full ' + id, link: 'L' }) } }).run({ bot: b })
+    await withNavigator({ clipboard: { write: async ([it]) => { started++; writes.push(await (await it.parts['text/plain']).text()) }, writeText: async () => { throw new Error('unused') } } }, async () => {
+      const slow = { canInvite: () => true, createInvite: async id => { await new Promise(r => setTimeout(r, 5)); return { text: 'full ' + id, link: 'https://s/i/Y' } } }
+      const pending = item({ social: slow }).run({ bot: b })
+      assert.equal(started, 1) // synchronous with the click
+      await pending
+      await full({ social: slow }).run({ bot: b })
     })
   } finally { delete globalThis.ClipboardItem }
-  assert.deepEqual(writes, ['full b1'])
+  assert.deepEqual(writes, ['https://s/i/Y', 'full b1'])
 })
 
 test('invite action (legacy hover component): hidden without social or when canInvite is false', () => {
@@ -632,7 +643,7 @@ test('invite action (legacy hover component): hidden without social or when canI
   assert.match(mod.INVITE_CSS, /var\(--bt-hover/)
 })
 
-test('invite action: click stops propagation, calls createInvite and copies text (clipboard)', async () => {
+test('invite action: click stops propagation, calls createInvite and copies the bare link (clipboard)', async () => {
   const mod = loadClient()
   const copied = [], calls = []
   const social = { canInvite: () => true, createInvite: async botId => { calls.push(botId); return { botId, link: 'https://x/i/abc', text: 'Join my bot: https://x/i/abc' } } }
@@ -642,25 +653,27 @@ test('invite action: click stops propagation, calls createInvite and copies text
     await btn.props.onClick({ stopPropagation: () => stopped++, preventDefault() {} })
     assert.equal(stopped, 1)
     assert.deepEqual(calls, ['b1'])
-    assert.deepEqual(copied, ['Join my bot: https://x/i/abc'])
+    assert.deepEqual(copied, ['https://x/i/abc'])
+    assert.deepEqual(await mod.copyInvite({ social }, 'b1', 'text'), { tone: 'ok', text: 'Copied' })
+    assert.deepEqual(copied, ['https://x/i/abc', 'Join my bot: https://x/i/abc'])
     assert.deepEqual(await mod.copyInvite({ social }, 'b2'), { tone: 'ok', text: 'Copied' })
     // without social.createInvite it uses flybot.call('social.createInvite', { botId })
     const via = []
-    const r = await mod.copyInvite({ social: { canInvite: () => true }, call: async (name, payload) => { via.push([name, payload]); return { text: 'T' } } }, 'b3')
+    const r = await mod.copyInvite({ social: { canInvite: () => true }, call: async (name, payload) => { via.push([name, payload]); return { text: 'T', link: 'L' } } }, 'b3')
     assert.deepEqual(r, { tone: 'ok', text: 'Copied' }); assert.deepEqual(via, [['social.createInvite', { botId: 'b3' }]])
   })
 })
 
 test('invite action: textarea fallback, and errors become inline messages', async () => {
   const mod = loadClient()
-  const social = { canInvite: () => true, createInvite: async () => ({ text: 'invite text' }) }
+  const social = { canInvite: () => true, createInvite: async () => ({ text: 'invite text', link: 'https://s/i/Z' }) }
   const doc = { body: { appendChild(el) { doc.added = el } }, createElement: () => ({ style: {}, setAttribute() {}, select() { doc.selected = this.value }, remove() { doc.removed = true } }), execCommand: cmd => cmd === 'copy' }
   const beforeDoc = globalThis.document
   globalThis.document = doc
   try {
     await withNavigator({ clipboard: { writeText: async () => { throw new Error('denied') } } }, async () => {
       assert.deepEqual(await mod.copyInvite({ social }, 'b1'), { tone: 'ok', text: 'Copied' })
-      assert.equal(doc.selected, 'invite text'); assert.equal(doc.removed, true)
+      assert.equal(doc.selected, 'https://s/i/Z'); assert.equal(doc.removed, true)
     })
     doc.execCommand = () => false
     await withNavigator({}, async () => {
@@ -670,7 +683,8 @@ test('invite action: textarea fallback, and errors become inline messages', asyn
   await withNavigator({}, async () => {
     assert.deepEqual(await mod.copyInvite({ social }, 'b1'), { tone: 'error', text: 'Clipboard unavailable' })
     assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => { throw new Error('Not connected to Bot Social') } } }, 'b1'), { tone: 'error', text: 'Not connected to Bot Social' })
-    assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => ({}) } }, 'b1'), { tone: 'error', text: 'The invite came back without its message' })
+    assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => ({}) } }, 'b1'), { tone: 'error', text: 'The invite came back without its link' })
+    assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => ({}) } }, 'b1', 'text'), { tone: 'error', text: 'The invite came back without its message' })
   })
 })
 
