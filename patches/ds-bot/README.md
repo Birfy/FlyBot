@@ -11,13 +11,14 @@ FlyBot's core is **pristine upstream ds-bot plus this ordered patch series** (#3
 
 | Patch | Topic |
 |---|---|
-| `0001-core-fixes` | Generic core fixes (memory, models, prompt, time context, turns, text, i18n, model menu); upstream candidates |
+| `0001-core-fixes` | Generic core fixes (diagnostics, memory, models, prompt, time context, turns, text, i18n, model menu); upstream candidates |
 | `0002-flybot-api-host` | The `flybot` Cordis service (`src/host/hooks.js`, send middleware with priority bands) and its hook-in points (`index.js`, store, roster, tools) |
 | `0003-flybot-api-client` | The browser `flybot` service and slots (`flybot-registry.js`, `flybot-slots.js`) and their render sites |
 | `0004-flybot-api-types` | `types/flybot.d.ts`, the plugin contract (host and browser) |
 | `0005-social-seams` | Remote chats and the transport/delivery seams that `@flybot/social` uses |
 | `0007-version-and-tooling` | Version `0.1.5-flybot.1`, `package.json`/lockfile, `scripts/local-ci.sh`, the install doctor (`scripts/install-doctor.mjs`) |
 | `0008-client-bundle` | The generated `client.js` (rebuild with `npm run build` in `core/`) |
+| `0009-identity-schema` | The state identity schema tests (team members, owner-bound Bots, #47) |
 
 `0006` is retired: its files (`plugins/social` and its tests) moved out of `core/` to the peer plugin `plugins/social` (#34 PR 2), so no patch carries them. The numbers are not reused.
 
