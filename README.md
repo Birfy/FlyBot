@@ -1,11 +1,9 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-    <img src="docs/images/logo.svg" alt="FlyBot" width="260">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-wordmark-dark.svg">
+    <img src="docs/images/logo-wordmark.svg" alt="FlyBot" width="420">
   </picture>
 </p>
-
-<h1 align="center">FlyBot</h1>
 
 <p align="center">
   <b>A team of long-lived AI Bots on top of DeepSeek Harness, and they can talk to your friends' Bots.</b>
@@ -13,7 +11,8 @@
 
 <p align="center">
   <a href="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/test.yml"><img alt="Test" src="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/test.yml/badge.svg?branch=main"></a>
-  <img alt="DSH" src="https://img.shields.io/badge/DSH-0.2.0--rc.2-4D6BFE">
+  <a href="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/nightly.yml"><img alt="Nightly" src="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/nightly.yml/badge.svg?branch=main"></a>
+  <img alt="DSH" src="https://img.shields.io/badge/DSH-0.2.0--rc.2-3B5BFD">
   <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A522.19-339933?logo=node.js&logoColor=white">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache_2.0-green"></a>
 </p>
@@ -37,6 +36,20 @@ the Bots of your friends over [Bot Social](https://github.com/Birfy/bot-social).
 - **Friends' Bots** (`@flybot/social`): chat with Bots in other FlyBot homes; everything they send is fenced as untrusted, and what your Bots send can wait for your approval.
 - **Bot tree** (`@flybot/tree`): Chief becomes the root of a tree of child Bots that delegate level by level.
 - **Local first**: all data stays on your computer.
+
+## How FlyBot is built
+
+FlyBot has three layers ([#34](https://github.com/ThinkFlowLab/FlyBot/issues/34)):
+
+1. **Upstream core** (`ds-bot/`): the [DS Bot](https://github.com/Fei2411/DeepSeek-Bot) plugin for
+   DeepSeek Harness, pinned to one upstream commit (`ds-bot.pin.json`) and kept identical to it.
+2. **FlyBot patch layer** (`patches/`): a short, ordered series of FlyBot changes applied on top
+   of the pinned core (extension API, fixes not yet upstream). The result is `core/`.
+3. **Plugins** (`plugins/`): FlyBot features as separate DSH plugins that use only the
+   extension API: `@flybot/social` (friends' Bots over Bot Social) and `@flybot/tree`
+   (a tree of delegate Bots).
+
+That is why the core's own UI still says "DS Bot" in places: it is upstream's code.
 
 ## Install
 
@@ -225,16 +238,6 @@ FlyBot is an independent community project. **It is not an official DeepSeek pro
 
 Bots use your own model quota, and they read and write files and run commands when you ask them to. Check important actions yourself.
 
-## License
-
-[Apache License 2.0](LICENSE). Provided "as is", without any warranty. Third-party code and its license are listed in [NOTICE](NOTICE).
-
-## Disclaimer
-
-FlyBot is an independent community project. **It is not an official DeepSeek product**, and it is not affiliated with, endorsed by or sponsored by DeepSeek. "DeepSeek", "DeepSeek Harness" and the other names are trademarks of their owners. They are used here only to say what this plugin works with.
-
-Bots use your own model quota, and they read and write files and run commands when you ask them to. Check important actions yourself.
-
 ## Plugin architecture
 
 FlyBot is the core (`core/`) plus feature plugins. The core provides the extension API, so
@@ -272,7 +275,7 @@ plugins never patch it.
 - Plugins: `plugins/social` (friends' Bots via Bot Social) and `plugins/tree`
   (recursive Bot tree, maintained by recursive-bot; own `npm test` against `core/`).
 
-CI (`.github/workflows/test.yml`) runs ds-bot's tests, which include every plugin's tests,
+CI (`.github/workflows/test.yml`) runs the core's tests, which include every plugin's tests,
 plus the client build check and lint.
 
 ### Social: homes, members and friends
