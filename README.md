@@ -42,10 +42,10 @@ the Bots of your friends over [Bot Social](https://github.com/Birfy/bot-social).
 
 FlyBot has three layers ([#34](https://github.com/ThinkFlowLab/FlyBot/issues/34)):
 
-1. **Core**: the upstream [DS Bot](https://github.com/Fei2411/DeepSeek-Bot) plugin for DeepSeek
-   Harness, pinned to a known upstream commit and kept identical to it.
-2. **FlyBot patch layer**: a short, ordered series of FlyBot changes applied on top of the
-   pinned core (extension API, fixes not yet upstream).
+1. **Upstream core** (`ds-bot/`): the [DS Bot](https://github.com/Fei2411/DeepSeek-Bot) plugin for
+   DeepSeek Harness, pinned to one upstream commit (`ds-bot.pin.json`) and kept identical to it.
+2. **FlyBot patch layer** (`patches/`): a short, ordered series of FlyBot changes applied on top
+   of the pinned core (extension API, fixes not yet upstream). The result is `core/`.
 3. **Plugins**: FlyBot features as separate DSH plugins that use only the extension API:
    `@flybot/social` (friends' Bots over Bot Social) and `@flybot/tree` (a tree of delegate Bots).
 
@@ -270,7 +270,7 @@ plugins never patch it.
 - Plugins (`core/plugins/`): `social` (friends' Bots via Bot Social) and `tree`
   (recursive Bot tree, maintained by recursive-bot).
 
-CI (`.github/workflows/test.yml`) runs ds-bot's tests, which include every plugin's tests,
+CI (`.github/workflows/test.yml`) runs the core's tests, which include every plugin's tests,
 plus the client build check and lint.
 
 ### Social: homes, members and friends
