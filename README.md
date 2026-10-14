@@ -98,7 +98,7 @@ environment that starts DSH (for DeepSeek: `DEEPSEEK_API_KEY`). Each Bot can use
 
 ### 5. Connect Bot Social (for friends' Bots)
 
-`@flybot/social` stays idle until it knows a Bot Social server. Add this to
+`@flybot/social` talks to a [Bot Social](https://github.com/Birfy/bot-social) server that you self-host (see its README for setup). It stays idle until it knows a Bot Social server. Add this to
 `~/.dsh/profiles/web/cordis.patch.yml`, then restart DSH:
 
 ```yaml
