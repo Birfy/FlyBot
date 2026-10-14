@@ -121,7 +121,7 @@ test('send middleware: parent <-> direct child only', async () => {
   const m = await setup()
   const work = await make(m, m.root, 'Work'); const life = await make(m, m.root, 'Life'); const dev = await make(m, work, 'Dev')
   const send = (from, to) => m.flybot.bot.send({ from, to, text: 'hi' })
-  assert.equal(m.middlewares[0].before[0], 'social')
+  assert.equal(m.middlewares[0].priority, m.flybot.bot.send.priority.ROUTING) // ROUTING band, ahead of social (APPROVAL)
   assert.equal((await send(m.root, work)).action, 'allow')
   assert.equal((await send(dev, work)).action, 'allow')
   assert.equal((await send(m.root, dev)).action, 'deny') // grandchild
@@ -781,4 +781,19 @@ test('trace line: only in answers to the parent tree bot; never to the user or r
   const work = await make(m, m.root, 'Work')
   assert.match(sp(m, m.root), /Do not start your replies with a trace/)
   assert.match(sp(m, work), /Only when you answer your parent bot/)
+})
+
+test('client bundle registers under the package name and mounts itself (moved from ds-bot core tests, #34)', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const client = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.equal(client.match(/__ModuleLoader__\.load\(\{\s*id:\s*'([^']+)'/)?.[1], pkg.name)
+  assert.equal(pkg.dsh?.bundle?.patch, './cordis.patch.yml')
+  assert.match(readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8'), new RegExp(`name: '${pkg.name}'`))
+  assert.notEqual(pkg.peerDependencies['ds-bot'], '*')
+})
+
+test('adapter refuses a flybot API version it was not written for', async () => {
+  const { createAdapter, FLYBOT_API } = await import('../src/adapter.js')
+  const m = createMockFlybot()
+  assert.throws(() => createAdapter({ ...m.flybot, scope: m.flybot.scope, version: FLYBOT_API + 1 }), /needs flybot API v1/)
 })

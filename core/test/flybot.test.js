@@ -198,12 +198,12 @@ test('middleware priority orders the chain without naming other plugins; before/
   await stop()
 })
 
-test('middleware order follows before/after; bypass works only when config enables it', async () => {
+test('middleware order follows priority and before/after; bypass works only when config enables it', async () => {
   for (const enabled of [false, true]) {
     const { fb, received, stop } = await start(enabled ? { flybot: { bypass: { tree: ['social'] } } } : {})
     const order = []
-    fb.bot.send.use({ name: 'social', handle: () => { order.push('social'); return { action: 'hold', reason: 'owner must approve' } } })
-    fb.bot.send.use({ name: 'tree', before: ['social'], handle: () => { order.push('tree'); return { action: 'allow', bypass: ['social'] } } })
+    fb.bot.send.use({ name: 'social', priority: fb.bot.send.priority.APPROVAL, handle: () => { order.push('social'); return { action: 'hold', reason: 'owner must approve' } } })
+    fb.bot.send.use({ name: 'tree', priority: fb.bot.send.priority.ROUTING, handle: () => { order.push('tree'); return { action: 'allow', bypass: ['social'] } } })
     fb.bot.send.use({ name: 'audit', after: ['social'], handle: () => { order.push('audit') } })
     assert.deepEqual(fb.bot.send.list().map(m => m.name), ['tree', 'social', 'audit'])
     const result = await fb.bot.send({ from: 'a', to: 'b', text: 'y' })

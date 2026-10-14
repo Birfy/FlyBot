@@ -103,12 +103,19 @@ jobs:
         run: node scripts/build-client.mjs --check
       - name: Tests
         run: npm test
+      - name: Plugin lint
+        working-directory: .
+        run: node scripts/lint-plugins.mjs
       - name: Plugin tests (social)
-        working-directory: core/plugins/social
-        run: node --import ../../test/harness-resolve.mjs --test "test/*.test.js"
+        working-directory: plugins/social
+        env:
+          DSH_HARNESS: ${{ github.workspace }}/core/dev/harness
+        run: npm test
       - name: Plugin tests (tree)
-        working-directory: core/plugins/tree
-        run: node --test "test/*.test.js"
+        working-directory: plugins/tree
+        env:
+          DSH_HARNESS: ${{ github.workspace }}/core/dev/harness
+        run: npm test
 
   weekly:
     name: compat · ${{ matrix.os }} · Node ${{ matrix.node }} · DSH ${{ matrix.dsh }}
@@ -148,9 +155,16 @@ jobs:
         run: node scripts/build-client.mjs --check
       - name: Tests
         run: npm test
+      - name: Plugin lint
+        working-directory: .
+        run: node scripts/lint-plugins.mjs
       - name: Plugin tests (social)
-        working-directory: core/plugins/social
-        run: node --import ../../test/harness-resolve.mjs --test "test/*.test.js"
+        working-directory: plugins/social
+        env:
+          DSH_HARNESS: ${{ github.workspace }}/core/dev/harness
+        run: npm test
       - name: Plugin tests (tree)
-        working-directory: core/plugins/tree
-        run: node --test "test/*.test.js"
+        working-directory: plugins/tree
+        env:
+          DSH_HARNESS: ${{ github.workspace }}/core/dev/harness
+        run: npm test

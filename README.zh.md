@@ -119,13 +119,14 @@ FlyBot = FlyBot（`core/`）+ 功能插件。扩展接口由 ds-bot 自己提供
 
 ### 安装 FlyBot（全新 profile）
 
-需要 Node.js >= 22.19 和 pnpm。把 ds-bot 和两个插件加入 DSH profile，再在该 profile 的
+需要 Node.js >= 22.19 和 pnpm。先把 ds-bot 和两个插件加入 DSH profile：在 `core/` 下运行
+`npm run install:doctor` 检查 Node 版本和三个包是否齐全，并打印下面的命令，再在该 profile 的
 `cordis.patch.yml` 里启用（social 需要填 Bot Social 服务器地址）：
 
 ```sh
 npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core"
-npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core/plugins/social"
-npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/core/plugins/tree"
+npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/plugins/social"
+npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&path:/plugins/tree"
 ```
 
 之后在 profile 目录里运行 `pnpm update ds-bot @flybot/social @flybot/tree` 更新，再重启 DSH。
@@ -157,7 +158,7 @@ npx @deepseek-ai/dsh plugin --profile web add "github:ThinkFlowLab/FlyBot#main&p
   `flybot.bot.details`、`flybot.approvals` 等界面位置（`core/src/client/flybot-slots.js`），
   每个插件组件都包在错误边界里。
 - 类型：`core/types/flybot.d.ts`。
-- 插件（`core/plugins/`）：`social`（通过 Bot Social 连接好友的 Bot）和 `tree`
+- 插件（`plugins/`）：`social`（通过 Bot Social 连接好友的 Bot）和 `tree`
   （递归 Bot 树，由 recursive-bot 维护）。
 
 CI（`.github/workflows/test.yml`）运行 ds-bot 的测试（包含每个插件的测试）、客户端构建检查和 lint。

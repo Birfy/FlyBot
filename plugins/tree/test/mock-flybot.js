@@ -47,12 +47,11 @@ export function createMockFlybot() {
     query: (k, v) => [...bots.values()].filter(b => b.fields[plugin] && Object.hasOwn(b.fields[plugin], k) && (v === undefined || JSON.stringify(b.fields[plugin][k]) === JSON.stringify(v))).map(view),
     on: onFor(plugin),
   })
-  const order = () => {
-    const out = middlewares.filter(m => m.name !== 'social')
-    const social = middlewares.find(m => m.name === 'social')
-    if (social) { const i = out.findIndex(m => !(m.before ?? []).includes('social')); out.splice(i < 0 ? out.length : i, 0, social) }
-    return out
-  }
+  // Like the core (ds-bot >=0.1.5-flybot.1): ordered by priority band (default DEFAULT), ties by
+  // registration. Social registers in the APPROVAL band.
+  const PRIORITY = Object.freeze({ ROUTING: 100, DEFAULT: 500, APPROVAL: 900 })
+  const prio = m => (Number.isFinite(m.priority) ? m.priority : m.name === 'social' ? PRIORITY.APPROVAL : PRIORITY.DEFAULT)
+  const order = () => middlewares.map((m, i) => ({ m, i })).sort((a, b) => prio(a.m) - prio(b.m) || a.i - b.i).map(e => e.m)
   const remote = new Set() // test hook only: local ids the real host would never call remote
   const send = async (req, { bypassEnabled = false } = {}) => {
     const msg = { role: 'request', hop: 0, via: 'shared', exchangeId: `x${++seq}`, ...req, to: isRemote(req.to) ? toRemote(req.to) : req.to, target: req.target ?? targetOf(req.to) }
@@ -93,7 +92,8 @@ export function createMockFlybot() {
         fields,
         send: Object.assign((req, opts) => send({ via: plugin, ...req }, opts), {
           use: m => { if (middlewares.some(x => x.name === m.name)) throw new Error('exists'); middlewares.push(m); return () => { const i = middlewares.indexOf(m); if (i >= 0) middlewares.splice(i, 1) } },
-          list: () => middlewares.map(m => ({ name: m.name, before: m.before ?? [], after: m.after ?? [] })),
+          list: () => order().map(m => ({ name: m.name, priority: prio(m), before: m.before ?? [], after: m.after ?? [] })),
+          priority: PRIORITY,
         }),
       },
       tools: { register: t => { const spec = { ...t, parameters: toParameterMap(t.parameters) }; tools.set(t.name, spec); return () => tools.delete(t.name) } },

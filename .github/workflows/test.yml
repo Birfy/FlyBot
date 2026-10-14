@@ -35,6 +35,50 @@ jobs:
           node: '24'
           dsh: 0.2.0-rc.2
           coverage: 'true'
+          plugins: 'false'
+
+  # Each peer plugin (plugins/<name>) on its own: lint and its suite against core/ and the DSH
+  # harness. DSH_HARNESS points the frontend (web entry) tests at real Cordis; a skipped test
+  # fails the job, so they cannot silently stop running.
+  plugins:
+    name: plugins (${{ matrix.plugin }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: [tree, social]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+      - name: npm ci (core)
+        working-directory: core
+        run: npm ci --no-fund --no-audit
+      - name: Install DSH
+        working-directory: core
+        env:
+          DSH: 0.2.0-rc.2
+        run: npm run harness -- --no-save "@deepseek-ai/dsh@$DSH"
+      - name: Lint
+        run: node scripts/lint-plugins.mjs "$PLUGIN"
+        env:
+          PLUGIN: ${{ matrix.plugin }}
+      - name: Tests (none skipped)
+        working-directory: plugins/${{ matrix.plugin }}
+        env:
+          DSH_HARNESS: ${{ github.workspace }}/core/dev/harness
+        run: |
+          set -o pipefail
+          npm test | tee test-output.txt
+          skipped=$(sed -n 's/^ℹ skipped \([0-9]*\)$/\1/p' test-output.txt)
+          echo "skipped: ${skipped:-?}"
+          [ "${skipped:-1}" = 0 ] || { echo "::error::plugins/${{ matrix.plugin }}: $skipped test(s) skipped (or no summary)"; exit 1; }
 
   # The core pin (ds-bot.pin.json + patches/ds-bot/ -> core/), then what a DSH profile installs: each package packs with everything its main/exports/files
   # name, and no tests or dev tools. The release job ships these same tarballs.
@@ -51,7 +95,7 @@ jobs:
           node-version: 24
       - name: ds-bot/ matches the pin, patches apply, core/ is ds-bot/ + patches (#34)
         run: node scripts/ds-bot-patches.mjs check
-      - name: Pack and check core (ds-bot), social, tree
+      - name: Pack and check core (ds-bot), plugins/social, plugins/tree
         run: node .github/scripts/check-pack.mjs
       - name: Typecheck the plugin API (types/*.d.ts, strict)
         working-directory: core
@@ -65,18 +109,19 @@ jobs:
           curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz" | tar -xz actionlint
           ./actionlint -color
 
-  # One check that is green only when the test job and the package job are.
+  # One check that is green only when the test, plugins (every leg) and package jobs are.
   tests-ok:
     name: tests-ok
     if: always()
-    needs: [test, package]
+    needs: [test, plugins, package]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Every job passed
         env:
           TEST: ${{ needs.test.result }}
+          PLUGINS: ${{ needs.plugins.result }}
           PACKAGE: ${{ needs.package.result }}
         run: |
-          echo "test: $TEST, package: $PACKAGE"
-          [ "$TEST" = success ] && [ "$PACKAGE" = success ]
+          echo "test: $TEST, plugins: $PLUGINS, package: $PACKAGE"
+          [ "$TEST" = success ] && [ "$PLUGINS" = success ] && [ "$PACKAGE" = success ]
