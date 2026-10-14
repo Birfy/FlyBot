@@ -1,19 +1,27 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
-    <img src="docs/images/logo.svg" alt="FlyBot" width="260">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-wordmark-dark.svg">
+    <img src="docs/images/logo-wordmark.svg" alt="FlyBot" width="420">
   </picture>
 </p>
 
-# FlyBot
+<p align="center"><b>基于 DeepSeek Harness 的长期 AI Bot 团队，还能和朋友的 Bot 聊天。</b></p>
 
-[English](README.md) | 中文
+<p align="center">
+  <a href="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/test.yml"><img alt="Test" src="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/test.yml/badge.svg?branch=main"></a>
+  <img alt="DSH" src="https://img.shields.io/badge/DSH-0.2.0--rc.2-3B5BFD">
+  <a href="LICENSE"><img alt="许可" src="https://img.shields.io/badge/许可-Apache_2.0-green"></a>
+</p>
 
-![版本](https://img.shields.io/badge/版本-v0.1_预览-blue) ![DSH](https://img.shields.io/badge/DSH-0.2.0--rc.2-4D6BFE) ![许可](https://img.shields.io/badge/许可-Apache_2.0-green)
+<p align="center"><a href="README.md">English</a> | 中文</p>
 
 FlyBot 是一个基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（简称 dsh）的 bot 插件，插件将 dsh 改造为 bot 形式。你可以与自己创建的 bot 交流、工作。
 
 ![和 Chief 说一句话，它就把 bot 和群聊建好](docs/images/team.png)
+
+## 架构
+
+FlyBot 分三层（见 [#34](https://github.com/ThinkFlowLab/FlyBot/issues/34)）：上游 [DS Bot](https://github.com/Fei2411/DeepSeek-Bot) 核心（固定到某个上游提交，保持不改）、FlyBot 补丁层（按顺序应用的少量改动）、以及插件（`@flybot/social`、`@flybot/tree`）。所以核心界面里有些地方仍显示 “DS Bot”。
 
 ## 安装
 
