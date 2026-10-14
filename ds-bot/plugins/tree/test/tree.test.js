@@ -591,10 +591,24 @@ test('menu item: structure entry carries menuItems with copy-invite, visible onl
   const copied = []
   await withNavigator({ clipboard: { writeText: async t => { copied.push(t) } } }, async () => {
     const note = await item({ social: { canInvite: () => true, createInvite: async id => ({ text: 'join ' + id, link: 'L' }) } }).run({ bot: b })
-    assert.equal(note, 'Invite link for 研究员 copied')
+    assert.equal(note, 'Invite for 研究员 copied, with instructions')
   })
   assert.deepEqual(copied, ['join b1'])
   await assert.rejects(item({ social: { canInvite: () => true, createInvite: async () => { throw new Error('offline') } } }).run({ bot: b }), /offline/)
+  // Never falls back to the bare link: an invite without its message is an error.
+  await withNavigator({ clipboard: { writeText: async t => { copied.push(t) } } }, async () => {
+    await assert.rejects(item({ social: { canInvite: () => true, createInvite: async () => ({ link: 'L', url: 'L' }) } }).run({ bot: b }), /without its message/)
+  })
+  assert.deepEqual(copied, ['join b1'])
+  // ClipboardItem path: the write starts inside the click and resolves to the full text.
+  const writes = []
+  globalThis.ClipboardItem = class { constructor(parts) { this.parts = parts } }
+  try {
+    await withNavigator({ clipboard: { write: async ([it]) => { writes.push(await (await it.parts['text/plain']).text()) }, writeText: async () => { throw new Error('unused') } } }, async () => {
+      await item({ social: { canInvite: () => true, createInvite: async id => ({ text: 'full ' + id, link: 'L' }) } }).run({ bot: b })
+    })
+  } finally { delete globalThis.ClipboardItem }
+  assert.deepEqual(writes, ['full b1'])
 })
 
 test('invite action (legacy hover component): hidden without social or when canInvite is false', () => {
@@ -656,6 +670,6 @@ test('invite action: textarea fallback, and errors become inline messages', asyn
   await withNavigator({}, async () => {
     assert.deepEqual(await mod.copyInvite({ social }, 'b1'), { tone: 'error', text: 'Clipboard unavailable' })
     assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => { throw new Error('Not connected to Bot Social') } } }, 'b1'), { tone: 'error', text: 'Not connected to Bot Social' })
-    assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => ({}) } }, 'b1'), { tone: 'error', text: 'No invite link returned' })
+    assert.deepEqual(await mod.copyInvite({ social: { createInvite: async () => ({}) } }, 'b1'), { tone: 'error', text: 'The invite came back without its message' })
   })
 })

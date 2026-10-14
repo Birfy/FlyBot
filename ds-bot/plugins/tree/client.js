@@ -170,14 +170,30 @@ window.__ModuleLoader__.load({
         if (!doc.execCommand('copy')) throw new Error('Copy failed')
       } finally { area.remove() }
     }
-    /** createInvite + copy; resolves { tone: 'ok', text: 'Copied' } or { tone: 'error', text }. */
+    /**
+     * createInvite + copy the full instruction message (`text`, never the bare link); resolves
+     * { tone: 'ok', text: 'Copied' } or { tone: 'error', text }. Where ClipboardItem exists the
+     * clipboard write starts synchronously, inside the click, with the text arriving as a promise:
+     * the write keeps the click's permission even when the invite takes seconds to create.
+     */
     async function copyInvite(flybot, botId) {
-      try {
-        const social = socialOf(flybot)
+      const social = socialOf(flybot)
+      const message = (async () => {
         const invite = typeof social?.createInvite === 'function' ? await social.createInvite(botId) : await flybot.call('social.createInvite', { botId })
-        const text = invite?.text || invite?.link || invite?.url
-        if (!text) throw new Error('No invite link returned')
-        await copyText(String(text))
+        if (typeof invite?.text !== 'string' || !invite.text.trim()) throw new Error('The invite came back without its message')
+        return invite.text
+      })()
+      try {
+        const clip = globalThis.navigator?.clipboard
+        const Item = globalThis.ClipboardItem
+        let done = false
+        if (clip && typeof clip.write === 'function' && typeof Item === 'function') {
+          try {
+            await clip.write([new Item({ 'text/plain': message.then(text => new Blob([text], { type: 'text/plain' })) })])
+            done = true
+          } catch { /* fall back below */ }
+        }
+        if (!done) await copyText(await message)
         return { tone: 'ok', text: 'Copied' }
       } catch (error) {
         return { tone: 'error', text: String(error?.message ?? error) || 'Could not copy' }
@@ -196,7 +212,7 @@ window.__ModuleLoader__.load({
           run: async () => {
             const result = await copyInvite(flybot, id)
             if (result.tone === 'error') throw new Error(`Could not copy the invite link: ${result.text}`)
-            return `Invite link for ${bot.name} copied`
+            return `Invite for ${bot.name} copied, with instructions`
           },
         }]
       }
