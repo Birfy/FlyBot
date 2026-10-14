@@ -120,6 +120,7 @@ const ZH = {
   'Switch': '切换',
   'Switch to classic Agent mode': '切换经典 Agent 模式',
   '{model} is not available anymore. Pick another model for me.': '{model} 已经不可用了。给我换一个模型吧。',
+  '{name} ({handle}) is no longer shared with you, so messages to it cannot be delivered. It runs on its owner\'s machine, so another model cannot stand in. Ask its owner for a new invite.': '{name}（{handle}）已不再与你共享，消息无法送达。它运行在主人的机器上，不能换用其他模型。请向它的主人要一个新的邀请。',
   "Hi, I'm {name}. I don't have a model yet. How do you want to set one up?": '你好，我是 {name}。我还没有可用的模型。你想怎么配置？',
   "Hi, I'm {name}. Pick a model for me first. You can change it later in my details.": '你好，我是 {name}。先给我选一个模型吧，以后可以在我的详情里换。',
   'Mode': '模式',
