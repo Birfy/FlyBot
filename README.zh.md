@@ -21,7 +21,7 @@ FlyBot 是一个基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 
 ## 架构
 
-FlyBot 分三层（见 [#34](https://github.com/ThinkFlowLab/FlyBot/issues/34)）：上游 [DS Bot](https://github.com/Fei2411/DeepSeek-Bot) 核心（固定到某个上游提交，保持不改）、FlyBot 补丁层（按顺序应用的少量改动）、以及插件（`@flybot/social`、`@flybot/tree`）。所以核心界面里有些地方仍显示 “DS Bot”。
+FlyBot 分三层（见 [#34](https://github.com/ThinkFlowLab/FlyBot/issues/34)）：上游 [DS Bot](https://github.com/Fei2411/DeepSeek-Bot) 核心（固定到某个上游提交，保持不改）、FlyBot 补丁层（按顺序应用的少量改动）、以及插件（`plugins/`：`@flybot/social`、`@flybot/tree`）。所以核心界面里有些地方仍显示 “DS Bot”。
 
 ## 安装
 
@@ -33,7 +33,7 @@ FlyBot 分三层（见 [#34](https://github.com/ThinkFlowLab/FlyBot/issues/34)�
 2. **包名或地址** 填 `ds-bot`。在中国大陆，**安装源** 选 **中国大陆镜像源**。
 3. 点 **安装**，再点 **立即启用**。如果提示“下次启动生效”，完全退出 dsh 再打开。
 
-连不上 npm 时，第 2 步也可以填 [Releases](https://github.com/ThinkFlowLab/FlyBot/releases) 里下载的 `ds-bot-0.1.5.tgz` 的完整路径，或者 `github:ThinkFlowLab/FlyBot#v0.1.5&path:/ds-bot`（需要装 Git）。
+连不上 npm 时，第 2 步也可以填 [Releases](https://github.com/ThinkFlowLab/FlyBot/releases) 里下载的 `ds-bot-0.1.5.tgz` 的完整路径，或者 `github:ThinkFlowLab/FlyBot#v0.1.5&path:/core`（需要装 Git）。
 
 **dsh Web（Windows、macOS、Linux）**
 

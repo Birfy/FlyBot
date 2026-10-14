@@ -12,7 +12,6 @@
 <p align="center">
   <a href="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/test.yml"><img alt="Test" src="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/test.yml/badge.svg?branch=main"></a>
   <a href="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/nightly.yml"><img alt="Nightly" src="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/nightly.yml/badge.svg?branch=main"></a>
-  <a href="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/ThinkFlowLab/FlyBot/actions/workflows/codeql.yml/badge.svg?branch=main"></a>
   <img alt="DSH" src="https://img.shields.io/badge/DSH-0.2.0--rc.2-3B5BFD">
   <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A522.19-339933?logo=node.js&logoColor=white">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache_2.0-green"></a>
@@ -46,8 +45,9 @@ FlyBot has three layers ([#34](https://github.com/ThinkFlowLab/FlyBot/issues/34)
    DeepSeek Harness, pinned to one upstream commit (`ds-bot.pin.json`) and kept identical to it.
 2. **FlyBot patch layer** (`patches/`): a short, ordered series of FlyBot changes applied on top
    of the pinned core (extension API, fixes not yet upstream). The result is `core/`.
-3. **Plugins**: FlyBot features as separate DSH plugins that use only the extension API:
-   `@flybot/social` (friends' Bots over Bot Social) and `@flybot/tree` (a tree of delegate Bots).
+3. **Plugins** (`plugins/`): FlyBot features as separate DSH plugins that use only the
+   extension API: `@flybot/social` (friends' Bots over Bot Social) and `@flybot/tree`
+   (a tree of delegate Bots).
 
 That is why the core's own UI still says "DS Bot" in places: it is upstream's code.
 
