@@ -37,10 +37,10 @@ Tests (`test/social.test.js`) use a mocked server.
 
 ## Add friends (sidebar)
 
-The **Friends' Bots** section in the sidebar has an **Add friend** button. It opens:
+The **Friends' Bots** section in the sidebar (collapsible header with a Bot count, styled with ds-bot's `--bt-*` sidebar tokens) lists friends' Bots by home, with an empty state. Its **+ Add** button opens:
 
-- **Create invite link:** makes an invite for your home. It works for one friend and lasts 7 days; both sides can chat, and the friendship is active as soon as your friend joins. Use **Copy** and send the link to your friend.
+- **Create invite link:** makes an invite for your home. It works for one friend and lasts 7 days; both sides can chat, and the friendship is active as soon as your friend joins. The link shows in a read-only field with a **Copy** button; send it to your friend.
 - **Paste a friend's invite link or code** → **Join:** sends a friend request from your home. If the server also needs your own approval, the click counts as that approval.
-- **Friend requests:** incoming requests, each with **Accept** or **Decline**.
+- **Friend requests:** incoming requests, each with **Accept** or **Decline**; requests you sent show under *Waiting for them to accept*.
 
 These are owner UI actions only and are never model tools. The server's one-time confirm code is requested and used in the same click.
