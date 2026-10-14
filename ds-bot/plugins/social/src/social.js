@@ -315,6 +315,53 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     const file = await fetchFile(String(botId ?? ''), id)
     return { name: file.name, mime: file.mime, size: file.size, sha256: file.sha256, content_base64: file.bytes.toString('base64') }
   }))
+  // ------------------------------------------------------------ friends (owner UI only, never a model tool)
+  // Owner-confirmed server actions: the owner's click in the FlyBot UI is the explicit
+  // consent, so the one-time confirm code is requested and used in the same step.
+  async function confirmedCall(tool, args) {
+    const first = await client.callTool(tool, args)
+    if (first?.status !== 'confirmation_required') return first
+    return client.callTool(tool, { ...args, confirm_code: first.confirm_code })
+  }
+  const homeArgs = () => (home ? { bot_id: home.id } : config.botId ? { bot_id: config.botId } : {})
+  const peerView = item => ({ relationshipId: item.relationship_id, status: item.status, handle: item.peer?.handle ? norm(item.peer.handle) : undefined, name: item.peer?.display_name, owner: item.peer?.owner_display_name, message: item.message ?? null, requestedAt: item.requested_at, expiresAt: item.expires_at })
+  async function friendsOverview() {
+    const overview = await client.callTool('list_friends', homeArgs())
+    return {
+      home: home ? home.handle : overview?.bot?.handle,
+      friends: (overview?.friends ?? []).map(peerView),
+      incoming: (overview?.pending_incoming ?? []).map(peerView),
+      outgoing: (overview?.pending_outgoing ?? []).map(peerView),
+    }
+  }
+  disposers.push(flybot.api.handle('social/overview', async () => friendsOverview()))
+  // An invite link for a friend: 1 use, 7 days, chat both ways, accepted on join.
+  disposers.push(flybot.api.handle('social/create-invite', async ({ message } = {}) => {
+    const invite = await client.callTool('create_invite', { ...homeArgs(), max_uses: 1, expires_in_hours: 168, auto_accept: true, offered_capabilities: ['chat.public'], requested_capabilities: ['chat.public'], ...(message ? { message: String(message).slice(0, 280) } : {}) })
+    return { code: invite.code, url: invite.url, expiresAt: invite.expires_at, status: invite.status }
+  }))
+  // Joining a friend's invite (code or link). If the server asks this owner to approve
+  // the request too, the click counts as that approval.
+  disposers.push(flybot.api.handle('social/join-invite', async ({ code } = {}) => {
+    const value = String(code ?? '').trim()
+    if (!value) throw new Error('paste an invite link or code')
+    const joined = await client.callTool('join_invite', { code: value.replace(/^.*\/i\//, '').replace(/[?#].*$/, ''), ...(home ? { from_bot_id: home.id } : config.botId ? { from_bot_id: config.botId } : {}) })
+    let status = joined.status
+    if (joined.awaiting === 'your_owner_approval' && joined.approval_id) {
+      await confirmedCall('decide_approval', { approval_id: joined.approval_id, decision: 'approved' })
+      status = 'pending_target'
+    }
+    fetchedAt = 0
+    void remoteBots({ fresh: true }).catch(() => {})
+    return { relationshipId: joined.relationship_id, status, inviter: joined.inviter?.handle ? norm(joined.inviter.handle) : undefined, inviterName: joined.inviter?.display_name }
+  }))
+  disposers.push(flybot.api.handle('social/respond', async ({ relationshipId, decision } = {}) => {
+    if (decision !== 'accept' && decision !== 'decline') throw new Error('decision is accept or decline')
+    const result = await confirmedCall('respond_friend_request', { relationship_id: String(relationshipId ?? ''), decision, ...(decision === 'accept' ? { grant_capabilities: ['chat.public'] } : {}) })
+    if (decision === 'accept') void remoteBots({ fresh: true }).catch(() => {})
+    return { relationshipId, status: result?.status ?? (decision === 'accept' ? 'active' : 'declined') }
+  }))
+
   // The owner's composer for a remote member: text plus files, through bot.send (approval applies).
   disposers.push(flybot.api.handle('social/send', async ({ from, to, text, files } = {}) => {
     const attachments = stageFiles(files)

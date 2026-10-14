@@ -34,3 +34,13 @@ Tests (`test/social.test.js`) use a mocked server.
 - **Approval:** the approval card lists every file's name and size. Nothing is uploaded until you approve. Then the bytes are read again, their SHA-256 is checked against what was approved, and they are uploaded and sent as signed refs.
 - **Incoming:** files show as chips on the remote Bot's bubble; a click downloads the file after the hash check. The receiving Bot sees the file names inside the untrusted fence. `get_friend_file(id)` saves the file to `<credentials dir>/flybot-social-files/inbox` (mode 600) and returns text content in an `<untrusted-file>` fence.
 - **Server rules:** Bot Social enforces types, size, expiry (7 days) and recipient-only download.
+
+## Add friends (sidebar)
+
+The **Friends' Bots** section in the sidebar has an **Add friend** button. It opens:
+
+- **Create invite link:** makes an invite for your home. It works for one friend and lasts 7 days; both sides can chat, and the friendship is active as soon as your friend joins. Use **Copy** and send the link to your friend.
+- **Paste a friend's invite link or code** → **Join:** sends a friend request from your home. If the server also needs your own approval, the click counts as that approval.
+- **Friend requests:** incoming requests, each with **Accept** or **Decline**.
+
+These are owner UI actions only and are never model tools. The server's one-time confirm code is requested and used in the same click.

@@ -15,12 +15,14 @@ window.__ModuleLoader__.load({
     function FriendsBots() {
       const [data, setData] = useState(null)
       const [error, setError] = useState('')
-      useEffect(() => {
-        call('social/remote-bots', {}).then(setData, e => setError(String(e?.message ?? e)))
-      }, [])
+      const [adding, setAdding] = useState(false)
+      const load = () => call('social/remote-bots', { fresh: true }).then(setData, e => setError(String(e?.message ?? e)))
+      useEffect(() => { load() }, [])
       const homes = data?.homes ?? []
       return h('div', { className: 'bt-social' },
-        h('div', { className: 'bt-hint', style: { fontWeight: 600 } }, 'Friends\' Bots'),
+        h('div', { className: 'bt-hint', style: { fontWeight: 600 } }, 'Friends\' Bots ',
+          h('button', { type: 'button', 'aria-expanded': adding, onClick: () => setAdding(!adding) }, adding ? 'Close' : 'Add friend')),
+        adding ? h(AddFriend, { onChange: load }) : null,
         error ? h('div', { className: 'bt-hint' }, error) : null,
         data === null && !error ? h('div', { className: 'bt-hint' }, 'Loading…') : null,
         homes.map(entry => h('div', { key: entry.home, className: 'bt-social-home' },
@@ -30,6 +32,66 @@ window.__ModuleLoader__.load({
             h('span', { className: 'bt-social-badge', style: { fontSize: 10, border: '1px solid currentColor', borderRadius: 4, padding: '0 3px', opacity: 0.7 } }, 'remote'), ' ',
             h('span', { className: 'bt-hint' }, bot.handle))))),
         data && homes.length === 0 ? h('div', { className: 'bt-hint' }, 'No friends yet') : null)
+    }
+
+    // Add friend: share an invite link, join a friend's link, and answer requests.
+    function AddFriend({ onChange }) {
+      const [overview, setOverview] = useState(null)
+      const [invite, setInvite] = useState(null)
+      const [code, setCode] = useState('')
+      const [status, setStatus] = useState('')
+      const [busy, setBusy] = useState(false)
+      const refresh = () => call('social/overview', {}).then(setOverview, e => setStatus(String(e?.message ?? e)))
+      useEffect(() => { refresh() }, [])
+      const run = async (label, fn) => {
+        setBusy(true)
+        setStatus('')
+        try {
+          const message = await fn()
+          if (message) setStatus(message)
+          await refresh()
+          onChange?.()
+        } catch (e) {
+          setStatus(`${label} failed: ${String(e?.message ?? e)}`)
+        } finally {
+          setBusy(false)
+        }
+      }
+      const create = () => run('Invite', async () => { setInvite(await call('social/create-invite', {})) })
+      const join = e => {
+        e.preventDefault()
+        return run('Join', async () => {
+          const r = await call('social/join-invite', { code })
+          setCode('')
+          return r.status === 'active' ? `You are now friends with ${r.inviterName ?? r.inviter}.` : `Request sent to ${r.inviterName ?? r.inviter}; it shows here once they accept.`
+        })
+      }
+      const respond = (item, decision) => run(decision === 'accept' ? 'Accept' : 'Decline', async () => {
+        await call('social/respond', { relationshipId: item.relationshipId, decision })
+        return decision === 'accept' ? `${item.name ?? item.handle} is now a friend.` : `Declined ${item.name ?? item.handle}.`
+      })
+      const copy = text => navigator.clipboard?.writeText(text).then(() => setStatus('Invite link copied.'), () => {})
+      const incoming = overview?.incoming ?? []
+      const outgoing = overview?.outgoing ?? []
+      return h('div', { className: 'bt-social-add', 'data-flybot': 'add-friend' },
+        overview?.home ? h('div', { className: 'bt-hint' }, 'Your home: ', overview.home) : null,
+        h('button', { type: 'button', disabled: busy, onClick: create }, 'Create invite link'),
+        invite ? h('div', { className: 'bt-social-invite' },
+          h('input', { readOnly: true, value: invite.url ?? invite.code, 'aria-label': 'Invite link', onFocus: e => e.target.select(), style: { width: '100%' } }),
+          h('button', { type: 'button', onClick: () => copy(invite.url ?? invite.code) }, 'Copy'),
+          h('div', { className: 'bt-hint' }, `One friend can use it, until ${new Date(invite.expiresAt).toLocaleString()}.`)) : null,
+        h('form', { onSubmit: join, className: 'bt-social-join' },
+          h('input', { value: code, placeholder: 'Paste a friend\'s invite link or code', 'aria-label': 'Invite link or code', onChange: e => setCode(e.target.value), style: { width: '100%' } }),
+          h('button', { type: 'submit', disabled: busy || !code.trim() }, 'Join')),
+        incoming.length ? h('div', { className: 'bt-social-requests' },
+          h('div', { className: 'bt-hint', style: { fontWeight: 600 } }, 'Friend requests'),
+          incoming.map(item => h('div', { key: item.relationshipId, className: 'bt-social-row' },
+            h('span', null, item.name ?? item.handle, ' ', h('span', { className: 'bt-hint' }, item.handle)),
+            item.message ? h('div', { className: 'bt-hint' }, item.message) : null,
+            h('button', { type: 'button', disabled: busy, onClick: () => respond(item, 'accept') }, 'Accept'),
+            h('button', { type: 'button', disabled: busy, onClick: () => respond(item, 'decline') }, 'Decline')))) : null,
+        outgoing.length ? h('div', { className: 'bt-hint' }, 'Waiting for: ', outgoing.map(item => item.name ?? item.handle).join(', ')) : null,
+        status ? h('div', { className: 'bt-hint', role: 'status' }, status) : null)
     }
 
     let cache = { at: 0, list: [] }
