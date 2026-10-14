@@ -60,11 +60,15 @@ const CHANGES_POLL_MS = 3000
 export function createClientApi({ call: callFn, registry: slots = registry, every = setInterval, clear = clearInterval }) {
   const listeners = new Set()
   let since
+  let epoch
   let timer
   const poll = async () => {
     const first = since === undefined
     try {
-      const { seq, changes } = await callFn('changes', { since: since ?? 0 })
+      const { seq, changes, epoch: now } = await callFn('changes', { since: since ?? 0, ...(epoch ? { epoch } : {}) })
+      // A restarted host counts from 0 again: everything it lists is new.
+      if (epoch !== undefined && now !== epoch) since = 0
+      epoch = now
       // The first poll only learns where the log stands.
       const fresh = first ? [] : changes.filter(change => change.seq > (since ?? 0))
       since = Math.max(since ?? 0, seq)

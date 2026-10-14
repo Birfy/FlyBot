@@ -1154,11 +1154,14 @@ var CHANGES_POLL_MS = 3e3;
 function createClientApi({ call: callFn, registry: slots = registry, every = setInterval, clear = clearInterval }) {
   const listeners2 = /* @__PURE__ */ new Set();
   let since2;
+  let epoch;
   let timer;
   const poll = async () => {
     const first = since2 === void 0;
     try {
-      const { seq, changes } = await callFn("changes", { since: since2 ?? 0 });
+      const { seq, changes, epoch: now } = await callFn("changes", { since: since2 ?? 0, ...epoch ? { epoch } : {} });
+      if (epoch !== void 0 && now !== epoch) since2 = 0;
+      epoch = now;
       const fresh = first ? [] : changes.filter((change) => change.seq > (since2 ?? 0));
       since2 = Math.max(since2 ?? 0, seq);
       for (const change of fresh) {

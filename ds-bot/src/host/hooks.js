@@ -20,6 +20,7 @@ const BOT_TO_BOT_ROLES = new Set(['request', 'reply', 'stopped', 'report'])
 const ACTIONS = new Set(['allow', 'deny', 'hold'])
 const MAX_ATTACHMENTS = 5
 const APPROVALS_KEPT = 200
+const BUILTIN_ENDPOINTS = new Set(['bots', 'remote-members', 'changes', 'approvals', 'decide'])
 const PENDING_MAX = 100
 const MAX_SEND_TEXT = 20_000
 class HoldFull extends Error {}
@@ -88,13 +89,15 @@ export function install(rt) {
   const listeners = { 'change': new Set(), 'bot.created': new Set(), 'bot.removed': new Set() }
   const changes = []
   let changeSeq = 0
+  // A new host process starts a new epoch: the browser resets its watermark on a change.
+  const changeEpoch = randomUUID()
   const fire = (event, payload) => {
     if (event === 'change') {
-      changes.push({ seq: ++changeSeq, ...payload })
+      changes.push({ seq: ++changeSeq, ...structuredClone(payload) })
       if (changes.length > CHANGES_KEPT) changes.shift()
     }
     for (const fn of [...listeners[event]]) {
-      try { fn({ ...payload }) } catch (error) { warn('flybot: %s listener failed: %s', event, error) }
+      try { fn(structuredClone(payload)) } catch (error) { warn('flybot: %s listener failed: %s', event, error) }
     }
     emit(`flybot/${event}`, clone(payload))
   }
@@ -554,6 +557,7 @@ export function install(rt) {
   const api = {
     // `{ read: true }`: the handler only reads, so a read-only host serves it too.
     handle(name, fn, { read = false } = {}) {
+      if (typeof name !== 'string' || name === '' || BUILTIN_ENDPOINTS.has(name)) throw new Error(`flybot: api name ${JSON.stringify(name)} is reserved`)
       if (handlers.has(name)) throw new Error(`flybot: api ${name} exists`)
       handlers.set(name, fn)
       if (read) readHandlers.add(name)
@@ -567,7 +571,10 @@ export function install(rt) {
     switch (name) {
       case 'bots': return team().map(view)
       case 'remote-members': return remoteMembers.list()
-      case 'changes': return { seq: changeSeq, changes: changes.filter(change => change.seq > Number(body.since ?? 0)) }
+      case 'changes': {
+        const since = body.epoch === changeEpoch ? Number(body.since ?? 0) : 0
+        return { epoch: changeEpoch, seq: changeSeq, changes: changes.filter(change => change.seq > since).map(change => structuredClone(change)) }
+      }
       case 'approvals': return approvals.list(body)
       case 'decide': return approvals.decide(String(body.id ?? ''), body.decision, body)
       default: {
@@ -579,6 +586,7 @@ export function install(rt) {
   }
 
   const build = (plugin) => {
+    if (plugin === SHARED && built) throw new Error(`flybot: '${SHARED}' is the unscoped service; scope a plugin by its own name`)
     const fields = fieldsFor(plugin)
     return {
     version: FLYBOT_API_VERSION,
@@ -624,7 +632,9 @@ export function install(rt) {
     outcomeOf: exchangeId => outcomes.get(exchangeId),
     }
   }
+  let built = false
   const flybot = build(SHARED)
+  built = true
   // A local Bot's answer to a friend's Bot (turns.js): back through bot.send, so the
   // plugin's middleware still decides (auto-accept, or the approval hold).
   const replyRemote = ({ from, handle, home, text, replyTo }) => send({ from, to: { kind: 'remote', handle, ...(home ? { home } : {}) }, text, role: 'reply', via: 'auto-reply', meta: { replyTo } })

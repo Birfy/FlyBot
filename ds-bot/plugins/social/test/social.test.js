@@ -529,3 +529,12 @@ test('read-only host (#14): no inbox polling, no member registration', async (t)
   assert.equal(await social.pollInbox(), 0)
   assert.equal(server.calls.filter(c => c.name === 'list_inbox' || c.name === 'add_home_member').length, 0)
 })
+
+test('MCP client (#18): a hung server times out; an SSE answer is read', async () => {
+  const hung = createMcpClient({ server: 'https://s', token: 't', timeoutMs: 50, fetch: (_url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason))) })
+  const keep = setTimeout(() => {}, 1000)
+  await assert.rejects(hung.callTool('list_inbox'), /no answer in/)
+  clearTimeout(keep)
+  const sse = createMcpClient({ server: 'https://s', token: 't', fetch: async () => new Response('event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\\"ok\\":true}"}]}}\n\n', { headers: { 'content-type': 'text/event-stream' } }) })
+  assert.deepEqual(await sse.callTool('x'), { ok: true })
+})

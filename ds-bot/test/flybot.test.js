@@ -323,3 +323,21 @@ test('mentions (#13): a friend\'s Bot named with @ gets the message once; code, 
   await new Promise(resolve => setTimeout(resolve, 30))
   assert.equal(out.length, 1)
 })
+
+test('host API (#18): reserved names and the shared scope throw, listeners get copies, changes carry an epoch', async (t) => {
+  const { fb, call, stop } = await start()
+  t.after(stop)
+  const social = fb.scope('social')
+  assert.throws(() => social.api.handle('approvals', () => 1), /reserved/)
+  assert.throws(() => social.api.handle('decide', () => 1), /reserved/)
+  assert.throws(() => fb.scope('shared'), /unscoped/)
+  let got
+  social.fields.on('change', e => { got = e; e.value.x = 'mutated' })
+  social.fields.set('a', 'k', { x: 1 })
+  assert.equal(got.value.x, 'mutated')
+  assert.deepEqual(social.fields.get('a', 'k'), { x: 1 })
+  const first = (await call('flybot/changes', { since: 0 })).value
+  assert.equal(typeof first.epoch, 'string')
+  const stale = (await call('flybot/changes', { since: 999, epoch: 'old' })).value
+  assert.ok(stale.changes.length >= 1, 'an unknown epoch replays from the start')
+})
