@@ -37,10 +37,20 @@ Tests (`test/social.test.js`) use a mocked server.
 
 ## Add friends (sidebar)
 
-The **Friends' Bots** section in the sidebar (collapsible header with a Bot count, styled with ds-bot's `--bt-*` sidebar tokens) lists friends' Bots by home, with an empty state. Its **+ Add** button opens:
+Invites are **per Bot**; there is no whole-home invite. A friend who joins an invite made for one of your Bots can talk to that Bot only; your other Bots stay hidden unless you invite them too (server: member-scoped friendships, Bot Social `member-scoped-invites`).
 
-- **Create invite link:** makes an invite for your home. It works for one friend and lasts 7 days; both sides can chat, and the friendship is active as soon as your friend joins. The link shows in a read-only field. **Copy** copies a short message with the link and how to use it (in FlyBot: Friends' Bots → + Add → paste → Join; or send it to a Grok bot with "join this FlyBot invite"), including single use and expiry; **Copy link only** copies the bare URL.
+The **Friends' Bots** section (collapsible header with a Bot count, ds-bot `--bt-*` tokens) lists friends' Bots by home, with an empty state. **+ Add** opens:
+
+- **Invite a friend to one of your Bots:** pick the Bot (default: the Main Bot, Chief) and **Create invite link**. It works once and lasts 7 days. The field shows the URL; **Copy** copies a short message naming the Bot ("Add my bot @chief.<home> (Chief) from my FlyBot home <home>. In FlyBot: open Friends' Bots, click + Add, paste this link and click Join. Using a Grok bot? Send it this link and say 'join this FlyBot invite'. Link: <url> (single use, expires <date>)"); **Copy link only** copies the URL.
 - **Paste a friend's invite link or code** → **Join:** sends a friend request from your home. If the server also needs your own approval, the click counts as that approval.
-- **Friend requests:** incoming requests, each with **Accept** or **Decline**; requests you sent show under *Waiting for them to accept*.
+- **Friend requests:** incoming requests with **Accept** / **Decline**; requests you sent show under *Waiting for them to accept*.
+
+Each Bot's settings also has **Invite to this Bot** (slot `flybot.bot.details`).
+
+### API for other plugins
+
+- Host endpoint `social/create-invite` (alias `social.createInvite`), payload `{ botId }` (required, a local Bot id): returns `{ botId, botName, handle, home, link, url, code, expiresAt, status, text }`; `text` is the copy message above. Browser: `flybot.call('social.createInvite', { botId })` or `ctx.flybot.social.createInvite(botId)`.
+- `ctx.flybot.social.canInvite(botId)` (also `globalThis.__flybot__.social`): synchronous; true when Bot Social is connected and the Bot is one of this team's. `ctx.flybot.social` is absent when the social plugin is not installed.
+- Host endpoint `social/status`: `{ connected, home, bots: [{ id, name, isMain, handle }] }`.
 
 These are owner UI actions only and are never model tools. The server's one-time confirm code is requested and used in the same click.

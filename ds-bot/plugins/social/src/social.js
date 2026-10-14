@@ -37,6 +37,15 @@ export const mimeOf = name => MIME[extname(String(name)).toLowerCase()] ?? 'appl
 const TEXTUAL = new Set(['text/plain', 'text/markdown', 'text/csv', 'text/tab-separated-values', 'application/json'])
 const sizeLabel = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`)
 const safeName = name => String(name ?? 'file').replace(/[\u0000-\u001f\u007f/\\:]/g, '_').replace(/^\.+/, '_').slice(0, 120) || 'file'
+// The text Copy puts on the clipboard for a per-Bot invite: what to do with the link, for a
+// person in FlyBot or for their Grok bot.
+export function inviteText({ handle, name, home, url, expiresAt }) {
+  const expires = expiresAt ? new Date(expiresAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }) : ''
+  return `Add my bot ${handle}${name ? ` (${name})` : ''}${home ? ` from my FlyBot home ${home}` : ''}. ` +
+    "In FlyBot: open Friends' Bots, click + Add, paste this link and click Join. " +
+    "Using a Grok bot? Send it this link and say 'join this FlyBot invite'. " +
+    `Link: ${url} (single use${expires ? `, expires ${expires}` : ''})`
+}
 const slug = name => String(name ?? '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'bot'
 
 // One call to the server's FlyBot onboarding; returns { token, home } to keep.
@@ -335,11 +344,27 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     }
   }
   disposers.push(flybot.api.handle('social/overview', async () => friendsOverview()))
-  // An invite link for a friend: 1 use, 7 days, chat both ways, accepted on join.
-  disposers.push(flybot.api.handle('social/create-invite', async ({ message } = {}) => {
-    const invite = await client.callTool('create_invite', { ...homeArgs(), max_uses: 1, expires_in_hours: 168, auto_accept: true, offered_capabilities: ['chat.public'], requested_capabilities: ['chat.public'], ...(message ? { message: String(message).slice(0, 280) } : {}) })
-    return { code: invite.code, url: invite.url, expiresAt: invite.expires_at, status: invite.status }
-  }))
+  // Invites are per Bot: an invite names one local Bot (its member identity), and a friend who
+  // joins it befriends that Bot only; the home's other Bots stay hidden unless invited too.
+  // 1 use, 7 days, chat both ways, accepted on join. There is no whole-home invite.
+  async function createBotInvite({ botId, message } = {}) {
+    if (!home) throw new Error('Bot Social is not connected: there is no FlyBot home yet')
+    const bot = typeof botId === 'string' && botId ? flybot.bot.get(botId) : undefined
+    if (!bot) throw new Error('Choose one of your Bots to invite a friend to')
+    const member = await register(bot)
+    if (!member) throw new Error(`${bot.name} has no Bot Social identity yet`)
+    const invite = await client.callTool('create_invite', { bot_id: member.bot_id, max_uses: 1, expires_in_hours: 168, auto_accept: true, offered_capabilities: ['chat.public'], requested_capabilities: ['chat.public'], ...(message ? { message: String(message).slice(0, 280) } : {}) })
+    const handle = norm(member.handle)
+    return { botId: bot.id, botName: bot.name, handle, home: norm(home.handle), code: invite.code, url: invite.url, link: invite.url, expiresAt: invite.expires_at, status: invite.status, text: inviteText({ handle, name: bot.name, home: norm(home.handle), url: invite.url, expiresAt: invite.expires_at }) }
+  }
+  disposers.push(flybot.api.handle('social/create-invite', createBotInvite))
+  disposers.push(flybot.api.handle('social.createInvite', createBotInvite))
+  // What the browser needs to offer invites: connected or not, and which local Bots can be invited to.
+  disposers.push(flybot.api.handle('social/status', async () => ({
+    connected: Boolean(home),
+    home: home ? norm(home.handle) : undefined,
+    bots: home ? flybot.bot.list().map(bot => ({ id: bot.id, name: bot.name, isMain: bot.isMain === true, handle: memberOf(bot.id)?.handle ? norm(memberOf(bot.id).handle) : undefined })) : [],
+  })))
   // Joining a friend's invite (code or link). If the server asks this owner to approve
   // the request too, the click counts as that approval.
   disposers.push(flybot.api.handle('social/join-invite', async ({ code } = {}) => {

@@ -21,12 +21,6 @@ window.__ModuleLoader__.load({
       return String(e?.message ?? e)
     }
 
-    // What Copy puts on the clipboard: the link with how to use it, for a person or their Bot.
-    const inviteMessage = ({ home, url, expires }) =>
-      `Join my FlyBot home ${home ?? ''}`.trimEnd() + '. In FlyBot: open Friends\' Bots, click + Add, paste this link and click Join. ' +
-      'Using a Grok bot? Send it this link and say \'join this FlyBot invite\'. ' +
-      `Link: ${url} (single use${expires ? `, expires ${expires}` : ''})`
-
     // Styles reuse ds-bot's sidebar tokens (--bt-ink, --bt-ink-2, --bt-ink-3, --bt-hover, --bt-line,
     // --bt-line-2, --bt-card, --bt-accent, --bt-tag-bg/-ink), like @flybot/tree, so both themes follow the app.
     const CSS = `
@@ -59,6 +53,7 @@ window.__ModuleLoader__.load({
 .fs-card .fs-hint{padding:0}
 .fs-line{display:flex;gap:6px;min-width:0;align-items:center}
 .fs-input{flex:1 1 auto;min-width:0;width:0;height:30px;padding:0 9px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:13px;outline:none;text-overflow:ellipsis}
+.fs-select{width:100%;cursor:pointer;appearance:auto}
 .fs-input:focus{border-color:var(--bt-accent,#4d6bfe)}
 .fs-input[readonly]{background:var(--bt-tag-bg,rgba(20,20,20,.06));border-color:transparent}
 .fs-btn{flex:none;height:30px;padding:0 12px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:8px;background:transparent;color:var(--bt-ink,#141414);font:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;transition:background-color .12s ease}
@@ -116,7 +111,7 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'fs-sub' }, bot.handle)),
               h('span', { className: 'fs-tag bt-social-badge' }, 'remote'))))),
           data && homes.length === 0 && !adding
-            ? h('div', { className: 'fs-empty' }, 'No friends yet. Use ', h('b', null, '+ Add'), ' to create an invite link or join a friend\'s.')
+            ? h('div', { className: 'fs-empty' }, 'No friends yet. Use ', h('b', null, '+ Add'), ' to invite a friend to one of your Bots, or to join a friend\'s invite.')
             : null) : null)
     }
 
@@ -128,6 +123,9 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = useState(null)
       const [busy, setBusy] = useState(false)
       const [copied, setCopied] = useState(false)
+      const [mine, setMine] = useState(null)
+      const [pick, setPick] = useState('')
+      useEffect(() => { loadStatus().then(value => { setMine(value); const main = value?.bots?.find(b => b.isMain) ?? value?.bots?.[0]; if (main) setPick(p => p || main.id) }, () => {}) }, [])
       const refresh = () => call('social/overview', {}).then(setOverview, e => setStatus({ tone: 'error', text: errorText(e) }))
       useEffect(() => { refresh() }, [])
       const run = async (label, fn) => {
@@ -144,7 +142,7 @@ window.__ModuleLoader__.load({
           setBusy(false)
         }
       }
-      const create = () => run('Creating the invite link', async () => { setCopied(false); setInvite(await call('social/create-invite', {})) })
+      const create = () => run('Creating the invite link', async () => { setCopied(false); setInvite(await call('social/create-invite', { botId: pick })) })
       const join = e => {
         e.preventDefault()
         return run('Joining', async () => {
@@ -167,11 +165,17 @@ window.__ModuleLoader__.load({
       const incoming = overview?.incoming ?? []
       const outgoing = overview?.outgoing ?? []
       const expires = invite?.expiresAt ? new Date(invite.expiresAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : ''
-      const message = inviteMessage({ home: overview?.home, url: link, expires })
+      const message = invite?.text ?? link
+      const bots = mine?.bots ?? []
       return h('div', { className: 'bt-social-add', 'data-flybot': 'add-friend' },
         h('div', { className: 'fs-card' },
-          h('div', { className: 'fs-hint' }, overview?.home ? ['Invite a friend to ', h('b', { key: 'h' }, overview.home), '.'] : 'Invite a friend to your home.'),
-          h('button', { type: 'button', className: 'fs-btn fs-btn-primary', disabled: busy, onClick: create }, invite ? 'Create another invite link' : 'Create invite link'),
+          h('div', { className: 'fs-hint' }, 'Invite a friend to one of your Bots. They can talk to that Bot only.'),
+          h('div', { className: 'fs-line' },
+            h('select', { className: 'fs-input fs-select', value: pick, 'aria-label': 'Bot to invite to', disabled: busy || bots.length === 0, onChange: e => { setPick(e.target.value); setInvite(null) } },
+              bots.length === 0 ? h('option', { value: '' }, mine === null ? 'Loading…' : 'No Bots available') : null,
+              bots.map(b => h('option', { key: b.id, value: b.id }, b.isMain ? `${b.name} (Main Bot)` : b.name)))),
+          h('button', { type: 'button', className: 'fs-btn fs-btn-primary', disabled: busy || !pick, onClick: create }, invite ? 'Create another invite link' : 'Create invite link'),
+          invite ? h('div', { className: 'fs-hint' }, 'Invite to ', h('b', null, invite.botName ?? ''), ' ', invite.handle ?? '') : null,
           invite ? h('div', { className: 'bt-social-invite', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
             h('div', { className: 'fs-line' },
               h('input', { className: 'fs-input', readOnly: true, value: link, 'aria-label': 'Invite link', title: link, onFocus: e => e.target.select() }),
@@ -205,6 +209,44 @@ window.__ModuleLoader__.load({
             h('span', { className: 'fs-tag' }, 'pending')))) : null)
     }
 
+    // Which local Bots can be invited to (social/status), cached for the synchronous canInvite.
+    let status = { at: 0, value: null }
+    let statusTask
+    const loadStatus = () => {
+      statusTask ??= call('social/status', {}).then(value => { status = { at: Date.now(), value }; return value }).finally(() => { statusTask = undefined })
+      return statusTask
+    }
+    // Sync: true when Bot Social is connected and botId is one of this team's Bots. Until the first
+    // status answer it is false (and starts loading); the cache refreshes every 30 s.
+    function canInvite(botId) {
+      if (Date.now() - status.at > 30_000) void loadStatus().catch(() => {})
+      return Boolean(status.value?.connected && status.value.bots.some(bot => bot.id === botId))
+    }
+
+    // In a Bot's settings: invite a friend to this Bot.
+    function InviteToBot({ bot }) {
+      useStyles()
+      const [invite, setInvite] = useState(null)
+      const [note, setNote] = useState(null)
+      const [busy, setBusy] = useState(false)
+      if (!bot?.id) return null
+      const create = async () => {
+        setBusy(true); setNote(null)
+        try { setInvite(await call('social/create-invite', { botId: bot.id })) } catch (e) { setNote({ tone: 'error', text: errorText(e) }) } finally { setBusy(false) }
+      }
+      const copy = text => {
+        const clip = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
+        if (clip?.writeText) clip.writeText(text).then(() => setNote({ tone: 'ok', text: 'Copied.' }), () => setNote({ tone: 'error', text: 'Could not copy. Select the link and copy it by hand.' }))
+      }
+      return h('div', { className: 'fs fs-card', 'data-flybot': 'invite-to-bot' },
+        h('div', { className: 'fs-hint' }, `Invite a friend to ${bot.name}. They can talk to ${bot.name} only.`),
+        h('button', { type: 'button', className: 'fs-btn', disabled: busy, onClick: create }, invite ? 'Create another invite link' : 'Invite to this Bot'),
+        invite ? h('div', { className: 'fs-line' },
+          h('input', { className: 'fs-input', readOnly: true, value: invite.link, 'aria-label': 'Invite link', onFocus: e => e.target.select() }),
+          h('button', { type: 'button', className: 'fs-btn', onClick: () => copy(invite.text) }, 'Copy')) : null,
+        note ? h('div', { className: 'fs-status', 'data-tone': note.tone }, note.text) : null)
+    }
+
     let cache = { at: 0, list: [] }
     const friendRows = async (query) => {
       if (Date.now() - cache.at > 30_000) cache = { at: Date.now(), list: await call('social/friends', {}) }
@@ -219,7 +261,8 @@ window.__ModuleLoader__.load({
       name: 'flybot-social',
       inject: [],
       errorText,
-      inviteMessage,
+      canInvite,
+      InviteToBot,
       apply(ctx) {
         let offs = []
         let tries = 0
@@ -233,7 +276,18 @@ window.__ModuleLoader__.load({
           offs = [
             slots().register('flybot.sidebar.section', { id: 'social', order: 100, component: FriendsBots }),
             slots().register('flybot.composer.mention', { id: 'social', order: 100, candidates: friendRows }),
+            slots().register('flybot.bot.details', { id: 'social-invite', order: 100, component: InviteToBot }),
           ]
+          // For other plugins (the tree's per-node "Copy invite link"): ctx.flybot.social.canInvite(botId)
+          // is synchronous; flybot.call('social.createInvite', { botId }) returns { link, text, ... }.
+          const social = { canInvite, createInvite: botId => call('social.createInvite', { botId }) }
+          globalThis.__flybot__.social = social
+          if (globalThis.__flybot__.api) globalThis.__flybot__.api.social = social
+          offs.push(() => {
+            if (globalThis.__flybot__?.social === social) delete globalThis.__flybot__.social
+            if (globalThis.__flybot__?.api?.social === social) delete globalThis.__flybot__.api.social
+          })
+          void loadStatus().catch(() => {})
         }
         let timer
         attach()

@@ -308,10 +308,24 @@ test('add friend from the UI: invite link, join by link, and answer requests (ow
   assert.equal(overview.home, '@danyang.home')
   assert.deepEqual(overview.friends.map(f => f.handle), ['@bob.home'])
   assert.deepEqual(overview.incoming.map(f => [f.relationshipId, f.handle, f.message]), [['r5', '@carol.home', 'hi, Carol here']])
-  const invite = (await call('flybot/social/create-invite', {})).value
-  assert.deepEqual(invite, { code: 'INV123', url: 'https://s/i/INV123', expiresAt: '2026-10-21T00:00:00Z', status: 'active' })
+  // Invites are per Bot: no Bot, no invite (there is no whole-home invite).
+  assert.equal((await call('flybot/social/create-invite', {})).ok, false)
+  assert.equal(server.calls.some(c => c.name === 'create_invite'), false)
+  const created = await call('flybot/social/create-invite', { botId: 'a' })
+  assert.equal(created.ok, true, JSON.stringify(created.error))
+  const invite = created.value
   const made = server.calls.find(c => c.name === 'create_invite').args
-  assert.deepEqual([made.bot_id, made.max_uses, made.auto_accept, made.offered_capabilities], ['h1', 1, true, ['chat.public']])
+  const chiefMember = server.calls.find(c => c.name === 'add_home_member' && c.args.name === 'chief')
+  assert.ok(chiefMember, 'Chief got its member identity first')
+  assert.notEqual(made.bot_id, 'h1') // the member, never the home
+  assert.deepEqual([made.max_uses, made.auto_accept, made.offered_capabilities], [1, true, ['chat.public']])
+  assert.deepEqual([invite.botId, invite.botName, invite.handle, invite.home, invite.link, invite.url, invite.code, invite.expiresAt], ['a', 'Chief', '@chief.danyang.home', '@danyang.home', 'https://s/i/INV123', 'https://s/i/INV123', 'INV123', '2026-10-21T00:00:00Z'])
+  assert.match(invite.text, /^Add my bot @chief\.danyang\.home \(Chief\) from my FlyBot home @danyang\.home\. In FlyBot: open Friends' Bots, click \+ Add, paste this link and click Join\. Using a Grok bot\? Send it this link and say 'join this FlyBot invite'\. Link: https:\/\/s\/i\/INV123 \(single use, expires Oct 2\d, 2026/)
+  // The same call under the name the tree sidebar uses, and the status the browser reads.
+  assert.equal((await call('flybot/social.createInvite', { botId: 'b' })).value.handle, '@writer.danyang.home')
+  const status = (await call('flybot/social/status', {})).value
+  assert.equal(status.connected, true)
+  assert.deepEqual(status.bots.map(b => [b.id, b.isMain]), [['a', true], ['b', false]])
   // Joining by full link: the code is taken from it and the request comes from the home.
   const joined = (await call('flybot/social/join-invite', { code: ' https://other.example/i/ABC?x=1 ' })).value
   assert.deepEqual(joined, { relationshipId: 'r8', status: 'active', inviter: '@bob.home', inviterName: 'Bob' })
@@ -358,12 +372,13 @@ test('client.js registers a sidebar section and @ rows into the FlyBot registry'
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
   const plugin = registered[0].factory(() => ({ createElement: () => null, useEffect() {}, useState: v => [v, () => {}] }))
   plugin.apply({})
-  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.composer.mention#social'])
+  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.composer.mention#social', 'flybot.bot.details#social-invite'])
   // Transport errors are worded in English from their code, never the localized host text.
   assert.match(plugin.errorText(Object.assign(new Error('请求失败（HTTP 404）'), { code: 'HTTP_404' })), /^The FlyBot host did not answer \(HTTP 404\)/)
   assert.equal(plugin.errorText(Object.assign(new Error('x'), { code: 'bot/refused' })), 'x')
-  assert.equal(plugin.inviteMessage({ home: '@danyang.home', url: 'https://s/i/abc', expires: 'Oct 21, 2026, 4:49 PM' }),
-    "Join my FlyBot home @danyang.home. In FlyBot: open Friends' Bots, click + Add, paste this link and click Join. Using a Grok bot? Send it this link and say 'join this FlyBot invite'. Link: https://s/i/abc (single use, expires Oct 21, 2026, 4:49 PM)")
+  // The API other plugins use: canInvite is synchronous and false until Bot Social reports this Bot.
+  assert.equal(typeof sandbox.__flybot__.social.canInvite, 'function')
+  assert.equal(sandbox.__flybot__.social.canInvite('a'), false)
   const rows = await entries[1][1].candidates('cod')
   assert.deepEqual(JSON.parse(JSON.stringify(rows)), [{ name: 'Coder · remote', description: '@coder.bob.home · @bob.home', section: 'Friends\' Bots', value: '@coder.bob.home (remote Bot: use message_friend_bot) ' }])
 })
