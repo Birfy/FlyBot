@@ -44,6 +44,7 @@ export const stripMarkers = (text) => {
   for (let previous; previous !== out;) { previous = out; out = out.replace(/<\/?\s*untrusted-(?:file|message)/gi, '') }
   return out
 }
+const SEEN_KEPT = 1000
 const safeName = name => String(name ?? 'file').replace(/[\u0000-\u001f\u007f/\\:]/g, '_').replace(/^\.+/, '_').slice(0, 120) || 'file'
 // The text Copy puts on the clipboard for a per-Bot invite: what to do with the link, for a
 // person in FlyBot or for their Grok bot.
@@ -179,7 +180,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       remote = {
         homes: (overview?.friends ?? []).filter(item => item.status === 'active').map(item => ({
           home: norm(item.peer?.handle), name: cleanText(item.peer?.display_name), owner: cleanText(item.peer?.owner_display_name),
-          bots: [{ handle: norm(item.peer?.handle), name: item.peer?.display_name, home: norm(item.peer?.handle), remote: true, conversationId: item.last_conversation?.status === 'active' ? item.last_conversation.conversation_id : undefined }],
+          bots: [{ handle: norm(item.peer?.handle), name: cleanText(item.peer?.display_name, norm(item.peer?.handle)), home: norm(item.peer?.handle), remote: true, conversationId: item.last_conversation?.status === 'active' ? item.last_conversation.conversation_id : undefined }],
         })),
       }
     }
@@ -240,6 +241,9 @@ export function createSocial(service, config = {}, { client: given, home: givenH
         } catch {}
       }
       const started = await client.callTool('start_conversation', { friend: bot.handle, text: msg.text, ...(config.botId ? { bot_id: config.botId } : {}) })
+      // Kept, so a file sent right after goes into this conversation.
+      const conversationId = started?.conversation_id ?? started?.conversation?.conversation_id ?? started?.message?.conversation_id
+      if (conversationId) bot.conversationId = conversationId
       return { exchangeId: started?.message?.message_id ?? msg.exchangeId }
     },
   }))
@@ -275,8 +279,25 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   if (flybot.remote?.chats) disposers.push(flybot.remote.chats.onSend(sendChat))
 
   // ------------------------------------------------------------ inbound
-  const cursors = new Map()
-  async function pollInbox() {
+  // Cursors and delivered event ids are saved with the settings, so a restart neither
+  // replays nor skips. The server cursor is only peeked: ours advances one event at a
+  // time, after that event was handled, and a failed event is retried on the next poll.
+  // One poll runs at a time.
+  settings.cursors ??= {}
+  settings.seen ??= []
+  const seen = new Set(settings.seen)
+  const markSeen = (id) => {
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    settings.seen.push(id)
+    if (settings.seen.length > SEEN_KEPT) seen.delete(settings.seen.shift())
+  }
+  let polling
+  function pollInbox() {
+    polling ??= pollOnce().finally(() => { polling = undefined })
+    return polling
+  }
+  async function pollOnce() {
     const targets = home
       ? flybot.bot.list().filter(bot => memberOf(bot.id)).map(bot => ({ local: bot, botId: memberOf(bot.id).bot_id }))
       : [{ local: (config.localBot ? flybot.bot.find(config.localBot) : undefined) ?? flybot.bot.list().find(bot => bot.isMain), botId: config.botId }]
@@ -284,13 +305,19 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     for (const { local, botId } of targets) {
       if (local === undefined) continue
       const key = botId ?? 'default'
-      const result = await client.callTool('list_inbox', { ...(cursors.has(key) ? { since_cursor: cursors.get(key) } : {}), ...(botId ? { bot_id: botId } : {}) })
-      if (result?.next_cursor !== undefined) cursors.set(key, result.next_cursor)
+      const saved = settings.cursors[key]
+      const result = await client.callTool('list_inbox', { peek: true, ...(saved !== undefined ? { since_cursor: saved } : {}), ...(botId ? { bot_id: botId } : {}) })
       for (const event of result?.events ?? []) {
-        if (event.event_type !== 'message.received') continue
+        const done = () => {
+          markSeen(event.event_id)
+          if (event.cursor !== undefined) settings.cursors[key] = event.cursor
+          saveSettings()
+        }
+        if (event.event_type !== 'message.received' || seen.has(event.event_id)) { done(); continue }
+        try {
         const files = (Array.isArray(event.attachments) ? event.attachments : []).filter(file => typeof file?.id === 'string').slice(0, MAX_FILES)
         const said = untrustedText(event.untrusted_content)
-        if (!said && files.length === 0) continue
+        if (!said && files.length === 0) { done(); continue }
         // File names come from the remote side too, so they stay inside the untrusted text.
         const text = files.length
           ? `${said}\n\nAttached files: ${files.map(file => `${safeName(file.name)} (${sizeLabel(Number(file.size) || 0)}, id ${file.id})`).join('; ')}`
@@ -302,17 +329,26 @@ export function createSocial(service, config = {}, { client: given, home: givenH
         if (settings.via[handle] === local.id && flybot.remote?.chats) {
           await flybot.remote.chats.deliver({ handle, home: fromHome, name: cleanText(event.from?.display_name, handle), text })
           delivered += 1
+          done()
           continue
         }
-        await flybot.bot.send({
+        const outcome = await flybot.bot.send({
           from: { kind: 'remote', handle, home: event.from?.home_handle ? norm(event.from.home_handle) : undefined, name: `${cleanText(event.from?.display_name, handle)} (${handle}, Bot Social)` },
           to: local.id,
           text,
           meta: { conversationId: event.conversation_id ?? null },
           ...(files.length ? { attachments: files.map(file => ({ id: file.id, name: safeName(file.name), size: Number(file.size) || 0, mime: String(file.mime ?? ''), ...(file.sha256 ? { sha256: file.sha256 } : {}) })) } : {}),
         })
-        delivered += 1
+        if (outcome?.action === 'deny') warn(`message from ${handle} refused: ${outcome.reason ?? 'denied'}`)
+        else delivered += 1
+        done()
+        } catch (error) {
+          // Stop at the failed event: it and the ones after it come again next poll.
+          warn('inbound delivery failed; retrying next poll', error)
+          break
+        }
       }
+      if ((result?.events ?? []).length === 0 && saved === undefined && result?.next_cursor !== undefined) { settings.cursors[key] = result.next_cursor; saveSettings() }
     }
     return delivered
   }
