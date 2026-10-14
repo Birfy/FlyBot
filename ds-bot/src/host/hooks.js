@@ -474,6 +474,8 @@ export function install(rt) {
     publish(plugin, list) {
       checkName('plugin', plugin)
       const next = (list ?? []).filter(bot => typeof bot?.handle === 'string').map(bot => cleanRemote(plugin, bot))
+      // A read-only host shows what the writer saved; it changes nothing.
+      if (rt.readOnly() !== undefined) return
       const all = remoteStore()
       // Every published Bot gets a chat of its own (remote-chat.js).
       void rt.remoteChats?.sync(plugin, next).catch(error => warn('flybot: remote chats not synced: %s', error))
@@ -546,13 +548,19 @@ export function install(rt) {
 
   // ---------------------------------------------------------------- UI endpoints
   const handlers = new Map()
+  // Endpoints a read-only host (another dsh holds the team) still answers: queries only.
+  const READ_ENDPOINTS = new Set(['bots', 'remote-members', 'changes', 'approvals'])
+  const readHandlers = new Set()
   const api = {
-    handle(name, fn) {
+    // `{ read: true }`: the handler only reads, so a read-only host serves it too.
+    handle(name, fn, { read = false } = {}) {
       if (handlers.has(name)) throw new Error(`flybot: api ${name} exists`)
       handlers.set(name, fn)
-      return () => handlers.delete(name)
+      if (read) readHandlers.add(name)
+      return () => { handlers.delete(name); readHandlers.delete(name) }
     },
   }
+  const isReadEndpoint = name => READ_ENDPOINTS.has(name) || readHandlers.has(name)
   async function endpoint(name, payload) {
     await rt.load()
     const body = payload ?? {}
@@ -589,6 +597,8 @@ export function install(rt) {
       send: Object.assign((msg) => send({ via: plugin, ...msg }), { use, list: send.list }),
     },
     fields,
+    // True while another dsh holds the team: plugins then only read (no polling, no writes).
+    readOnly: () => rt.readOnly() !== undefined,
     // Resolves once ds-bot's saved team is loaded, so bot.list() has every Bot.
     ready: () => rt.load().then(() => undefined),
     on: onFor(plugin),
@@ -618,5 +628,5 @@ export function install(rt) {
   // A local Bot's answer to a friend's Bot (turns.js): back through bot.send, so the
   // plugin's middleware still decides (auto-accept, or the approval hold).
   const replyRemote = ({ from, handle, home, text, replyTo }) => send({ from, to: { kind: 'remote', handle, ...(home ? { home } : {}) }, text, role: 'reply', via: 'auto-reply', meta: { replyTo } })
-  Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSendUserMentions: sendUserMentions, flybotSend: send })
+  Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSendUserMentions: sendUserMentions, flybotSend: send, flybotIsRead: isReadEndpoint })
 }

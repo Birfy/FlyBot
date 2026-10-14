@@ -515,3 +515,17 @@ test('identity (#11): credentials bound to their server, Unicode names get disti
   await assert.rejects(startSocial(ctx.flybot, { server: 'https://down.test', credentialsPath: join(home, 'none.json'), fetch: async () => new Response('', { status: 500 }), inboxPollMs: 5, setInterval: () => { timers += 1 } }), /onboarding failed/)
   assert.equal(timers, 0)
 })
+
+test('read-only host (#14): no inbox polling, no member registration', async (t) => {
+  const { ctx, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const scoped = ctx.flybot.scope('social')
+  const view = new Proxy(ctx.flybot, { get: (target, key) => (key === 'readOnly' ? () => true : key === 'scope' ? (name) => new Proxy(target.scope(name), { get: (inner, k) => (k === 'readOnly' ? () => true : inner[k]) }) : target[key]) })
+  void scoped
+  const social = createSocial(view, { autoAccept: false, inboxPollMs: 0 }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  assert.equal(await social.pollInbox(), 0)
+  assert.equal(server.calls.filter(c => c.name === 'list_inbox' || c.name === 'add_home_member').length, 0)
+})

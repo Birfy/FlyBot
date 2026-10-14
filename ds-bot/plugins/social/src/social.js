@@ -195,7 +195,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   // a Bot removed while it was registering has its new identity revoked.
   const registering = new Map()
   function register(bot) {
-    if (!home || memberOf(bot.id)) return Promise.resolve(memberOf(bot.id))
+    if (!home || memberOf(bot.id) || flybot.readOnly?.()) return Promise.resolve(memberOf(bot.id))
     if (!registering.has(bot.id)) {
       registering.set(bot.id, registerOnce(bot).finally(() => registering.delete(bot.id)))
     }
@@ -373,6 +373,8 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   }
   let polling
   function pollInbox() {
+    // Only the host that holds the team polls and delivers.
+    if (flybot.readOnly?.()) return Promise.resolve(0)
     polling ??= pollOnce().finally(() => { polling = undefined })
     return polling
   }
@@ -517,7 +519,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       outgoing: (overview?.pending_outgoing ?? []).map(peerView),
     }
   }
-  disposers.push(flybot.api.handle('social/overview', async () => friendsOverview()))
+  disposers.push(flybot.api.handle('social/overview', async () => friendsOverview(), { read: true }))
   // Invites are per Bot: an invite names one local Bot (its member identity), and a friend who
   // joins it befriends that Bot only; the home's other Bots stay hidden unless invited too.
   // 1 use, 7 days, chat both ways, accepted on join. There is no whole-home invite.
@@ -538,7 +540,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     connected: Boolean(home),
     home: home ? norm(home.handle) : undefined,
     bots: home ? flybot.bot.list().map(bot => ({ id: bot.id, name: bot.name, isMain: bot.isMain === true, handle: memberOf(bot.id)?.handle ? norm(memberOf(bot.id).handle) : undefined })) : [],
-  })))
+  }), { read: true }))
   // Joining a friend's invite (code or link). If the server asks this owner to approve
   // the request too, the click counts as that approval.
   disposers.push(flybot.api.handle('social/join-invite', async ({ code } = {}) => {
@@ -574,8 +576,8 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     if (result?.action === 'deny') dropStaged(attachments)
     return result
   }))
-  disposers.push(flybot.api.handle('social/remote-bots', async payload => remoteBots({ fresh: payload?.fresh === true })))
-  disposers.push(flybot.api.handle('social/friends', async payload => (await remoteBots({ fresh: payload?.fresh === true })).homes.flatMap(entry => entry.bots)))
+  disposers.push(flybot.api.handle('social/remote-bots', async payload => remoteBots({ fresh: payload?.fresh === true }), { read: true }))
+  disposers.push(flybot.api.handle('social/friends', async payload => (await remoteBots({ fresh: payload?.fresh === true })).homes.flatMap(entry => entry.bots), { read: true }))
   disposers.push(flybot.api.handle('social/auto-approve', async ({ botId, home: friendHome, on }) => {
     flybot.fields.set(botId, 'autoApprove', { ...(flybot.fields.get(botId, 'autoApprove') ?? {}), [norm(friendHome)]: on === null ? undefined : Boolean(on) })
     return flybot.fields.get(botId, 'autoApprove')
@@ -608,7 +610,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     if (typeof friendHome !== 'string' || !friendHome) throw new Error('which friend?')
     return setAutoAccept(friendHome, on !== false)
   }))
-  disposers.push(flybot.api.handle('social/settings', async () => ({ autoAccept: Object.fromEntries(remote.homes.map(entry => [entry.home, autoAcceptOf(entry.home)])) })))
+  disposers.push(flybot.api.handle('social/settings', async () => ({ autoAccept: Object.fromEntries(remote.homes.map(entry => [entry.home, autoAcceptOf(entry.home)])) }), { read: true }))
   disposers.push(flybot.api.handle('social/poll', async () => ({ delivered: await pollInbox() })))
 
   return {

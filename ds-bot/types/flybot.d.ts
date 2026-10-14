@@ -173,6 +173,8 @@ export interface FlyBot {
   scope(plugin: string): FlyBot
   /** Resolves once ds-bot has loaded its saved team (bot.list() is complete). */
   ready(): Promise<void>
+  /** True while another dsh holds the team: no polling, no writes. */
+  readOnly(): boolean
   on: On
   fields: BotFields
   bot: {
@@ -212,7 +214,8 @@ export interface FlyBot {
   tools: { register(tool: FlyBotTool): () => void }
   api: {
     /** UI endpoint: POST api/bot { endpoint: 'flybot/<name>', payload }. */
-    handle(name: string, fn: (payload: any) => unknown | Promise<unknown>): () => void
+    /** `read: true` marks a query a read-only host (another dsh holds the team) still serves. */
+    handle(name: string, fn: (payload: any) => unknown | Promise<unknown>, options?: { read?: boolean }): () => void
   }
   outcomeOf(exchangeId: string): SendResult | undefined
 }
