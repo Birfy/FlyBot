@@ -50,14 +50,57 @@ function Safe({ entry, props }) {
 // show whichever plugin published them.
 export function RemoteMembers({ roster }) {
   const homes = remoteMembersByHome(roster)
+  const [open, setOpen] = useState('')
   if (homes.length === 0) return null
   return h('div', { className: 'bt-flybot-section bt-remote-members', 'data-flybot': 'remote-members' },
     h('div', { className: 'bt-flybot-title' }, 'Remote members'),
     homes.map(home => h('div', { key: home.home, className: 'bt-remote-home', title: home.home },
       h('div', { className: 'bt-remote-home-name' }, home.name),
-      home.bots.map(bot => h('div', { key: bot.handle, className: 'bt-remote-member', title: bot.handle },
-        h('span', { className: 'bt-remote-name' }, bot.name),
-        h('span', { className: 'bt-remote-badge' }, 'remote'))))))
+      home.bots.map(bot => h(Fragment, { key: bot.handle },
+        h('button', { type: 'button', className: 'bt-remote-member', title: `Message ${bot.handle}`, 'aria-expanded': open === bot.handle, onClick: () => setOpen(open === bot.handle ? '' : bot.handle) },
+          h('span', { className: 'bt-remote-name' }, bot.name),
+          h('span', { className: 'bt-remote-badge' }, 'remote')),
+        open === bot.handle ? h(RemoteCompose, { bot, roster, onDone: () => setOpen('') }) : null)))))
+}
+
+const MAX_FILE_BYTES = 20 * 1024 * 1024
+const readBase64 = file => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''))
+  reader.onerror = () => reject(reader.error)
+  reader.readAsDataURL(file)
+})
+
+// Composer for one remote member: text plus files, sent from a team Bot through
+// bot.send, so the plugin's approval (with the file names and sizes) still applies.
+export function RemoteCompose({ bot, roster, onDone }) {
+  const bots = roster.bots ?? []
+  const [from, setFrom] = useState((bots.find(b => b.isMain) ?? bots[0])?.id ?? '')
+  const [text, setText] = useState('')
+  const [files, setFiles] = useState([])
+  const [status, setStatus] = useState('')
+  const submit = async (event) => {
+    event.preventDefault()
+    const big = files.find(file => file.size > MAX_FILE_BYTES)
+    if (big) return setStatus(`${big.name} is over 20 MB`)
+    setStatus('Sending…')
+    try {
+      const payload = await Promise.all(files.map(async file => ({ name: file.name, mime: file.type, content_base64: await readBase64(file) })))
+      const result = await call(`${bot.plugin ?? 'social'}/send`, { from, to: bot.handle, text: text || `${payload.length} file(s)`, files: payload })
+      const value = result?.value ?? result
+      setStatus(value?.action === 'hold' ? 'Waiting for your approval' : value?.action === 'deny' ? `Not sent: ${value.reason}` : 'Sent')
+      if (value?.action !== 'deny') { setText(''); setFiles([]); setTimeout(onDone, 1500) }
+    } catch (error) {
+      setStatus(String(error?.message ?? error))
+    }
+  }
+  return h('form', { className: 'bt-remote-compose', onSubmit: submit },
+    h('select', { value: from, 'aria-label': 'Send as', onChange: e => setFrom(e.target.value) }, bots.map(b => h('option', { key: b.id, value: b.id }, b.name))),
+    h('textarea', { value: text, placeholder: `Message ${bot.handle}`, onChange: e => setText(e.target.value) }),
+    h('input', { type: 'file', multiple: true, 'aria-label': 'Attach files', onChange: e => setFiles([...e.target.files].slice(0, 5)) }),
+    files.length ? h('div', null, files.map(file => `${file.name} · ${fileSize(file.size)}`).join(', ')) : null,
+    h('button', { type: 'submit', disabled: !from || (!text.trim() && files.length === 0) }, 'Send'),
+    status ? h('div', { role: 'status' }, status) : null)
 }
 
 export function FlyBotSections({ roster, actions }) {
@@ -108,13 +151,24 @@ export function FlyBotApprovals() {
       return h('div', { key: approval.id, className: 'bt-flybot-approval' },
         h('div', { className: 'bt-flybot-approval-head' }, `Message to ${to} · ${approval.reason}`),
         h('div', { className: 'bt-flybot-approval-text' }, approval.request.text),
+        approval.request.attachments?.length
+          ? h('ul', { className: 'bt-flybot-approval-files', 'aria-label': 'Attached files' }, approval.request.attachments.map((file, index) =>
+            h('li', { key: index }, `${file.name} · ${fileSize(file.size)}`)))
+          : null,
         h('div', { className: 'bt-flybot-approval-actions' },
           h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'approve') }, 'Approve'),
           h('button', { type: 'button', disabled: busy === approval.id, onClick: () => decide(approval.id, 'reject') }, 'Reject')))
     }))
 }
 
+export const fileSize = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`)
+
 export const FLYBOT_CSS = `
+.bt-flybot-approval-files { margin: 0 0 8px; padding-left: 18px; font-size: 12px; }
+.bt-file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0 30px; }
+.bt-file-chip { font-size: 12px; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--bt-line, rgba(0,0,0,.15)); background: transparent; cursor: pointer; }
+.bt-remote-compose { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 8px; font-size: 12px; }
+.bt-remote-compose textarea { font: inherit; min-height: 48px; }
 .bt-remote-badge { font-size: 10px; padding: 0 5px; margin-left: 6px; border-radius: 6px; background: rgba(120,120,160,.18); text-transform: lowercase; }
 .bt-remote-member { display: flex; align-items: center; padding: 2px 12px; font-size: 13px; }
 .bt-remote-home-name { padding: 4px 12px 0; font-size: 11px; opacity: .7; }

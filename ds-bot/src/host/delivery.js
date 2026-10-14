@@ -42,7 +42,7 @@ export function install(rt) {
   // exchange is recorded already too. `askedBy` is the member whose @mention called a
   // group turn (groups.js). `fromRoomId`: the group whose Session the sender wrote
   // from; the reply goes back to that Session (turns.js).
-  async function deliver({ fromId, toId, sessionId, text, role, hop = 0, replyTo, roomId, audience, note, exchangeId = randomUUID(), steer = false, deferred = false, resumed = false, retried = false, resent = false, askedBy, fromRoomId, fromName: givenName, untrusted = false, remote }) {
+  async function deliver({ fromId, toId, sessionId, text, role, hop = 0, replyTo, roomId, audience, note, exchangeId = randomUUID(), steer = false, deferred = false, resumed = false, retried = false, resent = false, askedBy, fromRoomId, fromName: givenName, untrusted = false, remote, attachments }) {
     const from = rt.botOf(fromId)
     const to = rt.botOf(toId)
     if (to === undefined) throw new Error(`Unknown Bot ${toId}`)
@@ -69,6 +69,8 @@ export function install(rt) {
       ...(fromRoomId ? { senderRoomId: fromRoomId } : {}),
       // A remote member's message (FlyBot): the chat draws it as that member's bubble.
       ...(remote?.handle ? { remote: { handle: String(remote.handle), ...(remote.home ? { home: String(remote.home) } : {}) } } : {}),
+      // A remote member's files, as references the chat shows as chips (fetched on demand).
+      ...(remote?.handle && Array.isArray(attachments) && attachments.length ? { attachments: attachments.map(file => ({ id: String(file.id ?? ''), name: String(file.name), size: Number(file.size), mime: String(file.mime ?? '') })) } : {}),
     }
     if (EXCHANGE_ROLES.has(role) && !deferred && !resumed && !retried && !resent) {
       state.exchanges.push({ id: exchangeId, from: fromId, to: toId, text, role, time: Date.now(), ...(replyTo ? { replyTo } : {}), ...(audience === 'user' ? { audience } : {}) })

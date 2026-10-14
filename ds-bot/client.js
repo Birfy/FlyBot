@@ -1235,6 +1235,7 @@ function Safe({ entry, props }) {
 }
 function RemoteMembers({ roster }) {
   const homes = remoteMembersByHome(roster);
+  const [open, setOpen] = (0, import_react.useState)("");
   if (homes.length === 0) return null;
   return (0, import_react.createElement)(
     "div",
@@ -1245,12 +1246,60 @@ function RemoteMembers({ roster }) {
       { key: home.home, className: "bt-remote-home", title: home.home },
       (0, import_react.createElement)("div", { className: "bt-remote-home-name" }, home.name),
       home.bots.map((bot) => (0, import_react.createElement)(
-        "div",
-        { key: bot.handle, className: "bt-remote-member", title: bot.handle },
-        (0, import_react.createElement)("span", { className: "bt-remote-name" }, bot.name),
-        (0, import_react.createElement)("span", { className: "bt-remote-badge" }, "remote")
+        import_react.Fragment,
+        { key: bot.handle },
+        (0, import_react.createElement)(
+          "button",
+          { type: "button", className: "bt-remote-member", title: `Message ${bot.handle}`, "aria-expanded": open === bot.handle, onClick: () => setOpen(open === bot.handle ? "" : bot.handle) },
+          (0, import_react.createElement)("span", { className: "bt-remote-name" }, bot.name),
+          (0, import_react.createElement)("span", { className: "bt-remote-badge" }, "remote")
+        ),
+        open === bot.handle ? (0, import_react.createElement)(RemoteCompose, { bot, roster, onDone: () => setOpen("") }) : null
       ))
     ))
+  );
+}
+var MAX_FILE_BYTES = 20 * 1024 * 1024;
+var readBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ""));
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(file);
+});
+function RemoteCompose({ bot, roster, onDone }) {
+  const bots = roster.bots ?? [];
+  const [from, setFrom] = (0, import_react.useState)((bots.find((b) => b.isMain) ?? bots[0])?.id ?? "");
+  const [text, setText] = (0, import_react.useState)("");
+  const [files, setFiles] = (0, import_react.useState)([]);
+  const [status, setStatus] = (0, import_react.useState)("");
+  const submit = async (event) => {
+    event.preventDefault();
+    const big = files.find((file) => file.size > MAX_FILE_BYTES);
+    if (big) return setStatus(`${big.name} is over 20 MB`);
+    setStatus("Sending…");
+    try {
+      const payload = await Promise.all(files.map(async (file) => ({ name: file.name, mime: file.type, content_base64: await readBase64(file) })));
+      const result = await call2(`${bot.plugin ?? "social"}/send`, { from, to: bot.handle, text: text || `${payload.length} file(s)`, files: payload });
+      const value = result?.value ?? result;
+      setStatus(value?.action === "hold" ? "Waiting for your approval" : value?.action === "deny" ? `Not sent: ${value.reason}` : "Sent");
+      if (value?.action !== "deny") {
+        setText("");
+        setFiles([]);
+        setTimeout(onDone, 1500);
+      }
+    } catch (error) {
+      setStatus(String(error?.message ?? error));
+    }
+  };
+  return (0, import_react.createElement)(
+    "form",
+    { className: "bt-remote-compose", onSubmit: submit },
+    (0, import_react.createElement)("select", { value: from, "aria-label": "Send as", onChange: (e) => setFrom(e.target.value) }, bots.map((b) => (0, import_react.createElement)("option", { key: b.id, value: b.id }, b.name))),
+    (0, import_react.createElement)("textarea", { value: text, placeholder: `Message ${bot.handle}`, onChange: (e) => setText(e.target.value) }),
+    (0, import_react.createElement)("input", { type: "file", multiple: true, "aria-label": "Attach files", onChange: (e) => setFiles([...e.target.files].slice(0, 5)) }),
+    files.length ? (0, import_react.createElement)("div", null, files.map((file) => `${file.name} · ${fileSize(file.size)}`).join(", ")) : null,
+    (0, import_react.createElement)("button", { type: "submit", disabled: !from || !text.trim() && files.length === 0 }, "Send"),
+    status ? (0, import_react.createElement)("div", { role: "status" }, status) : null
   );
 }
 function FlyBotSections({ roster, actions }) {
@@ -1305,6 +1354,7 @@ function FlyBotApprovals() {
         { key: approval.id, className: "bt-flybot-approval" },
         (0, import_react.createElement)("div", { className: "bt-flybot-approval-head" }, `Message to ${to} · ${approval.reason}`),
         (0, import_react.createElement)("div", { className: "bt-flybot-approval-text" }, approval.request.text),
+        approval.request.attachments?.length ? (0, import_react.createElement)("ul", { className: "bt-flybot-approval-files", "aria-label": "Attached files" }, approval.request.attachments.map((file, index) => (0, import_react.createElement)("li", { key: index }, `${file.name} · ${fileSize(file.size)}`))) : null,
         (0, import_react.createElement)(
           "div",
           { className: "bt-flybot-approval-actions" },
@@ -1315,7 +1365,13 @@ function FlyBotApprovals() {
     })
   );
 }
+var fileSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 var FLYBOT_CSS = `
+.bt-flybot-approval-files { margin: 0 0 8px; padding-left: 18px; font-size: 12px; }
+.bt-file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0 30px; }
+.bt-file-chip { font-size: 12px; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--bt-line, rgba(0,0,0,.15)); background: transparent; cursor: pointer; }
+.bt-remote-compose { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 8px; font-size: 12px; }
+.bt-remote-compose textarea { font: inherit; min-height: 48px; }
 .bt-remote-badge { font-size: 10px; padding: 0 5px; margin-left: 6px; border-radius: 6px; background: rgba(120,120,160,.18); text-transform: lowercase; }
 .bt-remote-member { display: flex; align-items: center; padding: 2px 12px; font-size: 13px; }
 .bt-remote-home-name { padding: 4px 12px 0; font-size: 11px; opacity: .7; }
@@ -4222,6 +4278,7 @@ function GroupMessage({ bot, text, room: room2, roster, actions, msgKey, useUi }
 }
 function RemoteMessage({ source, text, roster, actions, sessionId, msgKey, useUi }) {
   const member = (roster.remoteBots ?? []).find((bot2) => bot2.handle === source.remote.handle);
+  const files = Array.isArray(source.attachments) ? source.attachments : [];
   const bot = { id: `remote:${source.remote.handle}`, name: member?.name ?? source.senderName ?? source.remote.handle, color: "gray" };
   const lead = (0, import_react7.createElement)("span", { className: "bt-lead", title: source.remote.handle }, (0, import_react7.createElement)(BotMark, { bot, size: 22 }));
   return (0, import_react7.createElement)(
@@ -4233,7 +4290,39 @@ function RemoteMessage({ source, text, roster, actions, sessionId, msgKey, useUi
       bot.name,
       (0, import_react7.createElement)("span", { className: "bt-group-role bt-remote-badge", title: source.remote.home ?? source.remote.handle }, "remote")
     ),
-    (0, import_react7.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead })
+    (0, import_react7.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead }),
+    files.length ? (0, import_react7.createElement)(RemoteFiles, { files, plugin: member?.plugin ?? "social", botId: roster.byId[sessionId]?.id ?? sessionId }) : null
+  );
+}
+function RemoteFiles({ files, plugin, botId }) {
+  const [busy, setBusy] = (0, import_react7.useState)("");
+  const [error, setError] = (0, import_react7.useState)("");
+  const download2 = async (file) => {
+    setBusy(file.id);
+    setError("");
+    try {
+      const got = await call(`flybot/${plugin}/attachment`, { id: file.id, botId });
+      const value = got?.value ?? got;
+      const bytes = Uint8Array.from(atob(value.content_base64), (c) => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
+      const link = Object.assign(document.createElement("a"), { href: url, download: value.name ?? file.name });
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1e4);
+    } catch (reason) {
+      setError(String(reason?.message ?? reason));
+    } finally {
+      setBusy("");
+    }
+  };
+  return (0, import_react7.createElement)(
+    "div",
+    { className: "bt-file-chips" },
+    files.map((file) => (0, import_react7.createElement)(
+      "button",
+      { key: file.id, type: "button", className: "bt-file-chip", disabled: busy === file.id, title: `Download ${file.name} (untrusted file from a remote Bot)`, onClick: () => download2(file) },
+      `📎 ${file.name} · ${fileSize(file.size)}`
+    )),
+    error ? (0, import_react7.createElement)("span", { className: "bt-file-error", role: "alert" }, error) : null
   );
 }
 function GroupEvent({ prefix, room: room2, name, roster, actions }) {

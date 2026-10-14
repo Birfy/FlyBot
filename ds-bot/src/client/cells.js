@@ -9,6 +9,8 @@ import { AnsweredCell, SettledQuestion, PendingQuestion } from './questions.js'
 import { SecretToolCell } from './secret-card.js'
 import { dateLocale, t } from './i18n.js'
 import { remoteMessageText } from './flybot-registry.js'
+import { fileSize } from './flybot-slots.js'
+import { call } from './api.js'
 import { failureLabel } from './diagnostics.js'
 import { turnReasoning } from './turn-reasoning.js'
 
@@ -185,12 +187,42 @@ function GroupMessage({ bot, text, room, roster, actions, msgKey, useUi }) {
 // words are shown as data; the Bot reading them still gets them fenced as untrusted.
 function RemoteMessage({ source, text, roster, actions, sessionId, msgKey, useUi }) {
   const member = (roster.remoteBots ?? []).find(bot => bot.handle === source.remote.handle)
+  const files = Array.isArray(source.attachments) ? source.attachments : []
   const bot = { id: `remote:${source.remote.handle}`, name: member?.name ?? source.senderName ?? source.remote.handle, color: 'gray' }
   const lead = h('span', { className: 'bt-lead', title: source.remote.handle }, h(BotMark, { bot, size: 22 }))
   return h('div', { className: 'bt-group-msg bt-remote-msg', 'data-remote': source.remote.handle },
     h('span', { className: 'bt-group-name' }, bot.name,
       h('span', { className: 'bt-group-role bt-remote-badge', title: source.remote.home ?? source.remote.handle }, 'remote')),
-    h(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead }))
+    h(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead }),
+    files.length ? h(RemoteFiles, { files, plugin: member?.plugin ?? 'social', botId: roster.byId[sessionId]?.id ?? sessionId }) : null)
+}
+
+// A remote member's files as chips; a click fetches the file (the plugin checks its
+// hash) and saves it. Nothing is opened or run.
+function RemoteFiles({ files, plugin, botId }) {
+  const [busy, setBusy] = useState('')
+  const [error, setError] = useState('')
+  const download = async (file) => {
+    setBusy(file.id)
+    setError('')
+    try {
+      const got = await call(`flybot/${plugin}/attachment`, { id: file.id, botId })
+      const value = got?.value ?? got
+      const bytes = Uint8Array.from(atob(value.content_base64), c => c.charCodeAt(0))
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }))
+      const link = Object.assign(document.createElement('a'), { href: url, download: value.name ?? file.name })
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 10000)
+    } catch (reason) {
+      setError(String(reason?.message ?? reason))
+    } finally {
+      setBusy('')
+    }
+  }
+  return h('div', { className: 'bt-file-chips' },
+    files.map(file => h('button', { key: file.id, type: 'button', className: 'bt-file-chip', disabled: busy === file.id, title: `Download ${file.name} (untrusted file from a remote Bot)`, onClick: () => download(file) },
+      `📎 ${file.name} · ${fileSize(file.size)}`)),
+    error ? h('span', { className: 'bt-file-error', role: 'alert' }, error) : null)
 }
 
 // A centered event line that names a group chat and opens it.

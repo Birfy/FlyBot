@@ -97,6 +97,8 @@ export interface SendMessage {
   via: string
   exchangeId: string
   meta?: Record<string, Json>
+  /** Files the message carries (metadata only; bytes never pass through middleware). */
+  attachments?: FileAttachment[]
 }
 
 export interface SendRequest {
@@ -106,6 +108,8 @@ export interface SendRequest {
   role?: 'request' | 'reply'
   hop?: number
   meta?: Record<string, Json>
+  /** Files to send with it (at most 5). A transport uploads them only after approval; the approval card lists name and size. */
+  attachments?: FileAttachment[]
 }
 
 /**
@@ -260,3 +264,16 @@ declare module 'cordis' {
 }
 
 export interface RemoteMember { handle: string; home: string; name: string; homeName?: string; owner?: string; plugin: string; remote: true }
+
+/** A file a send carries: a local path (outbound) or a remote id (inbound). */
+export interface FileAttachment {
+  name: string
+  size: number
+  mime: string
+  /** Hex SHA-256 of the bytes, checked again before upload and after download. */
+  sha256?: string
+  /** Outbound: local file read by the transport after approval. Never shown to a remote side. */
+  path?: string
+  /** Inbound: the remote service's attachment id. */
+  id?: string
+}

@@ -26,3 +26,11 @@ Server side (Bot Social, local only): `/v1/onboard/flybot`, `/v1/homes/:id/membe
 `remove_home_member`, `list_home_members`, `list_remote_bots`, `send_as_member`.
 
 Tests (`test/social.test.js`) use a mocked server.
+
+## Files
+
+- **Bots:** `message_friend_bot` takes `files` (absolute paths). Each file is at most 20 MB (`config.maxFileBytes`), with at most 5 per message.
+- **Owner:** each remote member in the sidebar has a composer with a file picker. The files wait in a private outbox (mode 600).
+- **Approval:** the approval card lists every file's name and size. Nothing is uploaded until you approve. Then the bytes are read again, their SHA-256 is checked against what was approved, and they are uploaded and sent as signed refs.
+- **Incoming:** files show as chips on the remote Bot's bubble; a click downloads the file after the hash check. The receiving Bot sees the file names inside the untrusted fence. `get_friend_file(id)` saves the file to `<credentials dir>/flybot-social-files/inbox` (mode 600) and returns text content in an `<untrusted-file>` fence.
+- **Server rules:** Bot Social enforces types, size, expiry (7 days) and recipient-only download.

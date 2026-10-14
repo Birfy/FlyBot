@@ -17,6 +17,7 @@ export const SHARED = 'shared'
 // Roles that are one Bot talking to another; group rounds, kickoffs, and notices are not.
 const BOT_TO_BOT_ROLES = new Set(['request', 'reply', 'stopped', 'report'])
 const ACTIONS = new Set(['allow', 'deny', 'hold'])
+const MAX_ATTACHMENTS = 5
 const APPROVALS_KEPT = 200
 const CHANGES_KEPT = 500
 const NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/i
@@ -315,7 +316,26 @@ export function install(rt) {
     return { action: 'allow', exchangeId: await dispatch(msg) }
   }
 
-  async function send({ from, to, text, role = 'request', hop = 0, via = SHARED, meta } = {}) {
+  // File metadata a send carries (names and sizes for the approval card; a path or a
+  // remote id for the transport). Bytes never travel through the middleware chain.
+  const cleanAttachments = (list) => {
+    if (list === undefined || list === null) return []
+    if (!Array.isArray(list)) throw new Error('flybot: attachments must be an array')
+    if (list.length > MAX_ATTACHMENTS) throw new Error(`flybot: at most ${MAX_ATTACHMENTS} attachments`)
+    return list.map((file) => {
+      const name = String(file?.name ?? '').replace(/[\u0000-\u001f\u007f/\\]/g, '_').trim().slice(0, 200)
+      const size = Number(file?.size)
+      if (!name || !Number.isInteger(size) || size < 0) throw new Error('flybot: an attachment needs a name and a size')
+      return {
+        name, size, mime: String(file.mime ?? 'application/octet-stream').slice(0, 120),
+        ...(/^[0-9a-f]{64}$/.test(file.sha256 ?? '') ? { sha256: file.sha256 } : {}),
+        ...(typeof file.id === 'string' ? { id: file.id.slice(0, 80) } : {}),
+        ...(typeof file.path === 'string' ? { path: file.path } : {}),
+      }
+    })
+  }
+
+  async function send({ from, to, text, role = 'request', hop = 0, via = SHARED, meta, attachments } = {}) {
     await rt.load()
     if (typeof text !== 'string' || text.trim() === '') throw new Error('flybot: send needs text')
     if (role !== 'request' && role !== 'reply') throw new Error(`flybot: unsupported role ${role}`)
@@ -324,11 +344,14 @@ export function install(rt) {
     if (isRemote(from) && isRemote(to)) throw new Error('flybot: one side must be a local Bot')
     from = isRemote(from) ? toRemote(from) : from
     to = isRemote(to) ? toRemote(to) : to
+    const files = cleanAttachments(attachments)
     const exchangeId = randomUUID()
-    const msg = { from, to, target: targetOf(to), text, role, hop, via, exchangeId, ...(meta ? { meta } : {}) }
+    const msg = { from, to, target: targetOf(to), text, role, hop, via, exchangeId, ...(meta ? { meta } : {}), ...(files.length ? { attachments: files } : {}) }
     if (!isRemote(to)) {
+      // Only a remote sender's files reach a local Bot, as references (no local paths).
+      const shown = files.map(({ path, ...ref }) => ref)
       msg.deliverArgs = isRemote(from)
-        ? { toId: to, role, hop, text, exchangeId, fromName: from.name ?? remoteMembers.get(from.handle)?.name ?? from.handle, untrusted: true, remote: { handle: from.handle, home: from.home } }
+        ? { toId: to, role, hop, text, exchangeId, fromName: from.name ?? remoteMembers.get(from.handle)?.name ?? from.handle, untrusted: true, remote: { handle: from.handle, home: from.home }, ...(shown.length ? { attachments: shown } : {}) }
         : { fromId: from, toId: to, role, hop, text, exchangeId }
     }
     const result = await run(msg)
