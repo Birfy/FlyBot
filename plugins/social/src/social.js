@@ -1210,9 +1210,28 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     const key = norm(handle)
     return flybot.bot.list().find(bot => memberOf(bot.id)?.handle && norm(memberOf(bot.id).handle) === key)
   }
+  function asBotsOf(meta) {
+    if (!meta) return []
+    const listed = Array.isArray(meta.asBots) ? meta.asBots : []
+    const single = meta.asBot ? [meta.asBot] : []
+    const out = []
+    const seen = new Set()
+    for (const handle of [...listed, ...single]) {
+      const key = norm(handle)
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      out.push(key)
+    }
+    return out
+  }
+  function rememberAsBot(meta, handle) {
+    const key = handle ? norm(handle) : ''
+    const asBots = asBotsOf({ asBots: [...asBotsOf(meta), key] })
+    return { ...meta, asBot: key || meta?.asBot || asBots[0], asBots }
+  }
   function faceRoomsUsing(handle) {
     const key = norm(handle)
-    return Object.entries(settings.faceRooms).filter(([, meta]) => meta?.asBot && norm(meta.asBot) === key)
+    return Object.entries(settings.faceRooms).filter(([, meta]) => asBotsOf(meta).includes(key))
   }
   // Room-only identities exist so Bot Social can name the Bot in a face room. They must not
   // linger as reachable home members: revoke when the Bot is in no face room and still has no person-grant.
@@ -1276,12 +1295,14 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       localBots: locals,
     })
     if (!room?.id) return undefined
-    settings.faceRooms[snapshot.roomId] = {
+    const prev = settings.faceRooms[snapshot.roomId]
+    settings.faceRooms[snapshot.roomId] = rememberAsBot({
       localRoomId: room.id,
-      cursor: Math.max(Number(settings.faceRooms[snapshot.roomId]?.cursor) || 0, Number(snapshot.eventCursor) || 0),
-      asBot: asBot || settings.faceRooms[snapshot.roomId]?.asBot,
-      seen: settings.faceRooms[snapshot.roomId]?.seen ?? [],
-    }
+      cursor: Math.max(Number(prev?.cursor) || 0, Number(snapshot.eventCursor) || 0),
+      asBot: prev?.asBot,
+      asBots: prev?.asBots,
+      seen: prev?.seen ?? [],
+    }, asBot)
     let seen = settings.faceRooms[snapshot.roomId].seen
     for (const event of snapshot.events ?? []) {
       if (event.eventId && seen.includes(event.eventId)) continue
@@ -1329,8 +1350,10 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
           if (known.has(serverId)) continue
           if (meta?.localRoomId) await flybot.rooms.dropFace?.(meta.localRoomId).catch(() => {})
           delete settings.faceRooms[serverId]
-          const left = botByHandle(meta?.asBot)
-          if (left) await releaseRoomOnlyIdentity(left.id)
+          for (const handle of asBotsOf(meta)) {
+            const left = botByHandle(handle)
+            if (left) await releaseRoomOnlyIdentity(left.id)
+          }
         }
         if (listed.length !== Object.keys(settings.faceRooms).length) saveSettings()
       } catch (error) {
@@ -1352,7 +1375,6 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       const ready = pickJoiner(bot.id)
       const snapshot = await faceNeed().join({ code: digits, bots: [ready.handle] })
       const room = await applyFaceSnapshot(snapshot, { asBot: ready.handle })
-      if (settings.faceRooms[snapshot.roomId]) settings.faceRooms[snapshot.roomId].asBot = ready.handle
       saveSettings()
       if (room) await setRoomGrant(ready.id, room, { faceRoomId: snapshot.roomId, name: snapshot.name || room.name })
       return { ...viewHostedFace(room, { joinedAs: { botId: ready.id, botName: ready.name, handle: ready.handle } }), faceRoomId: snapshot.roomId, status: snapshot.status, expiresAt: snapshot.expiresAt, members: snapshot.members }
@@ -1367,16 +1389,21 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
   async function leaveFaceRoom({ roomId, faceRoomId, bots } = {}) {
     const id = faceRoomId || Object.entries(settings.faceRooms).find(([, item]) => item.localRoomId === roomId)?.[0]
     if (!id) throw new Error('which room?')
-    const result = await faceNeed().leave(id, { bots })
     const meta = settings.faceRooms[id]
+    const handles = (Array.isArray(bots) && bots.length ? bots : asBotsOf(meta)).map(norm).filter(Boolean)
+    const result = await faceNeed().leave(id, { bots: handles })
     if (meta?.localRoomId) {
-      const leftBot = botByHandle(meta?.asBot)
-      if (leftBot) await dropRoomGrant(leftBot.id, meta.localRoomId)
+      for (const handle of asBotsOf(meta)) {
+        const leftBot = botByHandle(handle)
+        if (leftBot) await dropRoomGrant(leftBot.id, meta.localRoomId)
+      }
       await flybot.rooms.dropFace?.(meta.localRoomId).catch(() => {})
     }
     delete settings.faceRooms[id]
-    const left = botByHandle(meta?.asBot)
-    if (left) await releaseRoomOnlyIdentity(left.id)
+    for (const handle of asBotsOf(meta)) {
+      const left = botByHandle(handle)
+      if (left) await releaseRoomOnlyIdentity(left.id)
+    }
     saveSettings()
     return { roomId: meta?.localRoomId, faceRoomId: id, status: result?.status || 'left' }
   }
@@ -1406,6 +1433,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
   }
   disposers.push(flybot.api.handle('social/face-join', async ({ code, botId } = {}) => joinFaceRoom({ code, botId })))
   disposers.push(flybot.api.handle('social/face-rooms', async () => {
+    await pollFaceRooms().catch(() => {})
     const rooms = Object.entries(settings.faceRooms).map(([faceRoomId, meta]) => {
       const room = flybot.rooms.ofFace?.(faceRoomId)
       return viewHostedFace(room, { faceRoomId, localRoomId: meta.localRoomId, cursor: meta.cursor }) || { faceRoomId, roomId: meta.localRoomId, status: 'candidate' }
