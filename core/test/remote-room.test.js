@@ -17,6 +17,7 @@ import {
   roomVisibleTo,
   viewerRole,
 } from '../src/host/room-membership.js'
+import { install as installReach, reach } from '../src/host/reach.js'
 import { remoteBotTitle, sharedRoomTitle } from '../src/shared/remote-label.js'
 import { mentionRows } from '../src/client/at-menu.js'
 import { indexRoster } from '../src/client/sources.js'
@@ -49,6 +50,7 @@ function host(t, saved) {
   installMemberAuth(rt)
   installAuthz(rt)
   installRooms(rt)
+  installReach(rt)
   t.after(async () => {
     await Promise.all(disposers.splice(0).map(cleanup => cleanup()))
     rmSync(dir, { recursive: true, force: true, maxRetries: 5 })
@@ -361,4 +363,142 @@ test('channel: each viewer sees the room under the documented rule', async (t) =
   assert.equal(warB.pendingCount, 1)
   const eve = { memberId: 'owner-9' }
   assert.equal(roomVisibleTo(rt.state, eve, 'war'), false)
+})
+
+// ---- #51: a room with friends' Bots takes published local Bots only
+
+// The war room starts with both Chiefs; these tests want one owner and the friend's Bot.
+const soloWar = (rt) => {
+  const room = rt.state.rooms.war
+  room.participants = room.participants.filter(p => p.id !== 'chief-b')
+  room.members = room.members.filter(id => id !== 'chief-b')
+}
+
+const withRemote = async (rt, actorA) => {
+  soloWar(rt)
+  publish(rt)
+  await rt.addRoomParticipant('war', { kind: 'bot', remote: true, handle: '@coder.bob.home' }, actorA)
+}
+
+test('#51: an unpublished local Bot cannot be added to a room that has a friend\'s Bot', async (t) => {
+  const { rt } = host(t, TEAM)
+  await rt.load()
+  const { alice } = await signAliceAndBob(rt)
+  const actorA = await rt.authenticate(alice.sessionToken)
+  await withRemote(rt, actorA)
+  await assert.rejects(() => rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, actorA), /published Bot/)
+  assert.equal(rt.state.rooms.war.members.includes('spec-a'), false)
+  // The owner's choice lets the same Bot in.
+  await rt.setPublished('spec-a', true)
+  await rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, actorA)
+  assert.equal(rt.state.rooms.war.members.includes('spec-a'), true)
+})
+
+test('#51: a friend\'s Bot cannot be added to a room that holds an unpublished local Bot', async (t) => {
+  const { rt } = host(t, TEAM)
+  await rt.load()
+  const { alice } = await signAliceAndBob(rt)
+  const actorA = await rt.authenticate(alice.sessionToken)
+  soloWar(rt)
+  publish(rt)
+  await rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, actorA)
+  await assert.rejects(() => rt.addRoomParticipant('war', { kind: 'bot', remote: true, handle: '@coder.bob.home' }, actorA), /published Bot/)
+  assert.equal(rt.state.rooms.war.participants.some(p => p.remote), false)
+  await rt.setPublished('spec-a', true)
+  await rt.addRoomParticipant('war', { kind: 'bot', remote: true, handle: '@coder.bob.home' }, actorA)
+  assert.equal(rt.state.rooms.war.participants.some(p => p.remote), true)
+})
+
+test('#51: creating a room with a friend\'s Bot and an unpublished member is refused', async (t) => {
+  const { rt } = host(t, TEAM)
+  rt.createRoom = undefined
+  await rt.load()
+  const { alice } = await signAliceAndBob(rt)
+  const actorA = await rt.authenticate(alice.sessionToken)
+  publish(rt)
+  const room = { id: 'new', members: [], participants: [], createdAt: 1 }
+  const drafts = [
+    { kind: 'human', id: 'owner-1', role: 'admin' },
+    { kind: 'bot', id: 'spec-a' },
+    { kind: 'bot', remote: true, handle: '@coder.bob.home' },
+  ]
+  assert.throws(() => rt.applyParticipants(room, drafts, actorA), /published Bot/)
+  rt.state.bots['spec-a'].published = true
+  assert.doesNotThrow(() => rt.applyParticipants({ id: 'new', members: [], participants: [], createdAt: 1 }, drafts, actorA))
+})
+
+test('#51: unpublishing a Bot, or replacing its Chief, takes it out of rooms with friends at once', async (t) => {
+  const { rt } = host(t, TEAM)
+  await rt.load()
+  const { alice } = await signAliceAndBob(rt)
+  const actorA = await rt.authenticate(alice.sessionToken)
+  await withRemote(rt, actorA)
+  await rt.setPublished('spec-a', true)
+  await rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, actorA)
+  const room = rt.state.rooms.war
+  assert.deepEqual(room.members.filter(id => id.startsWith('spec') || id.startsWith('chief')).sort(), ['chief-a', 'spec-a'])
+  await rt.setPublished('spec-a', false)
+  assert.equal(room.members.includes('spec-a'), false)
+  assert.ok(room.log.some(line => line.kind === 'left' && line.authorId === 'spec-a'))
+  assert.ok(room.participants.find(p => p.id === 'spec-a').leftSeq !== undefined)
+  // The Chief default: turning the Chief off takes it out too, and the remote stays.
+  await rt.setPublished('chief-a', false)
+  assert.equal(room.members.includes('chief-a'), false)
+  assert.equal(room.participants.some(p => p.remote && p.leftSeq === undefined), true)
+})
+
+test('#51: unpublishing leaves private rooms (no friends, one owner) alone', async (t) => {
+  const { rt } = host(t, TEAM)
+  await rt.load()
+  await rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, undefined).catch(() => {})
+  const room = rt.state.rooms.war
+  room.participants.push({ kind: 'bot', id: 'spec-a', role: 'member', displayName: 'Writer A', joinedSeq: 0, joinedAt: 1 })
+  room.members.push('spec-a')
+  await rt.setPublished('spec-a', true)
+  await rt.setPublished('spec-a', false)
+  assert.equal(room.members.includes('spec-a'), true)
+})
+
+test('#51: fanout sends from a published Bot, skips lines of Bots that may not share, and skips friends no longer published', async (t) => {
+  const { rt, sent } = host(t, TEAM)
+  await rt.load()
+  const { alice } = await signAliceAndBob(rt)
+  const actorA = await rt.authenticate(alice.sessionToken)
+  await withRemote(rt, actorA)
+  const room = rt.state.rooms.war
+  // An unpublished specialist's line never leaves (it is not even a member now).
+  await rt.fanoutRoomLine(room, { seq: 5, who: 'Writer A', text: 'draft', authorKind: 'bot', authorId: 'spec-a' })
+  assert.equal(sent.length, 0)
+  await rt.fanoutRoomLine(room, { seq: 6, who: 'Alice', text: 'hello', authorKind: 'human', authorId: 'owner-1' })
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].from, 'chief-a')
+  // The admin Chief is no longer published: someone who is still published speaks, never it.
+  await rt.setPublished('chief-a', false)
+  await rt.fanoutRoomLine(room, { seq: 7, who: 'Alice', text: 'again', authorKind: 'human', authorId: 'owner-1' })
+  assert.ok(sent.slice(1).every(msg => msg.from !== 'chief-a'))
+  // The friend takes the Bot off their published list: nothing goes there.
+  const before = sent.length
+  publish(rt, [])
+  await rt.fanoutRoomLine(room, { seq: 8, who: 'Alice', text: 'anyone?', authorKind: 'human', authorId: 'owner-1' })
+  assert.equal(sent.length, before)
+})
+
+test('#51: a room code lets an unpublished Bot in, for that room only (internal option, never a request field)', async (t) => {
+  const { rt } = host(t, TEAM)
+  await rt.load()
+  const { alice } = await signAliceAndBob(rt)
+  const actorA = await rt.authenticate(alice.sessionToken)
+  await withRemote(rt, actorA)
+  await assert.rejects(() => rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a', viaCode: true }, actorA), /published Bot/)
+  await rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, actorA, { viaCode: true })
+  const entry = rt.state.rooms.war.participants.find(p => p.id === 'spec-a')
+  assert.equal(entry.viaCode, true)
+  const remote = { kind: 'remote', handle: '@coder.bob.home' }
+  assert.equal(reach(rt.state, { from: 'spec-a', to: remote, roomId: 'war' }).action, 'allow')
+  assert.equal(reach(rt.state, { from: 'spec-a', to: remote, roomId: 'elsewhere' }).action, 'deny')
+  assert.equal(reach(rt.state, { from: remote, to: 'spec-a' }).action, 'deny')
+  assert.equal(reach(rt.state, { from: 'spec-a', to: remote }).action, 'deny')
+  // It stays while it is a member and needs no publication; an unpublish of others does not touch it.
+  await rt.setPublished('chief-a', false)
+  assert.equal(rt.state.rooms.war.members.includes('spec-a'), true)
 })

@@ -21,15 +21,19 @@
 //   (for an invited owner, their Bot's interval). Leaving closes the interval and
 //   withdraws all history access. Rejoining opens a new interval at the then-current
 //   seq; prior intervals do not come back. Non-members cannot read or inject.
-//   Unpublished specialists stay owner-private. Only a designated Chief or a Bot
-//   published to friends (`state.flybot.remote`, cleanRemote) may be added across
-//   owners.
+//   Unpublished specialists stay owner-private. Across owners (and with remote
+//   participants) only a *published* local Bot (the owner's choice; the designated
+//   Chief by default, see reach.js) or a Bot that joined by room code (`viaCode`, #83;
+//   reachable in this room only, while a member), and a Bot published to friends
+//   (`state.flybot.remote`, cleanRemote) may be added. A Bot that stops qualifying
+//   (unpublished, Chief replaced) leaves such rooms at once (rt.evictUnshared).
 //
 // Inbound shared rooms (`origin: 'inbound-share'`) are the remote owner's projection
 // of a friend's room that invited their published Bot.
 
 import { cleanPeerName, disambiguatedRemoteTitle, isChiefRecord, remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
 import { cleanName, fenceUntrusted } from './delivery.js'
+import { isPublished, mayShareRoom } from './reach.js'
 
 const KINDS = new Set(['human', 'bot'])
 const ROLES = new Set(['admin', 'member'])
@@ -274,7 +278,7 @@ export function deriveParticipants(room, state) {
   return [...humans, ...bots]
 }
 
-function permittedBot(state, room, botId, humans) {
+function permittedBot(state, room, botId, humans, { viaCode = false } = {}) {
   const bot = state.bots?.[botId]
   if (!bot) return false
   const owners = new Set(humans)
@@ -284,7 +288,7 @@ function permittedBot(state, room, botId, humans) {
   }
   if (state.bots[botId]?.ownerId) owners.add(bot.ownerId)
   const cross = owners.size > 1
-  if (cross) return isDesignatedChief(state, botId) && humans.has(bot.ownerId)
+  if (cross) return (isPublished(state, botId) && humans.has(bot.ownerId)) || viaCode
   return bot.ownerId === [...owners][0]
 }
 
@@ -378,12 +382,19 @@ export function install(rt) {
     return { ...line, who: name, ...(id ? { authorId: id, authorKind: 'human' } : {}) }
   }
 
-  function assertAddable(room, draft, actor) {
+  const REMOTE_ROOM_MESSAGE = 'Only a published Bot (or one that joined with the room code) may be in a room with friends\' Bots'
+  const hasRemote = room => currentParticipants(room).some(isRemoteParticipant)
+  // Local members that may not stay in a room with remote participants or other owners.
+  const unsharable = room => currentParticipants(room).filter(p => p.kind === 'bot' && !p.remote && !mayShareRoom(state, room, p.id))
+
+  // `viaCode` (a room-code join, #83) is an internal option: it is never read from a request body.
+  function assertAddable(room, draft, actor, { viaCode = false } = {}) {
     if (!KINDS.has(draft.kind)) throw invalid('Participant kind must be human or bot')
     if (isRemoteDraft(draft)) {
       const published = publishedRemoteOf(state, draft.handle || draft.id)
       if (!published) throw forbidden('Only a Chief or a Bot published to friends may join a shared room')
       if (participantOf(room, 'bot', published.handle)) throw invalid('That participant is already in the room')
+      if (unsharable(room).length > 0) throw forbidden(REMOTE_ROOM_MESSAGE)
       return published
     }
     if (typeof draft.id !== 'string' || draft.id === '') throw invalid('A participant needs an id')
@@ -396,7 +407,7 @@ export function install(rt) {
       if (humans.size > 1) {
         for (const p of currentParticipants(room).filter(item => item.kind === 'bot' && !item.remote)) {
           const ownerId = state.bots?.[p.id]?.ownerId
-          if (!isDesignatedChief(state, p.id) || !humans.has(ownerId)) {
+          if (!mayShareRoom(state, room, p.id) || !humans.has(ownerId)) {
             throw forbidden('Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief')
           }
         }
@@ -408,23 +419,26 @@ export function install(rt) {
     const humans = new Set(currentParticipants(room).filter(p => p.kind === 'human').map(p => p.id))
     if (actor?.memberId) humans.add(actor.memberId)
     humans.add(bot.ownerId)
-    if (!permittedBot(state, room, draft.id, humans)) {
-      if (isSpecialist(state, draft.id) && (isCrossOwnerRoom(room, state) || humans.size > 1)) {
+    if (!permittedBot(state, room, draft.id, humans, { viaCode })) {
+      if (!isPublished(state, draft.id) && (isCrossOwnerRoom(room, state) || humans.size > 1)) {
         throw forbidden('Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief')
       }
-      throw forbidden('Only a designated Chief of a room member may join a shared room')
+      throw forbidden('Only a published Bot of a room member may join a shared room')
     }
+    if (hasRemote(room) && !viaCode && !isPublished(state, draft.id)) throw forbidden(REMOTE_ROOM_MESSAGE)
     const nextOwners = new Set(humans)
     if (nextOwners.size > 1) {
       for (const p of currentParticipants(room).filter(item => item.kind === 'bot' && !item.remote)) {
-        if (isSpecialist(state, p.id)) {
+        if (!mayShareRoom(state, room, p.id)) {
           throw forbidden('Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief')
         }
       }
     }
   }
 
-  rt.addRoomParticipant = function addRoomParticipant(roomId, draft, actor) {
+  // `opts.viaCode`: the Bot joins with the room's code (#83): it needs no publication, and is
+  // reachable in this room only, while it is a member. Internal: request bodies cannot set it.
+  rt.addRoomParticipant = function addRoomParticipant(roomId, draft, actor, opts = {}) {
     return withRoomLock(async () => {
       const room = rt.roomOf(roomId)
       if (room === undefined) throw invalid('Unknown group chat')
@@ -433,7 +447,8 @@ export function install(rt) {
         throw forbidden('Only a room admin can add participants')
       }
       const kind = draft.kind
-      const published = assertAddable(room, draft, actor)
+      const viaCode = opts?.viaCode === true && draft.kind === 'bot' && !isRemoteDraft(draft)
+      const published = assertAddable(room, draft, actor, { viaCode })
       const role = draft.role === 'admin' ? 'admin' : 'member'
       const invitedBy = actor?.memberId
       const invitedByName = actor ? displayNameFor(state, actor.memberId, actor.displayName) : undefined
@@ -493,6 +508,7 @@ export function install(rt) {
           displayName,
           joinedSeq: line.seq,
           joinedAt: invitedAt,
+          ...(viaCode ? { viaCode: true } : {}),
           ...(invitedBy && kind === 'bot' ? { invitedBy, invitedByName, invitedAt } : {}),
         }
         room.participants.push(record)
@@ -654,6 +670,8 @@ export function install(rt) {
         throw forbidden('Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief')
       }
     }
+    // A room with a friend's Bot takes only published local Bots (a room code cannot be used here).
+    if (hasRemote(room) && unsharable(room).length > 0) throw forbidden(REMOTE_ROOM_MESSAGE)
     syncMembers(room)
     return room
   }
@@ -666,15 +684,23 @@ export function install(rt) {
     }))
   }
 
+  // Room lines go out to the friends' Bots in the room, checked per author and per recipient
+  // (#51): a line written by a local Bot that may not share the room never leaves, a friend's
+  // Bot that is no longer published to us gets nothing, and the sending Bot is one that may
+  // speak outside (bot.send then runs the reach policy on every single send).
   rt.fanoutRoomLine = async function fanoutRoomLine(room, line) {
     const remotes = currentParticipants(room).filter(isRemoteParticipant)
     if (remotes.length === 0 || !rt.flybotSend) return
-    const from = (room.admin && rt.botOf?.(room.admin) ? room.admin : (room.members ?? []).find(id => rt.botOf?.(id)))
+    const localAuthor = line.authorKind === 'bot' && !line.remote && rt.botOf?.(line.authorId ?? line.botId) ? (line.authorId ?? line.botId) : undefined
+    if (localAuthor !== undefined && !mayShareRoom(state, room, localAuthor)) return
+    const speakers = [room.admin, ...(room.members ?? [])].filter(id => id && rt.botOf?.(id) && mayShareRoom(state, room, id))
+    const from = speakers[0]
     if (!from) return
     const who = cleanName(line.who || 'member')
     const body = line.text ? fenceUntrusted(who, line.text) : `[${cleanName(line.kind || 'event')}]`
     for (const remote of remotes) {
       if (line.authorId === remote.id || line.authorId === remote.handle) continue
+      if (!publishedRemoteOf(state, remote.handle)) continue
       try {
         await rt.flybotSend({
           from,
@@ -688,6 +714,29 @@ export function install(rt) {
         rt.warn?.('ds-bot: room line not sent to %s: %s', remote.handle, error)
       }
     }
+  }
+
+  // A Bot that no longer qualifies (unpublished, Chief replaced, owner removed) leaves every room
+  // that has friends' Bots or more than one owner, at once; without an id, every such Bot does.
+  rt.evictUnshared = async function evictUnshared(botId) {
+    let changed = false
+    for (const room of Object.values(state.rooms ?? {})) {
+      if (!Array.isArray(room.participants) || !(hasRemote(room) || isCrossOwnerRoom(room, state))) continue
+      for (const me of currentParticipants(room).filter(p => p.kind === 'bot' && !p.remote && (botId === undefined || p.id === botId))) {
+        if (mayShareRoom(state, room, me.id)) continue
+        await withRoomLock(async () => {
+          if (me.leftSeq !== undefined) return
+          const line = append(room, { kind: 'left', who: me.displayName, authorId: me.id, authorKind: 'bot', text: '' })
+          me.leftSeq = line.seq
+          me.leftAt = Date.now()
+          if (room.seen) delete room.seen[me.id]
+          rt.dropGroupSession?.(room, me.id)
+          syncMembers(room)
+          changed = true
+        })
+      }
+    }
+    if (changed) await rt.save()
   }
 
   rt.ingestRemoteRoomLine = async function ingestRemoteRoomLine({ handle, text } = {}) {

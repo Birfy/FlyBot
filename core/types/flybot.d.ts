@@ -31,6 +31,8 @@ export interface BotView {
   name: string
   role?: string
   isMain: boolean
+  /** Reachable from other owners and friends (the owner's choice; the Chief by default). Others' unpublished Bots cannot be messaged. */
+  published: boolean
   createdBy: BotId | null
   /** Text prompt.js appends to this Bot's system prompt (bot.setSystemPrompt). */
   systemPrompt: string
@@ -60,6 +62,8 @@ export interface FlyBotEvents {
   /** A new local Bot (UI, create_bot, or a plugin's bot.create); payload is its record. */
   'bot.created': BotView
   'bot.removed': BotRemoved
+  /** A Bot's effective published state flipped (set by its owner, or the Chief changed); payload is its record. */
+  'bot.published': BotView
 }
 export type On = <K extends keyof FlyBotEvents>(event: K, listener: (payload: FlyBotEvents[K]) => void, options?: { all?: boolean }) => () => void
 
@@ -193,6 +197,8 @@ export interface FlyBot {
     find(name: string): BotView | undefined
     /** True for a remote address ({ kind: 'remote' } or '@handle'); local ids are never remote. */
     isRemote(ref: unknown): boolean
+    /** Whether the Bot is published (reachable from outside its owner). false for remote or unknown ids. */
+    isPublished(id: BotId): boolean
     /** The Bot a Session (own chat, group, or earlier part) belongs to. */
     of(sessionId: string): BotView | undefined
     /** Returns the new Bot's id. */
