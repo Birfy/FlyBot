@@ -52,6 +52,10 @@ FlyBot's plugin API surface on top of the patched core: host hooks, client slots
 8. A user's @ of a friend's Bot in a group gets a receipt line in that group (`hooks.js` `mentionReceipt`, relay role `mention`): where the reply lands, or why the send was denied, held, or failed. The receipt's role stays outside the room round trigger (`groups.js` `opens`), so it never opens a round; peer names go through `cleanName`.
 9. `flybot.rooms` hosts a Bot Social face-to-face matching room as a native room (`upsertFace` / `applyFaceLine` / `ofFace` / `dropFace` / `onFaceLine` / `postNotice` / `postRemote`). Slot `flybot.room.overview` is a block at the top of a group's overview (Leave / Start chat / Auto-send for origin `face-to-face`). Slot `flybot.new-chat.action` adds a row to the sidebar **+** new-chat menu (next to Create group chat; `label` / `hint` go through the same `t()` map). Still not team mode.
 
+### Host Bot look for classic-script plugins
+
+- Classic-script plugins cannot import `src/client/mark.js`. The host client `registry()` therefore also sets `globalThis.__flybot__.BotAvatar`, `BotMark` and `lookOf` to the same components the sidebar / session list / chat header use (configured image / shape / color, else a stable look from the Bot id or a remote handle). Plugins typically render `BotAvatar` at 24px with `badge: false`; face-to-face tiles pass 48. A stored `color` / `avatar` on the record still wins; a remote Bot without one is seeded by `remoteSeed(handle)`.
+
 ## Tests
 
 `core/test/flybot.test.js`, `core/test/flybot-client.test.js` via `npm test`.

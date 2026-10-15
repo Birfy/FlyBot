@@ -1247,6 +1247,19 @@ function loadSocialClient(callImpl) {
   }
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
   const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const stubMark = (kind) => ({ bot, size } = {}) => h('span', {
+    className: 'bt-mark',
+    'data-flybot': kind,
+    'data-bot-id': bot?.id,
+    'data-handle': bot?.remote?.handle || bot?.handle,
+    'data-shape': bot?.avatar?.shape,
+    'data-image': bot?.avatar?.image,
+    'data-color': bot?.color,
+    'data-emoji': bot?.avatar?.emoji,
+    'data-size': size,
+  })
+  sandbox.__flybot__.BotAvatar = stubMark('bot-avatar')
+  sandbox.__flybot__.BotMark = stubMark('bot-mark')
   const walk = (node, all = []) => {
     if (!node || typeof node !== 'object') return all
     if (typeof node.type === 'function') return walk(node.type(node.props), all)
@@ -1264,7 +1277,7 @@ function loadSocialClient(callImpl) {
       useMemo: f => f(),
     }))
   }
-  return { registered, entries, walk, pluginOf, h }
+  return { registered, entries, walk, pluginOf, h, sandbox }
 }
 
 test('social HTTP keep-alive reuses one Agent', () => {
@@ -1540,18 +1553,49 @@ test('Face-to-face group (#92): pick Bots, join each once, live roster, Enter ch
     return {}
   })
   const bots = [{ id: 'a', name: 'Chief', isMain: true, handle: '@a.me.home' }, { id: 'b', name: 'Writer', handle: '@b.me.home' }]
-  const setup = (states) => walk(pluginOf(states).FaceToFaceGroup({ actions: { openSession: id => opened.push(id) } }))
+  const roster = {
+    byId: {
+      a: { id: 'a', name: 'Chief', isMain: true, color: 'blue', avatar: { shape: 'whale' } },
+      b: { id: 'b', name: 'Writer', color: 'orange', avatar: { shape: 'star' } },
+    },
+    bots: [
+      { id: 'a', name: 'Chief', isMain: true, color: 'blue', avatar: { shape: 'whale' } },
+      { id: 'b', name: 'Writer', color: 'orange', avatar: { shape: 'star' } },
+    ],
+  }
+  const remoteChats = [{
+    id: 'r-coder', name: 'Coder', remote: { handle: '@coder.bob.home' },
+    color: 'green', avatar: { image: 'https://example.test/coder.png' },
+  }]
+  const faceProps = { actions: { openSession: id => opened.push(id) }, roster, remoteChats }
+  const setup = (states) => walk(pluginOf(states).FaceToFaceGroup(faceProps))
 
   const picker = setup(['setup', bots, ['a'], '', false, null, [], null, 0])
   assert.ok(picker.some(n => n.props['data-flybot'] === 'face-group'))
-  assert.ok(picker.some(n => n.props['data-flybot'] === 'face-pick'))
+  assert.ok(picker.some(n => n.props['data-flybot'] === 'face-pick' && /\bfs-tiles\b/.test(n.props.className)))
   assert.ok(picker.some(n => n.props['data-flybot'] === 'face-join'))
+  const pickAvatars = picker.filter(n => n.props['data-flybot'] === 'face-avatar')
+  assert.equal(pickAvatars.length, 2)
+  const chiefMark = picker.find(n => n.props['data-flybot'] === 'bot-avatar' && n.props['data-bot-id'] === 'a')
+  const writerMark = picker.find(n => n.props['data-flybot'] === 'bot-avatar' && n.props['data-bot-id'] === 'b')
+  assert.ok(chiefMark, 'Chief uses the host BotAvatar')
+  assert.ok(writerMark, 'Writer uses the host BotAvatar')
+  assert.equal(chiefMark.props['data-shape'], 'whale')
+  assert.equal(writerMark.props['data-shape'], 'star')
+  assert.notEqual(chiefMark.props['data-shape'], writerMark.props['data-shape'])
+  assert.equal(chiefMark.props['data-size'], 48)
+  assert.equal(writerMark.props['data-size'], 48)
+  assert.equal(picker.filter(n => n.props.className === 'fs-avatar' && n.props['data-flybot'] === undefined).length, 0)
+  assert.ok(picker.some(n => n.props.className === 'fs-tile-name' && n.children.includes('Chief')))
+  assert.ok(picker.some(n => n.props.className === 'fs-tile-name' && n.children.includes('Writer')))
+  assert.equal(picker.some(n => n.props.className === 'fs-sub' && n.children.includes('Main Bot')), false)
   const hint = picker.find(n => n.props['data-flybot'] === 'face-join-room')
   assert.ok(hint)
   assert.match(hint.children.join(''), /Available to this room only/)
   assert.equal(picker.some(n => /published/i.test(String(n.children ?? ''))), false)
   assert.ok(picker.some(n => n.type === 'input' && n.props.type === 'checkbox' && n.props['aria-label'] === 'Chief' && n.props.checked === true))
   assert.ok(picker.some(n => n.type === 'input' && n.props.type === 'checkbox' && n.props['aria-label'] === 'Writer' && n.props.checked === false))
+  assert.equal(picker.filter(n => n.props['data-flybot'] === 'face-pick-check').length, 1)
 
   const short = setup(['setup', bots, ['a'], '12ab', false, null, [], null, 0])
   await short.find(n => n.type === 'form' && n.props['data-flybot'] === 'face-join').props.onSubmit({ preventDefault() {} })
@@ -1583,13 +1627,40 @@ test('Face-to-face group (#92): pick Bots, join each once, live roster, Enter ch
   }
   const wait = setup(['waiting', bots, ['a'], '123456', false, null, [{ botId: 'b', name: 'Writer', text: 'This Bot cannot join that room.' }], room, 0])
   assert.ok(wait.some(n => n.props['data-flybot'] === 'face-wait'))
+  assert.ok(wait.some(n => n.props['data-flybot'] === 'face-wait-roster' && /\bfs-tiles\b/.test(n.props.className)))
   const mine = wait.find(n => n.props['data-flybot'] === 'face-member' && n.props['data-handle'] === '@a.me.home')
   const peer = wait.find(n => n.props['data-flybot'] === 'face-member' && n.props['data-handle'] === '@coder.bob.home')
   assert.equal(mine.props['data-mine'], true)
-  assert.ok(wait.some(n => n.props['data-flybot'] === 'face-mine' && n.children.includes('mine')))
+  const mineDot = wait.find(n => n.props['data-flybot'] === 'face-mine')
+  assert.ok(mineDot)
+  assert.equal(mineDot.props.className, 'fs-tile-mine')
+  assert.equal(mineDot.props['aria-label'], 'mine')
+  assert.equal(mineDot.props.title, 'mine')
+  assert.equal(mineDot.children.includes('mine'), false)
   assert.equal(peer.props['data-mine'], undefined)
-  assert.ok(wait.some(n => n.children.includes('Me')))
-  assert.ok(wait.some(n => n.children.includes('Bob')))
+  const mineMark = wait.find(n => n.props['data-flybot'] === 'bot-avatar' && n.props['data-bot-id'] === 'a')
+  const peerMark = wait.find(n => n.props['data-flybot'] === 'bot-avatar' && n.props['data-handle'] === '@coder.bob.home')
+  assert.ok(mineMark, 'waiting roster uses the same Chief avatar as the picker')
+  assert.equal(mineMark.props['data-shape'], 'whale')
+  assert.equal(mineMark.props['data-size'], 48)
+  assert.ok(peerMark, "a friend's Bot uses its own look when the chat record has one")
+  assert.equal(peerMark.props['data-image'], 'https://example.test/coder.png')
+  assert.equal(peerMark.props['data-size'], 48)
+  assert.notEqual(mineMark.props['data-bot-id'], peerMark.props['data-bot-id'])
+  assert.ok(wait.some(n => n.props.className === 'fs-tile-name' && n.children.includes('Chief')))
+  assert.ok(wait.some(n => n.props.className === 'fs-tile-name' && n.children.includes('Coder')))
+  assert.equal(mine.children.some(n => n.props?.className === 'fs-sub' || (typeof n.props?.className === 'string' && n.props.className.includes('fs-tag'))), false)
+  assert.equal(peer.children.some(n => n.props?.className === 'fs-sub'), false)
+  assert.equal(wait.some(n => n.props['data-flybot'] === 'face-owner'), false)
+  assert.equal(wait.some(n => n.props.className === 'fs-wait-hint' || n.props.className === 'fs-wait-name'), false)
+  assert.ok(wait.some(n => n.props['data-flybot'] === 'face-wait-count'))
+  const foot = wait.find(n => n.props['data-flybot'] === 'face-wait-foot')
+  assert.ok(foot)
+  const footBtns = (foot.children ?? []).filter(n => n && typeof n === 'object')
+  assert.equal(footBtns[0].props['data-flybot'], 'face-leave')
+  assert.equal(footBtns[1].props['data-flybot'], 'face-enter')
+  assert.equal(footBtns[0].props.className, 'fs-btn')
+  assert.match(footBtns[1].props.className, /fs-btn-primary/)
   assert.match(wait.find(n => n.props['data-flybot'] === 'face-join-fail').children.join(''), /Writer:/)
   assert.equal(wait.some(n => /published/i.test(String(n.children ?? ''))), false)
   const enter = wait.find(n => n.props['data-flybot'] === 'face-enter')
@@ -1636,12 +1707,29 @@ test('Face-to-face group (#92): pick Bots, join each once, live roster, Enter ch
   cursor = 0
   const liveNodes = liveClient.walk(livePlugin.FaceToFaceGroup({ actions: {} }))
   assert.ok(liveNodes.some(n => n.props['data-flybot'] === 'face-member' && n.props['data-handle'] === '@writer.alice.home'))
-  assert.ok(liveNodes.some(n => n.children.includes('Alice')))
+  assert.ok(liveNodes.some(n => n.props.className === 'fs-tile-name' && n.children.includes('Writer')))
+  assert.equal(liveNodes.some(n => n.props['data-flybot'] === 'face-owner'), false)
+  assert.equal(liveNodes.some(n => Array.isArray(n.children) && n.children.includes('Alice')), false)
 
   const autoOpened = []
   const autoPlugin = pluginOf(['waiting', bots, ['a'], '123456', false, null, [], { ...room, status: 'open' }, 0], true)
   autoPlugin.FaceToFaceGroup({ actions: { openSession: id => autoOpened.push(id) }, onClose() { autoOpened.push('close') } })
   assert.deepEqual(autoOpened, ['g1', 'close'])
+})
+
+test('Face-to-face pick list still paints a distinct per-Bot color without host BotAvatar', () => {
+  const { walk, pluginOf, sandbox } = loadSocialClient(async () => ({ bots: [] }))
+  delete sandbox.__flybot__.BotAvatar
+  delete sandbox.__flybot__.BotMark
+  const bots = [{ id: 'chief-id', name: 'Chief', isMain: true }, { id: 'writer-id', name: 'Writer' }]
+  const tree = walk(pluginOf(['setup', bots, ['chief-id'], '', false, null, [], null, 0]).FaceToFaceGroup({}))
+  const avatars = tree.filter(n => n.props['data-flybot'] === 'face-avatar')
+  assert.equal(avatars.length, 2)
+  assert.equal(avatars[0].props['data-bot-id'], 'chief-id')
+  assert.equal(avatars[1].props['data-bot-id'], 'writer-id')
+  assert.notEqual(avatars[0].props['data-color'], avatars[1].props['data-color'])
+  const letters = tree.filter(n => n.props.className === 'fs-avatar').map(n => n.children.join(''))
+  assert.deepEqual(letters.sort(), ['C', 'W'])
 })
 
 test('face-to-face: several local Bots join the same number and leave together', async (t) => {
