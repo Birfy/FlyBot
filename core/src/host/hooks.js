@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { mentionSpans } from '../shared/mentions.js'
+import { isHomeLevelRemote } from '../shared/remote-label.js'
 import { cleanName } from './delivery.js'
 import { SOURCE_KIND } from './constants.js'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -131,7 +132,7 @@ export function install(rt) {
     granted: rt.hasAnyGrant?.(bot.id) === true,
     systemPrompt: bot.systemPrompt ?? '', fields: clone(bot.fields ?? {}),
   })
-  const persist = () => { void rt.save().catch(error => warn('flybot: save failed: %s', error)) }
+  const persist = () => rt.save().catch(error => warn('flybot: save failed: %s', error))
 
   async function create({ name, systemPrompt, fields, role, instructions, createdBy, plugin = SHARED } = {}) {
     checkName('plugin', plugin)
@@ -552,16 +553,21 @@ export function install(rt) {
     // Replaces this plugin's list; saves only when it changed.
     publish(plugin, list) {
       checkName('plugin', plugin)
-      const next = (list ?? []).filter(bot => typeof bot?.handle === 'string').map(bot => cleanRemote(plugin, bot))
+      const next = (list ?? []).filter(bot => typeof bot?.handle === 'string' && !isHomeLevelRemote(bot)).map(bot => cleanRemote(plugin, bot))
       // A read-only host shows what the writer saved; it changes nothing.
       if (rt.readOnly() !== undefined) return
       const all = remoteStore()
-      // Every granted remote Bot gets a chat of its own (remote-chat.js).
-      void rt.remoteChats?.sync(plugin, next).catch(error => warn('flybot: remote chats not synced: %s', error))
-      if (same(all[plugin] ?? [], next)) return
-      if (next.length === 0) delete all[plugin]
-      else all[plugin] = next
-      persist()
+      // Every granted remote Bot gets a chat of its own (remote-chat.js). Hidden
+      // and home-level handles are not in `next`, so those sessions go gone/hidden.
+      const synced = rt.remoteChats?.sync(plugin, next)?.catch(error => warn('flybot: remote chats not synced: %s', error))
+      const jobs = []
+      if (synced && typeof synced.then === 'function') jobs.push(synced)
+      if (!same(all[plugin] ?? [], next)) {
+        if (next.length === 0) delete all[plugin]
+        else all[plugin] = next
+        jobs.push(Promise.resolve(persist()))
+      }
+      return jobs.length ? Promise.all(jobs) : synced
     },
     list: () => Object.values(state.flybot?.remote ?? {}).flat().map(clone),
     get: handle => remoteMembers.list().find(bot => bot.handle === toRemote(handle)?.handle),

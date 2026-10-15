@@ -30,7 +30,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, wri
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
-import { createSocialApi, untrustedText } from './mcp-client.js'
+import { createSocialApi, untrustedText, mapPool, GRANT_CONCURRENCY } from './mcp-client.js'
 import {
   createFaceRoomApi,
   isJoinCode,
@@ -47,6 +47,7 @@ import {
   forgetHiddenIfGone,
   filterHiddenHomes,
   presentRemoteHandles,
+  isHomeLevelHandle,
   WAITING_OTHERS,
   REJECT_NOTE,
 } from './hidden-remotes.js'
@@ -442,41 +443,66 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
   // ------------------------------------------------------------ remote roster
   let remote = { homes: [] }
   let fetchedAt = 0
+  function asRemoteHomes(entries) {
+    return (entries ?? []).map(entry => {
+      const homeHandle = norm(entry.home.handle)
+      return {
+        home: homeHandle,
+        name: cleanText(entry.home.display_name),
+        owner: cleanText(entry.home.owner_display_name),
+        bots: (entry.bots ?? []).map(bot => ({
+          handle: norm(bot.handle),
+          name: cleanText(bot.display_name, norm(bot.handle)),
+          home: homeHandle,
+          remote: true,
+        })).filter(bot => !isHomeLevelHandle(bot.handle, homeHandle)),
+        // The friendship covers only these local members (an invite made for one Bot, or joined
+        // as one Bot); empty when it covers this whole home. Only they can talk to this friend.
+        via: (entry.via ?? []).map(norm),
+      }
+    })
+  }
+  function listedRemoteBots() {
+    return remote.homes.flatMap(entry => entry.bots.map(bot => ({ handle: bot.handle, name: bot.name, home: entry.home, homeName: entry.name, owner: entry.owner })))
+  }
+  function applyRemoteRoster(unfiltered, { source, ok }) {
+    const next = forgetHiddenIfGone(settings, presentRemoteHandles(unfiltered.homes), { source, ok, homes: unfiltered.homes })
+    if (next !== settings) { settings = next; saveSettings() }
+    remote = { homes: filterHiddenHomes(unfiltered.homes, settings) }
+    // Hidden and home-level handles stay out of publish, so remote-chat sync marks those
+    // sessions gone/hidden instead of putting them back in the picker and sidebar.
+    return flybot.remote?.publish(listedRemoteBots()) ?? remote
+  }
   async function remoteBots({ fresh = false } = {}) {
     if (!fresh && now() - fetchedAt < REMOTE_TTL_MS) return remote
     let result
-    if (home) {
-      result = await client.callTool('list_remote_bots', { home: home.id })
-      remote = {
-        homes: (result?.homes ?? []).map(entry => ({
-          home: norm(entry.home.handle),
-          name: cleanText(entry.home.display_name),
-          owner: cleanText(entry.home.owner_display_name),
-          bots: entry.bots.map(bot => ({ handle: norm(bot.handle), name: cleanText(bot.display_name, norm(bot.handle)), home: norm(entry.home.handle), remote: true })),
-          // The friendship covers only these local members (an invite made for one Bot, or joined
-          // as one Bot); empty when it covers this whole home. Only they can talk to this friend.
-          via: (entry.via ?? []).map(norm),
-        })),
+    const source = home ? 'home' : 'legacy'
+    let unfiltered
+    try {
+      if (home) {
+        result = await client.callTool('list_remote_bots', { home: home.id })
+        unfiltered = { homes: asRemoteHomes(result?.homes) }
+      } else {
+        // Per-bot identity (legacy): each active friend is its own "home" of one Bot.
+        const overview = await client.callTool('list_friends', config.botId ? { bot_id: config.botId } : {})
+        unfiltered = {
+          homes: (overview?.friends ?? []).filter(item => item.status === 'active').map(item => ({
+            home: norm(item.peer?.handle), name: cleanText(item.peer?.display_name), owner: cleanText(item.peer?.owner_display_name),
+            bots: [{ handle: norm(item.peer?.handle), name: cleanText(item.peer?.display_name, norm(item.peer?.handle)), home: norm(item.peer?.handle), remote: true, conversationId: item.last_conversation?.status === 'active' ? item.last_conversation.conversation_id : undefined }],
+          })),
+        }
       }
-    } else {
-      // Per-bot identity (legacy): each active friend is its own "home" of one Bot.
-      const overview = await client.callTool('list_friends', config.botId ? { bot_id: config.botId } : {})
-      remote = {
-        homes: (overview?.friends ?? []).filter(item => item.status === 'active').map(item => ({
-          home: norm(item.peer?.handle), name: cleanText(item.peer?.display_name), owner: cleanText(item.peer?.owner_display_name),
-          bots: [{ handle: norm(item.peer?.handle), name: cleanText(item.peer?.display_name, norm(item.peer?.handle)), home: norm(item.peer?.handle), remote: true, conversationId: item.last_conversation?.status === 'active' ? item.last_conversation.conversation_id : undefined }],
-        })),
-      }
+    } catch (error) {
+      warn('remote roster fetch failed', error)
+      if (fetchedAt || remote.homes.length) return remote
+      throw error
     }
     fetchedAt = now()
     if (home) void syncServerAutoApprove((result?.homes ?? []))
-    await syncOutgoingGrants().catch(error => warn('grants not synced', error))
-    // A Bot that left the granted list was revoked: forget the hide so a later re-grant shows.
-    const next = forgetHiddenIfGone(settings, presentRemoteHandles(remote.homes))
-    if (next !== settings) { settings = next; saveSettings() }
-    remote = { homes: filterHiddenHomes(remote.homes, settings) }
-    // Friends' Bots become chat members (remote badge) through the FlyBot registry.
-    flybot.remote?.publish(remote.homes.flatMap(entry => entry.bots.map(bot => ({ handle: bot.handle, name: bot.name, home: entry.home, homeName: entry.name, owner: entry.owner }))))
+    // Grant listing is N HTTP calls; do not block Friends' Bots on it.
+    void syncOutgoingGrants().catch(error => warn('grants not synced', error))
+    const published = applyRemoteRoster(unfiltered, { source, ok: true })
+    if (published && typeof published.then === 'function') await published.catch(error => warn('remote chats not synced', error))
     return remote
   }
   const remoteBot = async handle => (await remoteBots()).homes.flatMap(entry => entry.bots).find(bot => bot.handle === norm(handle))
@@ -530,7 +556,6 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
   }
   async function afterHideRemote(key) {
     await leaveRoomsWith(key)
-    fetchedAt = 0
     try {
       await remoteBots({ fresh: true })
     } catch (error) {
@@ -543,9 +568,8 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     settings = hideRemoteInSettings(settings, key, now())
     saveSettings()
     remote = { homes: filterHiddenHomes(remote.homes, settings) }
-    flybot.remote?.publish(remote.homes.flatMap(entry => entry.bots.map(bot => ({
-      handle: bot.handle, name: bot.name, home: entry.home, homeName: entry.name, owner: entry.owner,
-    }))))
+    const published = flybot.remote?.publish(listedRemoteBots())
+    if (published && typeof published.then === 'function') await published.catch(error => warn('hidden remote chat not synced', error))
     const leftRooms = roomsHolding(key)
     void afterHideRemote(key).catch(error => warn('hide-remote follow-up failed', error))
     return { handle: key, hidden: true, leftRooms, homes: remote.homes }
@@ -575,9 +599,12 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
 
   async function syncOutgoingGrants() {
     if (typeof flybot.grants?.set !== 'function') return
-    for (const bot of flybot.bot.list()) {
+    const bots = flybot.bot.list().filter(bot => {
       const member = memberOf(bot.id)
-      if (!member || member.roomOnly) continue
+      return member && !member.roomOnly
+    })
+    await mapPool(bots, GRANT_CONCURRENCY, async (bot) => {
+      const member = memberOf(bot.id)
       try {
         const listed = await api.listGrants({ botId: member.bot_id })
         const roomScoped = (flybot.grants.of?.(bot.id) ?? []).filter(grant => grant.roomId)
@@ -591,7 +618,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       } catch (error) {
         warn(`${bot.name} grants not synced`, error)
       }
-    }
+    })
   }
 
   async function setRoomGrant(botId, room, { faceRoomId, name } = {}) {
@@ -914,7 +941,10 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
   // What the browser needs to offer invites: connected or not, which local Bots can be
   // invited to, and any outbound drafts Bot Social is still holding for this owner.
   async function socialStatus() {
-    const approvals = await pendingApprovals()
+    const [approvals, autoApproveFaceRooms] = await Promise.all([
+      pendingApprovals(),
+      faceAutoApprove().catch(() => false),
+    ])
     return {
       connected: Boolean(home),
       home: home ? norm(home.handle) : undefined,
@@ -925,7 +955,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       })) : [],
       pendingApprovals: approvals.length,
       approvals,
-      autoApproveFaceRooms: await faceAutoApprove().catch(() => false),
+      autoApproveFaceRooms,
     }
   }
   disposers.push(flybot.api.handle('social/status', socialStatus, { read: true }))
@@ -1337,15 +1367,17 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       try {
         const listed = await faceApi.list()
         const known = new Set(listed.map(item => item.roomId))
-        for (const snapshot of listed) {
+        const got = await mapPool(listed, GRANT_CONCURRENCY, async (snapshot) => {
           try {
             const meta = settings.faceRooms[snapshot.roomId]
             await pollOneFace(snapshot.roomId, meta)
-            n += 1
+            return 1
           } catch (error) {
             warn('face-room get failed', error)
+            return 0
           }
-        }
+        })
+        n += got.reduce((sum, count) => sum + count, 0)
         for (const [serverId, meta] of Object.entries(settings.faceRooms)) {
           if (known.has(serverId)) continue
           if (meta?.localRoomId) await flybot.rooms.dropFace?.(meta.localRoomId).catch(() => {})
@@ -1432,8 +1464,8 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     }))
   }
   disposers.push(flybot.api.handle('social/face-join', async ({ code, botId } = {}) => joinFaceRoom({ code, botId })))
-  disposers.push(flybot.api.handle('social/face-rooms', async () => {
-    await pollFaceRooms().catch(() => {})
+  disposers.push(flybot.api.handle('social/face-rooms', async (payload) => {
+    if (payload?.poll !== false) await pollFaceRooms().catch(() => {})
     const rooms = Object.entries(settings.faceRooms).map(([faceRoomId, meta]) => {
       const room = flybot.rooms.ofFace?.(faceRoomId)
       return viewHostedFace(room, { faceRoomId, localRoomId: meta.localRoomId, cursor: meta.cursor }) || { faceRoomId, roomId: meta.localRoomId, status: 'candidate' }

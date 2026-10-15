@@ -6,6 +6,8 @@ import { useEscape, usePaneLeft } from './overlay-hooks.js'
 import { CreateBot } from './create-bot.js'
 import { QUICK_EDGES, useFlip, useGlide, useMorph } from './motion.js'
 import { t } from './i18n.js'
+import { newChatActionRows } from './flybot-registry.js'
+import { listedChatBots, pickerBotLabel } from '../shared/remote-label.js'
 
 export function NewChat({ mode, roster, actions }) {
   const [query, setQuery] = useState('')
@@ -24,9 +26,10 @@ export function NewChat({ mode, roster, actions }) {
   useEscape(close)
   const paneLeft = usePaneLeft()
   const wanted = query.trim().toLowerCase()
-  const matches = roster.bots.filter(bot => !picked.includes(bot.id) && bot.id !== admin && (wanted === '' || bot.name.toLowerCase().includes(wanted) || (bot.role ?? '').toLowerCase().includes(wanted)))
+  const bots = listedChatBots(roster)
+  const matches = bots.filter(bot => !picked.includes(bot.id) && bot.id !== admin && (wanted === '' || bot.name.toLowerCase().includes(wanted) || pickerBotLabel(bot).toLowerCase().includes(wanted) || (bot.role ?? '').toLowerCase().includes(wanted)))
   const choosingAdmin = group && admin === null
-  const exact = roster.bots.some(bot => bot.name.toLowerCase() === wanted)
+  const exact = bots.some(bot => bot.name.toLowerCase() === wanted)
   const pickedBots = picked.map(id => roster.byId[id]).filter(Boolean)
   const run = async (task) => {
     if (busy) return
@@ -96,13 +99,22 @@ export function NewChat({ mode, roster, actions }) {
   if (!group && picked.length === 0 && mode !== 'search' && wanted === '') {
     options.push({ key: 'new', icon: h(PlusIcon), label: t('Create new Bot'), run: createBot })
     options.push({ key: 'group', icon: h(PeopleIcon), label: t('Create group chat'), run: () => { setGroup(true); setCursor(0); inputRef.current?.focus() } })
+    for (const action of newChatActionRows({ mode, group, picked, query, roster })) {
+      options.push({
+        key: action.key,
+        icon: h(PeopleIcon),
+        label: t(action.label),
+        hint: action.hint ? t(action.hint) : undefined,
+        run: () => action.run({ close, actions, roster }),
+      })
+    }
     // A team holds at most one DSH Agent; the entry exists only while there is none.
     if ((roster.agents ?? []).length === 0) {
       options.push({ key: 'agent', icon: h(FishLogo, { size: 16 }), label: t('Add DSH Agent'), run: () => run(async () => { await actions.addAgent(); close() }) })
     }
   }
   for (const bot of matches) {
-    options.push({ key: bot.id, bot, label: bot.name, hint: choosingAdmin ? t('Make admin') : group || picked.length > 0 ? t('Add to group chat') : undefined, run: () => openBot(bot) })
+    options.push({ key: bot.id, bot, label: pickerBotLabel(bot), hint: choosingAdmin ? t('Make admin') : group || picked.length > 0 ? t('Add to group chat') : undefined, run: () => openBot(bot) })
   }
   if (wanted !== '' && !exact && mode !== 'search') options.push({ key: 'create', icon: h(PlusIcon), label: t('Create new Bot “{name}”', { name: query.trim() }), run: createBot })
   const active = Math.min(cursor, Math.max(options.length - 1, 0))

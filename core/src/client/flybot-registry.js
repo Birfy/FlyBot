@@ -1,6 +1,6 @@
 // The FlyBot slot registry, free of React so the "@" menu and tests can use it.
 // See flybot-slots.js for what each slot carries.
-export const SLOTS = ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals', 'flybot.room.overview', 'flybot.session.dock']
+export const SLOTS = ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals', 'flybot.room.overview', 'flybot.session.dock', 'flybot.new-chat.action']
 
 export function createRegistry() {
   const entries = new Map(SLOTS.map(name => [name, []]))
@@ -41,6 +41,26 @@ export function registry() {
 }
 
 // Extra "@" rows from plugins (remote Bots and the like), after the team's own Bots.
+// Extra rows in the sidebar '+' new-chat menu (Create new Bot / Create group chat / …).
+export function newChatActionRows(context = {}) {
+  const rows = []
+  for (const entry of registry().entries('flybot.new-chat.action')) {
+    try {
+      if (entry.visible && entry.visible(context) === false) continue
+      rows.push({
+        key: entry.id,
+        order: entry.order ?? 0,
+        label: entry.label,
+        hint: entry.hint,
+        run: entry.run ?? (() => {}),
+      })
+    } catch (error) {
+      console.error(`flybot: ${entry.id} new-chat action failed`, error)
+    }
+  }
+  return rows.sort((a, b) => a.order - b.order)
+}
+
 export async function mentionCandidates(query, context) {
   const rows = []
   for (const entry of registry().entries('flybot.composer.mention')) {

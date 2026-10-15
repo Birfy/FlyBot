@@ -410,10 +410,10 @@ index ae2e8157424841c1ecfce4c7c833c20e5d29b1a2..0e0d7ecd8a895d01309601229c4bd384
      if (steer) agent.steer(message)
 diff --git a/src/host/remote-chat.js b/src/host/remote-chat.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..93ee0120d8b88476eec2cec6a0196afe2478bc7a
+index 0000000000000000000000000000000000000000..99f80f1a3b0eb3de0ea5f2977619f9604b03b9eb
 --- /dev/null
 +++ b/src/host/remote-chat.js
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,191 @@
 +// FlyBot remote chats: a friend's (remote) Bot as a chat of its own, in ds-bot's own
 +// session model. Each remote Bot a plugin publishes gets a Bot record marked `remote`
 +// ({ handle, home, homeName, plugin }) whose Session runs on the model route
@@ -429,6 +429,7 @@ index 0000000000000000000000000000000000000000..93ee0120d8b88476eec2cec6a0196afe
 +import { createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 +import { SOURCE_KIND } from './constants.js'
 +import { cleanName, fenceUntrusted } from './delivery.js'
++import { isHomeLevelRemote, normRemoteHandle } from '../shared/remote-label.js'
 +
 +export const REMOTE_PROVIDER = 'flybot-remote'
 +export const REMOTE_FORM = 'remote-chat'
@@ -468,7 +469,7 @@ index 0000000000000000000000000000000000000000..93ee0120d8b88476eec2cec6a0196afe
 +  const { ctx, state } = rt
 +  const warn = (...args) => rt.warn?.(...args)
 +  const chats = () => Object.values(state.bots ?? {}).filter(isRemoteChat)
-+  const chatOfHandle = handle => chats().find(bot => bot.remote.handle === handle)
++  const chatOfHandle = handle => chats().find(bot => normRemoteHandle(bot.remote.handle) === normRemoteHandle(handle))
 +  const senders = new Map()
 +  const pending = new Map()
 +
@@ -532,6 +533,7 @@ index 0000000000000000000000000000000000000000..93ee0120d8b88476eec2cec6a0196afe
 +  let opening = Promise.resolve()
 +  // Creates the chat for a remote Bot (once), or refreshes its name and home label.
 +  function open({ handle, name, home, homeName, plugin }) {
++    if (isHomeLevelRemote({ handle, home })) return Promise.resolve(undefined)
 +    const run = opening.then(async () => {
 +      await rt.load()
 +      const existing = chatOfHandle(handle)
@@ -559,14 +561,23 @@ index 0000000000000000000000000000000000000000..93ee0120d8b88476eec2cec6a0196afe
 +  async function sync(plugin, list) {
 +    const handles = new Set()
 +    for (const member of list) {
-+      handles.add(member.handle)
++      if (isHomeLevelRemote(member)) continue
++      handles.add(normRemoteHandle(member.handle))
 +      await open({ ...member, plugin }).catch(error => warn('ds-bot: chat for %s not opened: %s', member.handle, error))
 +    }
 +    let changed = false
 +    for (const bot of chats()) {
 +      if (bot.remote.plugin !== plugin) continue
-+      const gone = !handles.has(bot.remote.handle)
-+      if (Boolean(bot.remote.gone) !== gone) { bot.remote = { ...bot.remote, ...(gone ? { gone: true } : {}) }; if (!gone) delete bot.remote.gone; changed = true }
++      const gone = isHomeLevelRemote(bot.remote) || !handles.has(normRemoteHandle(bot.remote.handle))
++      const wasGone = Boolean(bot.remote.gone)
++      const wasHidden = Boolean(bot.hidden)
++      if (wasGone !== gone || wasHidden !== gone) {
++        bot.remote = { ...bot.remote, ...(gone ? { gone: true } : {}) }
++        if (!gone) delete bot.remote.gone
++        if (gone) bot.hidden = true
++        else delete bot.hidden
++        changed = true
++      }
 +    }
 +    if (changed) await rt.save()
 +  }
@@ -707,13 +718,14 @@ index 0000000000000000000000000000000000000000..c25e41e1b2f9126624f610fa00b515d1
 +})
 diff --git a/test/remote-chat.test.js b/test/remote-chat.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..e96ef4d40dc3fa19344755d83db4d59b85144e0c
+index 0000000000000000000000000000000000000000..a859ece74d578b869dd540f1375c4890023f14e6
 --- /dev/null
 +++ b/test/remote-chat.test.js
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,90 @@
 +import { test } from 'node:test';
 +import assert from 'node:assert/strict';
-+import { remoteTurn, isRemoteChat, REMOTE_PROVIDER } from '../src/host/remote-chat.js';
++import { remoteTurn, isRemoteChat, REMOTE_PROVIDER, install } from '../src/host/remote-chat.js';
++import { isHomeLevelRemote } from '../src/shared/remote-label.js';
 +
 +const user = (content, source, id = 'm1') => ({ role: 'user', id, content, ...(source ? { source } : {}) });
 +
@@ -738,6 +750,41 @@ index 0000000000000000000000000000000000000000..e96ef4d40dc3fa19344755d83db4d59b
 +    assert.equal(isRemoteChat({ name: 'x' }), false);
 +    assert.equal(REMOTE_PROVIDER, 'flybot-remote');
 +});
++
++test('sync hides gone and home-level remotes without deleting the chat', async () => {
++  assert.equal(isHomeLevelRemote({ handle: '@friend.home', home: '@friend.home' }), true)
++  const state = {
++    bots: {
++      a: { id: 'a', name: 'Chief', remote: { handle: '@chief.hsliu.home', home: '@hsliu.home', plugin: 'social' } },
++      b: { id: 'b', name: 'Friend', remote: { handle: '@friend.home', home: '@friend.home', plugin: 'social' } },
++      c: { id: 'c', name: '助手', remote: { handle: '@assistant.friend.home', home: '@friend.home', plugin: 'social' } },
++    },
++  }
++  const rt = { state, load: async () => {}, save: async () => {}, warn() {}, ctx: {} }
++  install(rt)
++  await rt.remoteChats.sync('social', [
++    { handle: '@chief.hsliu.home', name: 'Chief', home: '@hsliu.home', homeName: 'hsliu' },
++  ])
++  assert.equal(state.bots.a.remote.gone, undefined)
++  assert.equal(state.bots.a.hidden, undefined)
++  assert.equal(state.bots.b.remote.gone, true)
++  assert.equal(state.bots.b.hidden, true)
++  assert.equal(state.bots.c.remote.gone, true)
++  assert.equal(state.bots.c.hidden, true)
++  assert.equal(state.bots.b.name, 'Friend')
++  await rt.remoteChats.sync('social', [
++    { handle: '@chief.hsliu.home', name: 'Chief', home: '@hsliu.home' },
++    { handle: '@assistant.friend.home', name: '助手', home: '@friend.home', homeName: 'Friend' },
++  ])
++  assert.equal(state.bots.c.remote.gone, undefined)
++  assert.equal(state.bots.c.hidden, undefined)
++  await rt.remoteChats.sync('social', [
++    { handle: '@CHIEF.hsliu.home', name: 'Chief', home: '@HSLIU.home' },
++  ])
++  assert.equal(state.bots.a.remote.gone, undefined)
++  assert.equal(state.bots.a.hidden, undefined)
++  assert.equal(state.bots.c.hidden, true)
++})
 +
 +test('roster and model guards keep a friend\'s Bot on its relay route', async () => {
 +    const { readFileSync } = await import('node:fs')

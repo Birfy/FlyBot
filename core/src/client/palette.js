@@ -7,6 +7,7 @@ import { BotAvatar, RoomAvatar } from './mark.js'
 import { useEscape } from './overlay-hooks.js'
 import { QUICK_EDGES, useFlip, useGlide } from './motion.js'
 import { t } from './i18n.js'
+import { isListedRemoteChat, pickerBotLabel } from '../shared/remote-label.js'
 
 // Search is a command palette: a 560px dialog, a search header, and 49px
 // rows (24px avatar, title, subtitle). Bots and groups match on name and role; past
@@ -49,8 +50,8 @@ export function CommandPalette({ start, token, roster, actions, useSessions }) {
   const matchesName = (...fields) => wanted === '' || fields.some(field => (field ?? '').toLowerCase().includes(wanted))
   const sections = []
   const people = [
-    ...roster.bots.filter(bot => matchesName(bot.name, bot.role)).map(bot => ({
-      key: bot.id, avatar: h(BotAvatar, { bot, size: 24, badge: false, live: false }), title: bot.name,
+    ...roster.bots.filter(bot => isListedRemoteChat(bot) && matchesName(bot.name, bot.role, pickerBotLabel(bot))).map(bot => ({
+      key: bot.id, avatar: h(BotAvatar, { bot, size: 24, badge: false, live: false }), title: pickerBotLabel(bot),
       subtitle: [bot.role, isMainOf(roster, bot.id) ? t('Main Bot') : ''].filter(Boolean).join(' · '), badge: bot.hidden ? t('Hidden') : undefined,
       run: async () => { if (bot.hidden) await actions.setFlags(bot.id, { hidden: false }); actions.openSession(bot.id) },
     })),

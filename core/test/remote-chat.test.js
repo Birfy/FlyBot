@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { remoteTurn, isRemoteChat, REMOTE_PROVIDER } from '../src/host/remote-chat.js';
+import { remoteTurn, isRemoteChat, REMOTE_PROVIDER, install } from '../src/host/remote-chat.js';
+import { isHomeLevelRemote } from '../src/shared/remote-label.js';
 
 const user = (content, source, id = 'm1') => ({ role: 'user', id, content, ...(source ? { source } : {}) });
 
@@ -25,6 +26,41 @@ test('remote chats are recognised by their remote field', () => {
     assert.equal(isRemoteChat({ name: 'x' }), false);
     assert.equal(REMOTE_PROVIDER, 'flybot-remote');
 });
+
+test('sync hides gone and home-level remotes without deleting the chat', async () => {
+  assert.equal(isHomeLevelRemote({ handle: '@friend.home', home: '@friend.home' }), true)
+  const state = {
+    bots: {
+      a: { id: 'a', name: 'Chief', remote: { handle: '@chief.hsliu.home', home: '@hsliu.home', plugin: 'social' } },
+      b: { id: 'b', name: 'Friend', remote: { handle: '@friend.home', home: '@friend.home', plugin: 'social' } },
+      c: { id: 'c', name: '助手', remote: { handle: '@assistant.friend.home', home: '@friend.home', plugin: 'social' } },
+    },
+  }
+  const rt = { state, load: async () => {}, save: async () => {}, warn() {}, ctx: {} }
+  install(rt)
+  await rt.remoteChats.sync('social', [
+    { handle: '@chief.hsliu.home', name: 'Chief', home: '@hsliu.home', homeName: 'hsliu' },
+  ])
+  assert.equal(state.bots.a.remote.gone, undefined)
+  assert.equal(state.bots.a.hidden, undefined)
+  assert.equal(state.bots.b.remote.gone, true)
+  assert.equal(state.bots.b.hidden, true)
+  assert.equal(state.bots.c.remote.gone, true)
+  assert.equal(state.bots.c.hidden, true)
+  assert.equal(state.bots.b.name, 'Friend')
+  await rt.remoteChats.sync('social', [
+    { handle: '@chief.hsliu.home', name: 'Chief', home: '@hsliu.home' },
+    { handle: '@assistant.friend.home', name: '助手', home: '@friend.home', homeName: 'Friend' },
+  ])
+  assert.equal(state.bots.c.remote.gone, undefined)
+  assert.equal(state.bots.c.hidden, undefined)
+  await rt.remoteChats.sync('social', [
+    { handle: '@CHIEF.hsliu.home', name: 'Chief', home: '@HSLIU.home' },
+  ])
+  assert.equal(state.bots.a.remote.gone, undefined)
+  assert.equal(state.bots.a.hidden, undefined)
+  assert.equal(state.bots.c.hidden, true)
+})
 
 test('roster and model guards keep a friend\'s Bot on its relay route', async () => {
     const { readFileSync } = await import('node:fs')

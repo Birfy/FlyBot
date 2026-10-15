@@ -99,6 +99,9 @@ var ZH = {
   "Remove Main Bot role": "取消主 Bot",
   "Bot settings": "Bot 设置",
   "Create group chat": "新建群聊",
+  "Face-to-face group": "面对面建群",
+  "Meet the people next to you. Pick your Bots and type the same 6-digit number.": "和身边的人建群。选你的 Bot，输入同一组 6 位数字。",
+  "Refreshing…": "正在刷新…",
   "Delete group": "删除群聊",
   "Open {name}'s chat": "打开 {name} 的对话",
   "New Bot": "新 Bot",
@@ -1147,8 +1150,84 @@ var call = async (endpoint, payload, signal) => {
   return result.value;
 };
 
+// src/shared/remote-label.js
+function cleanPeerName(name, fallback = "") {
+  const text = String(name ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/[[\]"`<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
+  return text || fallback;
+}
+function normRemoteHandle(handle) {
+  return `@${String(handle ?? "").trim().replace(/^@+/, "").toLowerCase()}`;
+}
+function ownerFromHandle(handle) {
+  const parts = String(handle ?? "").replace(/^@/, "").split(".");
+  if (parts.length >= 3 && parts.at(-1) === "home") return parts.at(-2);
+  if (parts.length === 2 && parts[1] === "home") return parts[0];
+  return "";
+}
+function isHomeLevelRemote(record) {
+  const handle = String(record?.handle ?? record?.remote?.handle ?? "");
+  const key = normRemoteHandle(handle);
+  const parts = key.replace(/^@/, "").split(".");
+  return parts.length === 2 && parts[1] === "home";
+}
+function isListedRemoteChat(bot) {
+  if (!bot) return false;
+  if (bot.hidden) return false;
+  const remote = bot.remote;
+  if (!remote || typeof remote.handle !== "string") return true;
+  if (remote.gone || remote.hidden) return false;
+  if (isHomeLevelRemote(remote)) return false;
+  return true;
+}
+function listedChatBots(roster) {
+  return (roster?.bots ?? []).filter(isListedRemoteChat);
+}
+function pickerBotLabel(bot) {
+  if (!bot) return "";
+  if (!bot.remote) return bot.name ?? "";
+  return remoteBotTitle({
+    displayName: bot.name,
+    name: bot.name,
+    ownerName: bot.remote.owner || bot.remote.homeName,
+    owner: bot.remote.owner,
+    homeName: bot.remote.homeName,
+    home: bot.remote.home,
+    handle: bot.remote.handle,
+    isChief: bot.remote.isChief
+  });
+}
+function ownerNameOf(record) {
+  if (!record) return "";
+  return cleanPeerName(record.ownerName || record.homeName || record.owner || record.ownerHome || record.home || ownerFromHandle(record.handle), "");
+}
+function isChiefRecord(record) {
+  if (!record) return false;
+  if (record.isChief === true) return true;
+  return /^chief$/i.test(String(record.displayName || record.name || ""));
+}
+function remoteBotTitle(record) {
+  const owner = ownerNameOf(record) || cleanPeerName(record?.handle, "Friend");
+  const name = cleanPeerName(record?.displayName || record?.name, cleanPeerName(record?.handle, "Bot"));
+  if (isChiefRecord(record)) return `${owner}'s Chief`;
+  return `${name} · ${owner}'s Bot`;
+}
+function remoteOwnerBadge(record) {
+  const owner = ownerNameOf(record) || cleanPeerName(record?.handle, "Friend");
+  return isChiefRecord(record) ? `${owner}'s Chief` : `${owner}'s Bot`;
+}
+function sharedRoomTitle(inviterName) {
+  return `Shared room from ${cleanPeerName(inviterName, "a friend")}`;
+}
+function disambiguatedRemoteTitle(record, others = []) {
+  const title = remoteBotTitle(record);
+  const name = cleanPeerName(record?.displayName || record?.name);
+  if (!name) return title;
+  const clash = others.some((item) => item !== record && cleanPeerName(item?.displayName || item?.name) === name && ownerNameOf(item) !== ownerNameOf(record));
+  return clash ? title : title;
+}
+
 // src/client/flybot-registry.js
-var SLOTS = ["flybot.sidebar.section", "flybot.sidebar.structure", "flybot.composer.mention", "flybot.bot.details", "flybot.approvals", "flybot.room.overview", "flybot.session.dock"];
+var SLOTS = ["flybot.sidebar.section", "flybot.sidebar.structure", "flybot.composer.mention", "flybot.bot.details", "flybot.approvals", "flybot.room.overview", "flybot.session.dock", "flybot.new-chat.action"];
 function createRegistry() {
   const entries2 = new Map(SLOTS.map((name) => [name, []]));
   const listeners2 = /* @__PURE__ */ new Set();
@@ -1184,6 +1263,25 @@ function registry() {
   const root = globalThis;
   root.__flybot__ ??= { slots: createRegistry() };
   return root.__flybot__.slots;
+}
+function newChatActionRows(context = {}) {
+  const rows = [];
+  for (const entry of registry().entries("flybot.new-chat.action")) {
+    try {
+      if (entry.visible && entry.visible(context) === false) continue;
+      rows.push({
+        key: entry.id,
+        order: entry.order ?? 0,
+        label: entry.label,
+        hint: entry.hint,
+        run: entry.run ?? (() => {
+        })
+      });
+    } catch (error) {
+      console.error(`flybot: ${entry.id} new-chat action failed`, error);
+    }
+  }
+  return rows.sort((a, b) => a.order - b.order);
 }
 async function mentionCandidates(query, context) {
   const rows = [];
@@ -1354,7 +1452,7 @@ function useSidebarStructure() {
 function FlyBotSections({ roster, actions, renderBot }) {
   const shell = (actions.flybotSlotEntries?.("flybot.sidebar.section") ?? []).map((entry, index) => ({ id: entry.id ?? `slot-${index}`, order: entry.order ?? 0, component: entry.component }));
   const entries2 = [...useSlot("flybot.sidebar.section"), ...shell].sort((a, b) => a.order - b.order);
-  const remoteChats = (roster.bots ?? []).filter((bot) => bot.remote);
+  const remoteChats = (roster.bots ?? []).filter((bot) => bot.remote && isListedRemoteChat(bot));
   return (0, import_react.createElement)(import_react.Fragment, null, entries2.map((entry) => (0, import_react.createElement)(
     "div",
     { key: entry.id, className: "bt-flybot-section", "data-flybot": entry.id },
@@ -4149,47 +4247,6 @@ var SECRET_CSS = `
 @media (prefers-reduced-motion:reduce){.bt-secret-glide{transition:none}.bt-secret-check,.bt-secret-done,.bt-secret-ok,.bt-secret-edit{animation:none}}
 `;
 
-// src/shared/remote-label.js
-function cleanPeerName(name, fallback = "") {
-  const text = String(name ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/[[\]"`<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
-  return text || fallback;
-}
-function ownerFromHandle(handle) {
-  const parts = String(handle ?? "").replace(/^@/, "").split(".");
-  if (parts.length >= 3 && parts.at(-1) === "home") return parts.at(-2);
-  if (parts.length === 2 && parts[1] === "home") return parts[0];
-  return "";
-}
-function ownerNameOf(record) {
-  if (!record) return "";
-  return cleanPeerName(record.ownerName || record.homeName || record.owner || record.ownerHome || record.home || ownerFromHandle(record.handle), "");
-}
-function isChiefRecord(record) {
-  if (!record) return false;
-  if (record.isChief === true) return true;
-  return /^chief$/i.test(String(record.displayName || record.name || ""));
-}
-function remoteBotTitle(record) {
-  const owner = ownerNameOf(record) || cleanPeerName(record?.handle, "Friend");
-  const name = cleanPeerName(record?.displayName || record?.name, cleanPeerName(record?.handle, "Bot"));
-  if (isChiefRecord(record)) return `${owner}'s Chief`;
-  return `${name} · ${owner}'s Bot`;
-}
-function remoteOwnerBadge(record) {
-  const owner = ownerNameOf(record) || cleanPeerName(record?.handle, "Friend");
-  return isChiefRecord(record) ? `${owner}'s Chief` : `${owner}'s Bot`;
-}
-function sharedRoomTitle(inviterName) {
-  return `Shared room from ${cleanPeerName(inviterName, "a friend")}`;
-}
-function disambiguatedRemoteTitle(record, others = []) {
-  const title = remoteBotTitle(record);
-  const name = cleanPeerName(record?.displayName || record?.name);
-  if (!name) return title;
-  const clash = others.some((item) => item !== record && cleanPeerName(item?.displayName || item?.name) === name && ownerNameOf(item) !== ownerNameOf(record));
-  return clash ? title : title;
-}
-
 // src/client/turn-reasoning.js
 function turnReasoning(steps, current) {
   const members = steps.length ? steps : [current];
@@ -5298,7 +5355,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const away = !running && groups.length > 0;
   const state = botState(running || away, doing, alert);
   const awayLine = away ? workLine(roster.roomsById[groups[0].id]?.name ?? t("a group chat"), groups[0].tool, groups.length - 1) : null;
-  if (bot.hidden && !active && !main) return null;
+  if (!isListedRemoteChat(bot) && !active && !main) return null;
   const onContextMenu = (event) => {
     event.preventDefault();
     actions.openMenu({ kind: "bot", id, x: event.clientX, y: event.clientY });
@@ -6494,7 +6551,7 @@ function mentionRows(roster, sessionId, query = "") {
     ...here.room.members.map((id) => roster.byId[id]).filter(Boolean),
     ...(here.room.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0).map((p) => ({ id: p.id, name: p.displayName || p.id, kind: "human", role: p.role })),
     ...(here.room.participants ?? []).filter((p) => p.remote && p.leftSeq === void 0).map((p) => ({ id: p.handle || p.id, name: remoteBotTitle(p), kind: "bot", remote: p, handle: p.handle }))
-  ] : roster.bots.filter((bot) => bot.id !== here.self.id);
+  ] : listedChatBots(roster).filter((bot) => bot.id !== here.self.id);
   const needle = query.trim().toLowerCase();
   const rows = bots.filter((bot) => bot.name.toLowerCase().includes(needle)).map((bot) => ({ bot, text: `@${bot.name} ` }));
   const everyone = t("Everyone");
@@ -6774,10 +6831,10 @@ function CommandPalette({ start, token, roster, actions, useSessions }) {
   const matchesName = (...fields) => wanted === "" || fields.some((field) => (field ?? "").toLowerCase().includes(wanted));
   const sections = [];
   const people = [
-    ...roster.bots.filter((bot) => matchesName(bot.name, bot.role)).map((bot) => ({
+    ...roster.bots.filter((bot) => isListedRemoteChat(bot) && matchesName(bot.name, bot.role, pickerBotLabel(bot))).map((bot) => ({
       key: bot.id,
       avatar: (0, import_react13.createElement)(BotAvatar, { bot, size: 24, badge: false, live: false }),
-      title: bot.name,
+      title: pickerBotLabel(bot),
       subtitle: [bot.role, isMainOf(roster, bot.id) ? t("Main Bot") : ""].filter(Boolean).join(" · "),
       badge: bot.hidden ? t("Hidden") : void 0,
       run: async () => {
@@ -8945,9 +9002,10 @@ function NewChat({ mode, roster, actions }) {
   useEscape(close);
   const paneLeft = usePaneLeft();
   const wanted = query.trim().toLowerCase();
-  const matches = roster.bots.filter((bot) => !picked.includes(bot.id) && bot.id !== admin && (wanted === "" || bot.name.toLowerCase().includes(wanted) || (bot.role ?? "").toLowerCase().includes(wanted)));
+  const bots = listedChatBots(roster);
+  const matches = bots.filter((bot) => !picked.includes(bot.id) && bot.id !== admin && (wanted === "" || bot.name.toLowerCase().includes(wanted) || pickerBotLabel(bot).toLowerCase().includes(wanted) || (bot.role ?? "").toLowerCase().includes(wanted)));
   const choosingAdmin = group && admin === null;
-  const exact = roster.bots.some((bot) => bot.name.toLowerCase() === wanted);
+  const exact = bots.some((bot) => bot.name.toLowerCase() === wanted);
   const pickedBots = picked.map((id) => roster.byId[id]).filter(Boolean);
   const run = async (task) => {
     if (busy) return;
@@ -9032,6 +9090,15 @@ function NewChat({ mode, roster, actions }) {
       setCursor(0);
       inputRef.current?.focus();
     } });
+    for (const action of newChatActionRows({ mode, group, picked, query, roster })) {
+      options.push({
+        key: action.key,
+        icon: (0, import_react21.createElement)(PeopleIcon),
+        label: t(action.label),
+        hint: action.hint ? t(action.hint) : void 0,
+        run: () => action.run({ close, actions, roster })
+      });
+    }
     if ((roster.agents ?? []).length === 0) {
       options.push({ key: "agent", icon: (0, import_react21.createElement)(import_dsh_client_ui_primitives4.FishLogo, { size: 16 }), label: t("Add DSH Agent"), run: () => run(async () => {
         await actions.addAgent();
@@ -9040,7 +9107,7 @@ function NewChat({ mode, roster, actions }) {
     }
   }
   for (const bot of matches) {
-    options.push({ key: bot.id, bot, label: bot.name, hint: choosingAdmin ? t("Make admin") : group || picked.length > 0 ? t("Add to group chat") : void 0, run: () => openBot(bot) });
+    options.push({ key: bot.id, bot, label: pickerBotLabel(bot), hint: choosingAdmin ? t("Make admin") : group || picked.length > 0 ? t("Add to group chat") : void 0, run: () => openBot(bot) });
   }
   if (wanted !== "" && !exact && mode !== "search") options.push({ key: "create", icon: (0, import_react21.createElement)(PlusIcon), label: t("Create new Bot “{name}”", { name: query.trim() }), run: createBot });
   const active = Math.min(cursor, Math.max(options.length - 1, 0));

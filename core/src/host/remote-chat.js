@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
 import { SOURCE_KIND } from './constants.js'
 import { cleanName, fenceUntrusted } from './delivery.js'
+import { isHomeLevelRemote, normRemoteHandle } from '../shared/remote-label.js'
 
 export const REMOTE_PROVIDER = 'flybot-remote'
 export const REMOTE_FORM = 'remote-chat'
@@ -52,7 +53,7 @@ export function install(rt) {
   const { ctx, state } = rt
   const warn = (...args) => rt.warn?.(...args)
   const chats = () => Object.values(state.bots ?? {}).filter(isRemoteChat)
-  const chatOfHandle = handle => chats().find(bot => bot.remote.handle === handle)
+  const chatOfHandle = handle => chats().find(bot => normRemoteHandle(bot.remote.handle) === normRemoteHandle(handle))
   const senders = new Map()
   const pending = new Map()
 
@@ -116,6 +117,7 @@ export function install(rt) {
   let opening = Promise.resolve()
   // Creates the chat for a remote Bot (once), or refreshes its name and home label.
   function open({ handle, name, home, homeName, plugin }) {
+    if (isHomeLevelRemote({ handle, home })) return Promise.resolve(undefined)
     const run = opening.then(async () => {
       await rt.load()
       const existing = chatOfHandle(handle)
@@ -143,14 +145,23 @@ export function install(rt) {
   async function sync(plugin, list) {
     const handles = new Set()
     for (const member of list) {
-      handles.add(member.handle)
+      if (isHomeLevelRemote(member)) continue
+      handles.add(normRemoteHandle(member.handle))
       await open({ ...member, plugin }).catch(error => warn('ds-bot: chat for %s not opened: %s', member.handle, error))
     }
     let changed = false
     for (const bot of chats()) {
       if (bot.remote.plugin !== plugin) continue
-      const gone = !handles.has(bot.remote.handle)
-      if (Boolean(bot.remote.gone) !== gone) { bot.remote = { ...bot.remote, ...(gone ? { gone: true } : {}) }; if (!gone) delete bot.remote.gone; changed = true }
+      const gone = isHomeLevelRemote(bot.remote) || !handles.has(normRemoteHandle(bot.remote.handle))
+      const wasGone = Boolean(bot.remote.gone)
+      const wasHidden = Boolean(bot.hidden)
+      if (wasGone !== gone || wasHidden !== gone) {
+        bot.remote = { ...bot.remote, ...(gone ? { gone: true } : {}) }
+        if (!gone) delete bot.remote.gone
+        if (gone) bot.hidden = true
+        else delete bot.hidden
+        changed = true
+      }
     }
     if (changed) await rt.save()
   }

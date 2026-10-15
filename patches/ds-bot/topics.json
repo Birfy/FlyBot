@@ -39,7 +39,10 @@
     "src/client/user-message.js",
     "src/client/styles.js",
     "src/client/icons.js",
+    "src/client/new-chat.js",
+    "src/client/palette.js",
     "test/flybot-client.test.js",
+    "test/new-chat.test.js",
     "test/mention-rule.test.js",
     "test/bot-tree.test.js"
   ],

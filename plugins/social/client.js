@@ -81,6 +81,7 @@ window.__ModuleLoader__.load({
 .fs-status{padding:0;font-size:12px;line-height:17px;color:var(--bt-ink-2,rgba(20,20,20,.6));overflow-wrap:anywhere}
 .fs-status[data-tone=error]{color:#e5484d}
 .fs-pending-tag{background:var(--bt-accent,#4d6bfe);color:#fff}
+.fs-refresh{flex:none;font-size:11px;line-height:14px;color:var(--bt-ink-3,rgba(20,20,20,.36));font-weight:400}
 .fs-pending{margin:4px 4px 6px;padding:8px 10px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:10px;background:var(--bt-card,#fff);display:flex;flex-direction:column;gap:6px}
 .fs-pending .fs-label{padding:0}
 .fs-draft{font-size:13px;line-height:18px;color:var(--bt-ink,#141414);white-space:pre-wrap;overflow-wrap:anywhere;max-height:96px;overflow:auto}
@@ -260,7 +261,7 @@ window.__ModuleLoader__.load({
         if (step !== 'waiting' || !(room?.faceRoomId || room?.roomId)) return undefined
         const faceId = room.faceRoomId
         const localId = room.roomId
-        const load = () => call('social/face-rooms', {}).then(value => {
+        const load = () => call('social/face-rooms', { poll: true }).then(value => {
           const list = Array.isArray(value?.rooms) ? value.rooms : []
           const next = list.find(item => (faceId && item.faceRoomId === faceId) || (localId && item.roomId === localId))
           if (next) setRoom(current => current ? { ...current, ...next } : next)
@@ -585,22 +586,28 @@ window.__ModuleLoader__.load({
       return seconds === 1 ? '1 second left to join' : `${seconds} seconds left to join`
     }
 
-    function FaceRooms({ actions } = {}) {
+    function FaceRooms({ actions, enabled = true } = {}) {
       const [rooms, setRooms] = useState([])
       const [autoSend, setAutoSend] = useState(false)
       const [autoBusy, setAutoBusy] = useState(false)
       const [autoError, setAutoError] = useState('')
-      const load = () => call('social/face-rooms', {}).then(value => {
+      const candidate = rooms.some(room => room.status === 'candidate')
+      const load = (poll) => call('social/face-rooms', { poll }).then(value => {
         setRooms(Array.isArray(value?.rooms) ? value.rooms : [])
         if (typeof value?.autoApproveFaceRooms === 'boolean') setAutoSend(value.autoApproveFaceRooms)
       }, () => {})
       useEffect(() => {
-        load()
+        if (!enabled) return undefined
+        load(false)
         if (typeof setInterval !== 'function') return undefined
-        const timer = setInterval(load, 5000)
+        const tick = () => {
+          if (typeof document !== 'undefined' && document.hidden) return
+          load(candidate)
+        }
+        const timer = setInterval(tick, candidate ? 5000 : 30_000)
         timer?.unref?.()
         return () => clearInterval(timer)
-      }, [])
+      }, [enabled, candidate])
       const toggle = async (next) => {
         setAutoBusy(true)
         setAutoError('')
@@ -650,9 +657,34 @@ window.__ModuleLoader__.load({
         note ? h('div', { className: 'fs-status', 'data-tone': note.tone }, note.text) : null)
     }
 
+    const ROSTER_CACHE_KEY = 'flybot-social-remote-bots'
+    function readCachedRoster() {
+      try {
+        const raw = globalThis.sessionStorage?.getItem?.(ROSTER_CACHE_KEY)
+        if (!raw) return null
+        const parsed = JSON.parse(raw)
+        return parsed && Array.isArray(parsed.homes) ? parsed : null
+      } catch { return null }
+    }
+    function writeCachedRoster(value) {
+      try { globalThis.sessionStorage?.setItem?.(ROSTER_CACHE_KEY, JSON.stringify({ homes: value?.homes ?? [] })) } catch {}
+    }
+
+    let faceOpenHandler = null
+    let pendingFaceOpen = false
+    function openFaceToFace() {
+      if (faceOpenHandler) faceOpenHandler()
+      else pendingFaceOpen = true
+    }
+    function bindFaceOpen(fn) {
+      faceOpenHandler = fn
+      if (pendingFaceOpen) { pendingFaceOpen = false; fn() }
+      return () => { if (faceOpenHandler === fn) faceOpenHandler = null }
+    }
+
     function FriendsBots({ renderBot, remoteChats, actions } = {}) {
       useStyles()
-      const [data, setData] = useState(null)
+      const [data, setData] = useState(() => readCachedRoster())
       const [error, setError] = useState('')
       const [open, setOpen] = useState(true)
       const [adding, setAdding] = useState(false)
@@ -662,21 +694,37 @@ window.__ModuleLoader__.load({
       const [pending, setPending] = useState([])
       const [hiding, setHiding] = useState(() => new Set())
       const [faceOpen, setFaceOpen] = useState(false)
-      const load = () => call('social/remote-bots', { fresh: true }).then(value => { setData(value); setError('') }, e => setError(errorText(e)))
+      const [refreshing, setRefreshing] = useState(false)
+      const openRef = useRef(open)
+      openRef.current = open
+      const load = () => call('social/remote-bots', { fresh: true }).then(value => {
+        setData(value)
+        writeCachedRoster(value)
+        setError('')
+      }, e => setError(errorText(e)))
       const loadSettings = () => call('social/settings', {}).then(value => setAuto(value?.autoAccept ?? {}), () => {})
       const loadApprovals = () => call('social/status', {}).then(value => {
         const items = Array.isArray(value?.approvals) ? value.approvals : []
         setPending(items)
         if (items.length) setOpen(true)
       }, () => {})
+      const loadAll = () => {
+        setRefreshing(true)
+        return Promise.all([load(), loadSettings(), loadApprovals()]).finally(() => setRefreshing(false))
+      }
       useEffect(() => {
-        load().then(loadSettings)
-        loadApprovals()
+        loadAll()
         if (typeof setInterval !== 'function') return undefined
-        const timer = setInterval(loadApprovals, 5000)
+        const tick = () => {
+          if (!openRef.current) return
+          if (typeof document !== 'undefined' && document.hidden) return
+          loadApprovals()
+        }
+        const timer = setInterval(tick, 15_000)
         timer?.unref?.()
         return () => clearInterval(timer)
       }, [])
+      useEffect(() => bindFaceOpen(() => { setFaceOpen(true); setOpen(true) }), [])
       const homes = data?.homes ?? []
       const count = homes.reduce((n, entry) => n + entry.bots.length, 0)
       const chats = remoteChats ?? []
@@ -728,17 +776,17 @@ window.__ModuleLoader__.load({
             h('span', { className: 'fs-title' }, 'Friends\' Bots'),
             data ? h('span', { className: 'fs-count', title: `${count} ${count === 1 ? 'Bot' : 'Bots'}` }, String(count)) : null),
           pending.length ? h('button', { type: 'button', className: 'fs-tag fs-pending-tag', 'data-flybot': 'pending-badge', title: `${pending.length} outbound ${pending.length === 1 ? 'reply' : 'replies'} waiting for your approval. Opens that chat.`, onClick: openPending }, `${pending.length} to approve`) : null,
+          refreshing ? h('span', { className: 'fs-refresh', 'data-flybot': 'roster-refreshing' }, 'Refreshing…') : null,
           unavailable ? null : h('button', { type: 'button', className: 'fs-icon', 'aria-expanded': adding, title: 'Add a friend', onClick: () => { setAdding(!adding); setOpen(true) } }, adding ? 'Done' : '+ Add')),
         open ? h('div', { className: 'fs-body' },
           h(PendingApprovals, { items: pending, busy: saving, onDecide: decide }),
-          unavailable ? null : h(FaceRooms, { actions }),
+          unavailable ? null : h(FaceRooms, { actions, enabled: open }),
           adding && !unavailable ? h('div', { className: 'fs-card', 'data-flybot': 'face-group-entry' },
             h('button', { type: 'button', className: 'fs-btn fs-btn-primary', 'data-flybot': 'face-group-open', onClick: () => setFaceOpen(true) }, 'Face-to-face group'),
             h('div', { className: 'fs-hint' }, 'Meet the people next to you. Pick your Bots and type the same 6-digit number.')) : null,
           adding && !unavailable ? h(AddFriend, { onChange: () => load().then(loadSettings) }) : null,
           faceOpen && !unavailable ? h(FaceToFaceGroup, { actions, onClose: () => setFaceOpen(false) }) : null,
           unavailable ? h('div', { className: 'fs-empty', 'data-flybot': 'social-unavailable' }, error) : error ? h('div', { className: 'fs-status', 'data-tone': 'error', style: { padding: '4px 10px' } }, error) : null,
-          data === null && !error ? h('div', { className: 'fs-hint' }, 'Loading…') : null,
           homes.map(entry => {
             const shut = closed[entry.home] === true
             const rows = entry.bots.map(bot => ({ bot, chat: chats.find(chat => chat.remote?.handle === bot.handle) }))
@@ -978,6 +1026,13 @@ window.__ModuleLoader__.load({
           }
           offs = [
             slots().register('flybot.sidebar.section', { id: 'social', order: 100, component: FriendsBots }),
+            slots().register('flybot.new-chat.action', {
+              id: 'social-face-group',
+              order: 15,
+              label: 'Face-to-face group',
+              hint: 'Meet the people next to you. Pick your Bots and type the same 6-digit number.',
+              run: ({ close } = {}) => { openFaceToFace(); close?.() },
+            }),
             slots().register('flybot.composer.mention', { id: 'social', order: 100, candidates: friendRows }),
             slots().register('flybot.bot.details', { id: 'social-invite', order: 100, component: BotSocialDetails }),
             slots().register('flybot.room.overview', { id: 'social-face', order: 50, component: FaceRoomOverview }),
@@ -985,7 +1040,7 @@ window.__ModuleLoader__.load({
           ]
           // For other plugins (the tree's per-node "Copy invite link"): ctx.flybot.social.canInvite(botId)
           // is synchronous; flybot.call('social.createInvite', { botId }) returns { link, text, ... }.
-          const social = { canInvite, onChange: onStatusChange, createInvite: botId => call('social.createInvite', { botId }) }
+          const social = { canInvite, onChange: onStatusChange, createInvite: botId => call('social.createInvite', { botId }), openFaceToFace }
           globalThis.__flybot__.social = social
           if (globalThis.__flybot__.api) globalThis.__flybot__.api.social = social
           offs.push(() => {

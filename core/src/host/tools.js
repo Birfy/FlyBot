@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { COLORS, EXTRA_COLORS, MAX_HOPS, MAX_UNREAD_REQUESTS, ROOM_BOT_ROUNDS, ROOM_MODES, SOURCE_KIND } from './constants.js'
 import { unquote } from './text.js'
+import { isListedRemoteChat } from '../shared/remote-label.js'
 
 export const output = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] }
 export const GROUP_REF = { type: 'string', required: true, description: 'Exact group chat name from list_bots' }
@@ -65,7 +66,7 @@ export function install(rt) {
       })
       if (lines.length === 0) return 'No Bots yet.'
       const rooms = visibleRooms(self)
-      const friends = Object.values(state.bots).filter(bot => bot.remote?.handle && !bot.remote.gone).map(bot => `- ${bot.name} (${bot.remote.handle}${bot.remote.homeName ? `, ${bot.remote.homeName}'s home` : ''})`)
+      const friends = Object.values(state.bots).filter(bot => bot.remote?.handle && isListedRemoteChat(bot)).map(bot => `- ${bot.name} (${bot.remote.handle}${bot.remote.homeName ? `, ${bot.remote.homeName}'s home` : ''})`)
       return [
         'Bots:',
         ...lines,
@@ -121,7 +122,7 @@ export function install(rt) {
       // A friend's Bot (by name or @handle) is reached through FlyBot's send path, so the
       // friend's auto-accept setting decides whether it goes now or waits for the user.
       const wanted = String(args.to ?? '').trim().replace(/^@/, '').toLowerCase()
-      const friend = target === undefined ? Object.values(state.bots).find(bot => bot.remote?.handle && !bot.remote.gone && (bot.name.toLowerCase() === wanted || bot.remote.handle.slice(1).toLowerCase() === wanted)) : undefined
+      const friend = target === undefined ? Object.values(state.bots).find(bot => bot.remote?.handle && isListedRemoteChat(bot) && (bot.name.toLowerCase() === wanted || bot.remote.handle.slice(1).toLowerCase() === wanted)) : undefined
       if (friend !== undefined && rt.flybotSend) {
         const result = await rt.flybotSend({ from: sender.id, to: friend.remote.handle, text: args.message, via: 'message_bot' })
         if (result?.action === 'deny') refuse(`Not sent to ${friend.name}: ${result.reason}`)
