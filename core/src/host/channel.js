@@ -45,7 +45,16 @@ export function install(rt) {
       const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId)]
       const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
       const previewWho = last && (last.authorKind === 'human' && last.who && last.who !== 'User' ? `${last.who}: ${last.text}` : last.who === 'User' ? last.text : `${last.who}：${last.text}`)
-      return { ...room, parts, ...(last ? { preview: previewWho } : {}) }
+      const presented = rt.presentRoom?.({ ...room, log }, actor) ?? room
+      const pending = rt.listRoomApprovals?.(presented, actor) ?? []
+      return {
+        ...presented,
+        log: undefined,
+        parts,
+        pendingApprovals: pending,
+        pendingCount: pending.length,
+        ...(last ? { preview: previewWho } : {}),
+      }
     }),
     humans: rt.publicHumans?.() ?? [],
     self: actor ? { memberId: actor.memberId, displayName: actor.displayName } : null,

@@ -6,7 +6,7 @@ All notable changes to FlyBot (earlier: DS Bot) are listed here. The format foll
 
 ### Added
 
-- **Native rooms take human and Chief participants.** A room can list people (Alice, Bob) and their designated Chiefs with roles, persistent author ids and visible names, so two humans no longer collapse into “User.” History follows a membership window (current members see lines from their join seq; leave withdraws access; rejoin starts a new interval). Specialists stay in their owner’s private rooms. Team mode stays disabled. ([#50](https://github.com/ThinkFlowLab/FlyBot/issues/50))
+- **Native rooms take human, Chief, and published friend Bots.** A room can list people (Alice, Bob), each side’s designated Chief, and a friend’s Bot that was published to friends (`social/remote-bots`). Remotes show as `<Bot> · <owner>'s Bot` (Chief: `<owner>'s Chief`) with an owner badge. The owner of an invited Bot sees **Shared room from \<inviter\>**, only lines from that Bot’s join seq, and can remove their Bot. Unpublished specialists stay private (host-enforced). Replies still go through Bot Social’s outbound hold. Team mode stays disabled. ([#50](https://github.com/ThinkFlowLab/FlyBot/issues/50))
 - **Friends' Bots pending approvals:** outbound drafts Bot Social holds (`pending_approval`) show a persistent badge and Approve / Reject in Friends' Bots. Inbound messages still arrive immediately; Auto-accept still skips the hold. (#69)
 - Plugins can write to the host diagnostics log with `flybot.warn` (Settings → Feedback). `@flybot/social` uses this when start fails. ([#68](https://github.com/ThinkFlowLab/FlyBot/issues/68))
 

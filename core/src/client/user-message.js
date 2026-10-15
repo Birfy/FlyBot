@@ -4,6 +4,7 @@ import { mentionSpans } from '../shared/mentions.js'
 import { BotMark } from './mark.js'
 import { CheckIcon, CopyIcon } from './icons.js'
 import { dateLocale, t } from './i18n.js'
+import { remoteBotTitle } from '../shared/remote-label.js'
 
 // -------------------------------------------------------------------------
 // The user's own messages. DSH draws every "@word" in them as a file reference, and
@@ -37,19 +38,24 @@ export function mentionableBots(roster, sessionId) {
     : roster.byId[sessionId] ? roster.bots : []
   const humans = (room?.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
     .map(p => ({ id: p.id, name: p.displayName || p.id, kind: 'human', role: p.role }))
-  return bots.concat(humans, bots.filter(bot => typeof bot?.remote?.handle === 'string')
-    .map(bot => ({ ...bot, name: bot.remote.handle.replace(/^@+/, ''), mentionLabel: bot.name })))
+  const remotes = (room?.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
+    .map(p => ({ id: p.handle || p.id, name: remoteBotTitle(p), kind: 'bot', remote: p, mentionLabel: remoteBotTitle(p) }))
+  return bots.concat(humans, remotes, bots.filter(bot => typeof bot?.remote?.handle === 'string')
+    .map(bot => ({ ...bot, name: bot.remote.handle.replace(/^@+/, ''), mentionLabel: remoteBotTitle({ displayName: bot.name, ownerName: bot.remote.homeName || bot.remote.owner, handle: bot.remote.handle, isChief: bot.remote.isChief }) })))
 }
 
-export function messageAuthor(data, roster) {
+export function messageAuthor(data, roster, sessionId) {
   const source = data?.source ?? {}
   const authorId = source.authorId
   if (!authorId) return null
-  const name = source.authorName || source.authorId
+  const room = sessionId ? roster?.roomsById?.[sessionId] : undefined
+  const remote = (room?.participants ?? []).find(p => p.remote && (p.handle === authorId || p.id === authorId))
+  const name = remote ? remoteBotTitle(remote) : (source.authorName || source.authorId)
   return {
     authorId,
     authorKind: source.authorKind || 'human',
     name,
+    ownerName: remote?.ownerName,
     mine: roster?.self?.memberId === authorId,
   }
 }
@@ -107,7 +113,7 @@ export function UserMessageCell({ node, sessionId, useRoster, actions, renderMes
   const referenceLabels = data.referenceLabels ?? []
   const references = openFile && openSkill ? { openFile, openSkill } : undefined
   const steering = node.kind === 'steering'
-  const author = messageAuthor(data, roster)
+  const author = messageAuthor(data, roster, sessionId)
   const room = roster.roomsById?.[sessionId]
   const multiHuman = (room?.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined).length > 1
   const incoming = author && !author.mine
@@ -119,7 +125,7 @@ export function UserMessageCell({ node, sessionId, useRoster, actions, renderMes
     'data-author-name': author?.name,
   },
     h('div', { className: 'bt-ustack' },
-      author && (incoming || multiHuman) ? h('span', { className: 'bt-uauthor' }, author.name) : null,
+      author && (incoming || multiHuman) ? h('span', { className: 'bt-uauthor' }, author.name, author.ownerName ? h('span', { className: 'bt-chip' }, t('Friend\'s Bot')) : null) : null,
       attachments.length > 0 ? h(Attachments, { attachments, renderMessageImages }) : null,
       text !== '' || rest.length > 0 ? h('div', { className: 'bt-ubody', title: clock(data.time) },
         h(UserText, { text, bots: mentionableBots(roster, sessionId), referenceLabels, skillNames: data.skillNames ?? [], references, actions }),

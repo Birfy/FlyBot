@@ -2,10 +2,10 @@ FlyBot patch 0011-owner-scoped-access on Fei2411/DeepSeek-Bot@2b10c70 (ds-bot/).
 
 diff --git a/src/host/authz.js b/src/host/authz.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..1ab45025af4a22db69110ac5d13407ddb1564ddc
+index 0000000000000000000000000000000000000000..0d770e9b8d1c85007a0d9b05b3d9ee234917b655
 --- /dev/null
 +++ b/src/host/authz.js
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,253 @@
 +// Owner-scoped access (#49): default-deny authorization for the /api/bot channel.
 +// Once a member session exists on the host, every Bot, room and session an endpoint
 +// touches must belong to the signed-in actor; shared resources that cannot yet be
@@ -184,8 +184,14 @@ index 0000000000000000000000000000000000000000..1ab45025af4a22db69110ac5d13407dd
 +      if (ep === 'create-room') {
 +        const members = Array.isArray(body?.members) ? body.members : []
 +        const fromParticipants = Array.isArray(body?.participants)
-+          ? body.participants.filter(p => p?.kind === 'bot').map(p => p.id)
++          ? body.participants.filter(p => p?.kind === 'bot' && !p.remote && !p.handle).map(p => p.id)
 +          : []
++        const remotes = [
++          ...(Array.isArray(body?.participants) ? body.participants : []),
++        ].filter(p => p?.kind === 'bot' && (p.remote || p.handle)).map(p => p.handle || p.id)
++        if (remotes.some(handle => !rt.isPublishedRemote?.(handle))) {
++          return deny('bot/forbidden', 'Only a Chief or a Bot published to friends may join a shared room')
++        }
 +        const bots = [...new Set([...members, ...fromParticipants])]
 +        if (bots.length === 0 || bots.every(id => botOwnedBy(actor, id))) return ALLOW
 +        const humans = listedHumans(body)
@@ -195,6 +201,12 @@ index 0000000000000000000000000000000000000000..1ab45025af4a22db69110ac5d13407dd
 +      }
 +      if (ep === 'update-room') {
 +        const roomId = body?.id
++        const addedRemotes = [
++          ...(Array.isArray(body?.addParticipants) ? body.addParticipants : []),
++        ].filter(p => p?.kind === 'bot' && (p.remote || p.handle)).map(p => p.handle || p.id)
++        if (addedRemotes.some(handle => !rt.isPublishedRemote?.(handle))) {
++          return deny('bot/forbidden', 'Only a Chief or a Bot published to friends may join a shared room')
++        }
 +        if (roomOwnedBy(actor, roomId)) {
 +          const ids = [...(Array.isArray(body?.members) ? body.members : []), ...(Array.isArray(body?.add) ? body.add : []), ...(Array.isArray(body?.remove) ? body.remove : [])]
 +          if (ids.every(id => botOwnedBy(actor, id))) return ALLOW

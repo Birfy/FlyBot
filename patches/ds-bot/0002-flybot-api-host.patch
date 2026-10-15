@@ -58,10 +58,10 @@ index 9cdb56ac60dda8bb9f364eb0791908a867412210..46cb1923507ce3b89827c5dd52b8d86a
  export function createRuntime(ctx, config = {}) {
 diff --git a/src/host/hooks.js b/src/host/hooks.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..06076a01902dca09ee9fe4a5a60d54195f4a2e50
+index 0000000000000000000000000000000000000000..815869ce4211af08643c220cbbeab6cb3f8f1657
 --- /dev/null
 +++ b/src/host/hooks.js
-@@ -0,0 +1,689 @@
+@@ -0,0 +1,692 @@
 +// FlyBot hooks: the `flybot` service feature plugins (plugins/social, plugins/tree)
 +// build on. Installed after resume.js, so its gate around rt.deliver is the outermost
 +// wrapper: every Bot-to-Bot message, including message_bot, stop_bot, and replies,
@@ -722,6 +722,9 @@ index 0000000000000000000000000000000000000000..06076a01902dca09ee9fe4a5a60d5419
 +    // Same log as Settings → Feedback. Plugins must not depend on ctx.logger (DSH may export none).
 +    warn: (...args) => rt.warn?.(...args),
 +    transports: { add: addTransport },
++    roomApprovals: {
++      setProvider(fn) { rt.listRoomApprovals = typeof fn === 'function' ? fn : undefined },
++    },
 +    remote: {
 +      publish: list => remoteMembers.publish(plugin, list),
 +      list: remoteMembers.list,
@@ -752,7 +755,7 @@ index 0000000000000000000000000000000000000000..06076a01902dca09ee9fe4a5a60d5419
 +  Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSend: send, flybotIsRead: isReadEndpoint, flybotHideTools: hidePluginTools })
 +}
 diff --git a/src/host/roster.js b/src/host/roster.js
-index 2c95d08090930cb59c4cc47170685ceae63355b8..bbd8f96f4e87938ebb7a5c484558c28cc4edaf4b 100644
+index 2c95d08090930cb59c4cc47170685ceae63355b8..3892fe5faba00ba574eb954aa7afe745c49dd82e 100644
 --- a/src/host/roster.js
 +++ b/src/host/roster.js
 @@ -58,16 +58,24 @@ export function install(rt) {
@@ -838,7 +841,7 @@ index 2c95d08090930cb59c4cc47170685ceae63355b8..bbd8f96f4e87938ebb7a5c484558c28c
      if (patch.model !== undefined) {
        if (patch.model === null || patch.model === '') delete bot.model
        else bot.model = await rt.resolveModel(patch.model)
-@@ -235,7 +265,12 @@ export function install(rt) {
+@@ -235,7 +265,14 @@ export function install(rt) {
    // admin may change its own group but not delete it. Only a member can be admin.
  
    const roomBusy = id => [...rt.roomProgress.values()].some(round => round.roomId === id)
@@ -847,12 +850,14 @@ index 2c95d08090930cb59c4cc47170685ceae63355b8..bbd8f96f4e87938ebb7a5c484558c28c
 +    const humans = (room?.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
 +      .map(p => p.displayName || p.id)
 +    const people = humans.length > 0 ? humans : ['You']
-+    return [...people, ...members.map(id => rt.botOf(id)?.name).filter(Boolean)].join(', ')
++    const remotes = (room?.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
++      .map(p => p.displayName || p.handle)
++    return [...people, ...members.map(id => rt.botOf(id)?.name).filter(Boolean), ...remotes].join(', ')
 +  }
    const cleanNotice = text => String(text ?? '').trim().slice(0, ROOM_NOTICE_MAX)
  
    function cleanRoomName(text, selfId) {
-@@ -257,7 +292,7 @@ export function install(rt) {
+@@ -257,7 +294,7 @@ export function install(rt) {
    async function followMemberNames(rooms = Object.values(state.rooms)) {
      for (const room of rooms) {
        if (room.named) continue
@@ -861,19 +866,25 @@ index 2c95d08090930cb59c4cc47170685ceae63355b8..bbd8f96f4e87938ebb7a5c484558c28c
        if (next === room.name) continue
        room.name = next
        await retitleRoom(room)
-@@ -269,8 +304,9 @@ export function install(rt) {
+@@ -269,9 +306,14 @@ export function install(rt) {
      if (members.length > ROOM_MAX_MEMBERS) throw new Error(`A group chat holds at most ${ROOM_MAX_MEMBERS} Bots`)
    }
  
 -  async function createRoom({ members: memberIds = [], name: roomName, notice, mode, admin, createdBy } = {}) {
 -    const members = [...new Set(memberIds)].filter(id => rt.botOf(id))
+-    checkMembers(members)
 +  async function createRoom({ members: memberIds = [], name: roomName, notice, mode, admin, createdBy, participants, actor } = {}) {
-+    const fromParticipants = Array.isArray(participants) ? participants.filter(p => p?.kind === 'bot').map(p => p.id) : []
++    const fromParticipants = Array.isArray(participants)
++      ? participants.filter(p => p?.kind === 'bot' && !p.remote && !p.handle).map(p => p.id)
++      : []
++    const remotes = Array.isArray(participants) ? participants.filter(p => p?.kind === 'bot' && (p.remote || p.handle)) : []
 +    const members = [...new Set([...memberIds, ...fromParticipants])].filter(id => rt.botOf(id))
-     checkMembers(members)
++    if (members.length >= 2) checkMembers(members)
++    else if (members.length + remotes.length < 2 || members.length === 0) checkMembers(members)
      const custom = cleanRoomName(roomName ?? '')
      // A Main Bot leads the groups it makes; a group the user makes is led by a Main
-@@ -294,6 +330,12 @@ export function install(rt) {
+     // Bot member when it has one.
+@@ -294,6 +336,12 @@ export function install(rt) {
          createdAt: Date.now(),
          createdBy: createdBy ?? null,
        }
@@ -886,7 +897,7 @@ index 2c95d08090930cb59c4cc47170685ceae63355b8..bbd8f96f4e87938ebb7a5c484558c28c
        await rt.save()
        return state.rooms[id]
      } catch (error) {
-@@ -306,13 +348,15 @@ export function install(rt) {
+@@ -306,13 +354,15 @@ export function install(rt) {
      }
    }
  
@@ -905,7 +916,7 @@ index 2c95d08090930cb59c4cc47170685ceae63355b8..bbd8f96f4e87938ebb7a5c484558c28c
      let members = Array.isArray(patch.members) ? [...new Set(patch.members)] : [...room.members]
      for (const member of patch.add ?? []) if (!members.includes(member)) members.push(member)
      members = members.filter(member => !(patch.remove ?? []).includes(member) && rt.botOf(member))
-@@ -340,12 +384,17 @@ export function install(rt) {
+@@ -340,12 +390,17 @@ export function install(rt) {
      const removed = room.members.filter(member => !members.includes(member))
      if (added.length > 0) changes.push(`added ${names(added)}`)
      if (removed.length > 0) changes.push(`removed ${names(removed)}`)
@@ -928,7 +939,7 @@ index 2c95d08090930cb59c4cc47170685ceae63355b8..bbd8f96f4e87938ebb7a5c484558c28c
      if (admin !== (room.admin ?? null)) changes.push(admin ? `made ${rt.botOf(admin).name} the admin` : 'removed the admin')
      room.admin = admin
      if (patch.mode !== undefined && patch.mode !== room.mode) {
-@@ -371,7 +420,13 @@ export function install(rt) {
+@@ -371,7 +426,13 @@ export function install(rt) {
          delete room.named
        }
      }
@@ -943,7 +954,7 @@ index 2c95d08090930cb59c4cc47170685ceae63355b8..bbd8f96f4e87938ebb7a5c484558c28c
      if (room.name !== before) {
        changes.push(`renamed it "${room.name}"`)
        await retitleRoom(room)
-@@ -422,6 +477,7 @@ export function install(rt) {
+@@ -422,6 +483,7 @@ export function install(rt) {
        if (rt.botOf(other)?.kickoff?.main) delete rt.botOf(other).kickoff
      }
      state.mainBotIds = next
@@ -951,7 +962,7 @@ index 2c95d08090930cb59c4cc47170685ceae63355b8..bbd8f96f4e87938ebb7a5c484558c28c
      await rt.save()
    }
  
-@@ -450,6 +506,7 @@ export function install(rt) {
+@@ -450,6 +512,7 @@ export function install(rt) {
      await followMemberNames(touched)
      await rt.forgetBotSecrets(id)
      await archived
@@ -1233,10 +1244,21 @@ index 580ce7abbe24a8c94587745e8d23932d04bfd448..068f538f697c1cd4933f6943bb15afd0
    })
  }
 diff --git a/src/host/tools.js b/src/host/tools.js
-index ffaf7827c143693ee624cb81dca7249bb4289fb1..418c80b664bb42ae0d9bda13d234d589ff13b143 100644
+index ffaf7827c143693ee624cb81dca7249bb4289fb1..a1ae014ee719e4d2310cfd67701d313979bfd358 100644
 --- a/src/host/tools.js
 +++ b/src/host/tools.js
-@@ -35,8 +35,17 @@ export function install(rt) {
+@@ -27,16 +27,27 @@ export function install(rt) {
+   const roomLine = (room, self) => {
+     const members = room.members.map(rt.botOf).filter(Boolean)
+       .map(bot => `${bot.name}${bot.id === room.admin ? ' (admin)' : ''}${bot.id === self ? ' (you)' : ''}`)
++    const remotes = (room.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
++      .map(p => `${String(p.displayName ?? p.handle).replace(/[\u0000-\u001f\u007f-\u009f[\]"<>`]/g, '').slice(0, 60)} (${String(p.ownerName ?? p.ownerHome ?? 'friend').replace(/[\u0000-\u001f\u007f-\u009f[\]"<>`]/g, '').slice(0, 40)}'s Bot)`)
+     const parts = [
+-      `members: ${members.join(', ')}`,
++      `members: ${[...members, ...remotes].join(', ')}`,
+       room.mode === 'admin' && room.admin ? 'plain messages go to the admin first' : 'every member replies in turn',
+       room.notice ? `notice: ${room.notice.split('\n')[0].slice(0, 100)}` : '',
+       room.workDir ? `members work in ${room.workDir} here` : '',
      ].filter(Boolean)
      return `- "${room.name}" — ${parts.join('; ')}`
    }
@@ -1256,7 +1278,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..418c80b664bb42ae0d9bda13d234d589
  
    ctx.tools.register(defineTool({
      name: 'list_bots',
-@@ -46,7 +55,7 @@ export function install(rt) {
+@@ -46,7 +57,7 @@ export function install(rt) {
      async execute(_args, exec) {
        await rt.load()
        const self = rt.selfOf(exec.agent?.id)
@@ -1265,7 +1287,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..418c80b664bb42ae0d9bda13d234d589
          const model = bot.appliedModel ?? bot.model
          const tags = [bot.role, model ? `model ${model}` : '', bot.workDir ? `works in ${bot.workDir}` : '', rt.isMain(bot.id) ? 'Main Bot' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
          const job = bot.instructions ? ` — ${bot.instructions.split('\n')[0].slice(0, 120)}` : ''
-@@ -54,12 +63,14 @@ export function install(rt) {
+@@ -54,12 +65,14 @@ export function install(rt) {
        })
        if (lines.length === 0) return 'No Bots yet.'
        const rooms = visibleRooms(self)
@@ -1280,7 +1302,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..418c80b664bb42ae0d9bda13d234d589
        ].join('\n')
      },
    }))
-@@ -86,7 +97,7 @@ export function install(rt) {
+@@ -86,7 +99,7 @@ export function install(rt) {
      name: 'message_bot',
      description: 'Send a message to another Bot on the team. If that Bot is working, it reads your message at its next step and can change course, then answers once that work is done; if it is idle, it starts on it right away. Its reply arrives later as a new message to you; with reply_to "user" it answers the user in its own chat instead.',
      parameters: {
@@ -1289,7 +1311,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..418c80b664bb42ae0d9bda13d234d589
        message: { type: 'string', required: true, description: 'Self-contained message; the other Bot cannot see this conversation' },
        reply_to: {
          type: 'string',
-@@ -105,7 +116,17 @@ export function install(rt) {
+@@ -105,7 +118,17 @@ export function install(rt) {
        const sender = callerBot(exec)
        if (sender === undefined) return 'Only Bots on the team can use message_bot.'
        const target = rt.findBot(args.to)
@@ -1308,7 +1330,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..418c80b664bb42ae0d9bda13d234d589
        if (target.id === sender.id) return 'You cannot message yourself.'
        const turn = rt.live.get(exec.agent?.id)
        const hop = Math.max(turn?.info?.hop ?? 0, ...(turn?.joined ?? []).map(joined => joined.info?.hop ?? 0))
-@@ -118,7 +139,11 @@ export function install(rt) {
+@@ -118,7 +141,11 @@ export function install(rt) {
        const toUser = args.reply_to === 'user'
        const working = rt.live.get(chat)?.turn !== undefined
        const steer = args.when !== 'queue' && !toUser
@@ -1321,7 +1343,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..418c80b664bb42ae0d9bda13d234d589
        const sent = toUser
          ? `Delivered to ${target.name}. It will answer the user in its own chat; nothing comes back to you, so point the user to ${target.name}'s chat instead of relaying.`
          : working && steer
-@@ -153,7 +178,7 @@ export function install(rt) {
+@@ -153,7 +180,7 @@ export function install(rt) {
        const sender = callerBot(exec)
        if (sender === undefined || !rt.isMain(sender.id)) refuse('Only a Main Bot can stop other Bots.')
        const target = rt.findBot(args.bot)
@@ -1330,7 +1352,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..418c80b664bb42ae0d9bda13d234d589
        if (target.id === sender.id) refuse('You cannot stop yourself.')
        const { running } = activeSessions(target.id)
        if (running.length === 0) refuse(`${target.name} is not running right now, so there is nothing to stop. Use message_bot to reach it.`)
-@@ -257,7 +282,7 @@ export function install(rt) {
+@@ -257,7 +284,7 @@ export function install(rt) {
      }
      return { bots, unknown }
    }

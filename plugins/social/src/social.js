@@ -834,6 +834,19 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     return { approvalId: result?.approval_id ?? id, status: result?.decision ?? mapped }
   }))
 
+  flybot.roomApprovals?.setProvider?.((room) => {
+    const handles = new Set()
+    for (const p of room?.participants ?? []) {
+      if (p?.remote && p.handle) handles.add(norm(p.handle))
+      if (p?.kind === 'bot' && !p.remote) {
+        const member = memberOf(p.id)
+        if (member?.handle) handles.add(norm(member.handle))
+      }
+    }
+    if (room?.sharedFrom?.invitedHandle) handles.add(norm(room.sharedFrom.invitedHandle))
+    return pendingCache.items.filter(item => handles.has(norm(item.from)) || handles.has(norm(item.to)))
+  })
+
   return {
     home,
     registerAll,
@@ -844,6 +857,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     sendChat,
     setAutoAccept,
     dispose() {
+      flybot.roomApprovals?.setProvider?.(undefined)
       for (const dispose of disposers.splice(0).reverse()) dispose?.()
     },
   }

@@ -41,9 +41,12 @@ const ensureRoomLog = (room) => {
   room.seen ??= {}
 }
 
+let fanoutRoomLine = async () => {}
 const appendRoom = (room, line) => {
   room.seq += 1
-  room.log = [...room.log, { ...line, seq: room.seq }].slice(-ROOM_LOG_MAX)
+  const stamped = { ...line, seq: room.seq }
+  room.log = [...room.log, stamped].slice(-ROOM_LOG_MAX)
+  void fanoutRoomLine(room, stamped)
 }
 
 // A member's own lines are already in its Session, so only the others' are news.
@@ -113,6 +116,7 @@ const ROOM_READ_MAX = 30
 
 export function install(rt) {
   const { ctx } = rt
+  fanoutRoomLine = (room, line) => rt.fanoutRoomLine?.(room, line)
 
   // A member's group Session, created on its first turn there. A new one starts with
   // a fresh look at the log and a brief of the member's own chat; the brief is the

@@ -269,7 +269,9 @@ export function install(rt) {
     const humans = (room?.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
       .map(p => p.displayName || p.id)
     const people = humans.length > 0 ? humans : ['You']
-    return [...people, ...members.map(id => rt.botOf(id)?.name).filter(Boolean)].join(', ')
+    const remotes = (room?.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
+      .map(p => p.displayName || p.handle)
+    return [...people, ...members.map(id => rt.botOf(id)?.name).filter(Boolean), ...remotes].join(', ')
   }
   const cleanNotice = text => String(text ?? '').trim().slice(0, ROOM_NOTICE_MAX)
 
@@ -305,9 +307,13 @@ export function install(rt) {
   }
 
   async function createRoom({ members: memberIds = [], name: roomName, notice, mode, admin, createdBy, participants, actor } = {}) {
-    const fromParticipants = Array.isArray(participants) ? participants.filter(p => p?.kind === 'bot').map(p => p.id) : []
+    const fromParticipants = Array.isArray(participants)
+      ? participants.filter(p => p?.kind === 'bot' && !p.remote && !p.handle).map(p => p.id)
+      : []
+    const remotes = Array.isArray(participants) ? participants.filter(p => p?.kind === 'bot' && (p.remote || p.handle)) : []
     const members = [...new Set([...memberIds, ...fromParticipants])].filter(id => rt.botOf(id))
-    checkMembers(members)
+    if (members.length >= 2) checkMembers(members)
+    else if (members.length + remotes.length < 2 || members.length === 0) checkMembers(members)
     const custom = cleanRoomName(roomName ?? '')
     // A Main Bot leads the groups it makes; a group the user makes is led by a Main
     // Bot member when it has one.

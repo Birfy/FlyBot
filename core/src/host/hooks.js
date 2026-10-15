@@ -658,6 +658,9 @@ export function install(rt) {
     // Same log as Settings → Feedback. Plugins must not depend on ctx.logger (DSH may export none).
     warn: (...args) => rt.warn?.(...args),
     transports: { add: addTransport },
+    roomApprovals: {
+      setProvider(fn) { rt.listRoomApprovals = typeof fn === 'function' ? fn : undefined },
+    },
     remote: {
       publish: list => remoteMembers.publish(plugin, list),
       list: remoteMembers.list,

@@ -199,6 +199,9 @@ test('join and leave follow the membership-window history rule', async (t) => {
   assert.ok(after.seq >= bobJoin.joinedSeq)
 
   await rt.removeRoomParticipant('later', { kind: 'human', id: 'owner-2' }, actorA)
+  // Bob's Chief is still in the room: he remains the invited owner and keeps the Chief's window.
+  assert.equal(rt.roomHistory('later', actorB).some(line => line.text === 'before Bob'), true)
+  await rt.removeRoomParticipant('later', { kind: 'bot', id: 'chief-b' }, actorB)
   assert.throws(() => rt.roomHistory('later', actorB), /not a member/)
   await rt.addRoomParticipant('later', { kind: 'human', id: 'owner-2', displayName: 'Bob' }, actorA)
   const again = rt.roomHistory('later', actorB)

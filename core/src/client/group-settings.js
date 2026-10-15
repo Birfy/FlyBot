@@ -6,6 +6,7 @@ import { Card, Row, InlineText, SwitchRow } from './bot-settings.js'
 import { Segmented } from './motion.js'
 import { FolderMenu } from './folder-menu.js'
 import { t } from './i18n.js'
+import { remoteBotTitle } from '../shared/remote-label.js'
 
 export const ROOM_MODES = [
   ['admin', 'Admin leads', 'Plain messages go to the admin, who calls others with @Name.'],
@@ -32,15 +33,18 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
     return () => clearTimeout(timer)
   }, [confirming])
   const humans = (room.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
+  const remotes = (room.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
   const members = room.members.map(id => roster.byId[id]).filter(Boolean)
   const shared = humans.length > 1
   const chiefs = new Set((roster.humans ?? []).map(person => person.designatedChiefId).filter(Boolean))
   const outside = roster.bots.filter((bot) => {
+    if (bot.remote) return false
     if (room.members.includes(bot.id)) return false
     if (shared) return chiefs.has(bot.id)
     return true
   })
   const outsidePeople = (roster.humans ?? []).filter(person => !humans.some(p => p.id === person.id))
+  const outsideRemotes = (roster.remoteBots ?? []).filter(bot => !remotes.some(p => p.handle === bot.handle))
   const admin = roster.byId[room.admin]
   const mode = shownMode(room, roster)
   const modeHint = ROOM_MODES.find(([id]) => id === mode)?.[2] ?? ''
@@ -73,13 +77,13 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
       h('div', { className: 'bt-set-row bt-bs-row' },
         h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Folder'))),
         h(FolderMenu, { value: room.workDir, group: true, actions, run, onPick: workDir => update({ workDir }) }))),
-    h(Card, { title: t('Members · {count}', { count: members.length + humans.length }) },
+    h(Card, { title: t('Members · {count}', { count: members.length + humans.length + remotes.length }) },
       humans.map((person) => h('div', { key: person.id, className: 'bt-set-row bt-bs-row bt-gs-member' },
         h('span', { className: 'bt-gs-who' },
           h('span', { className: 'bt-row-title' }, person.displayName || person.id),
           h('span', { className: 'bt-tag' }, t('Human')),
           person.role === 'admin' ? h('span', { className: 'bt-tag' }, t('Admin')) : null),
-        humans.length + members.length > 2 && person.id !== roster.self?.memberId
+        humans.length + members.length + remotes.length > 2 && person.id !== roster.self?.memberId
           ? h('button', { type: 'button', className: 'bt-x', 'aria-label': t('Remove {name} from the group', { name: person.displayName || person.id }), title: t('Remove from group'), onClick: () => update({ removeParticipants: [{ kind: 'human', id: person.id }] }) }, '×')
           : null)),
       members.map((member) => {
@@ -95,6 +99,13 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
             : h('button', { type: 'button', className: 'bt-mini', onClick: () => update({ admin: member.id }) }, t('Make admin')),
           members.length > 2 ? h('button', { type: 'button', className: 'bt-x', 'aria-label': t('Remove {name} from the group', { name: member.name }), title: t('Remove from group'), onClick: () => update({ remove: [member.id] }) }, '×') : null)
       }),
+      remotes.map((person) => h('div', { key: person.handle || person.id, className: 'bt-set-row bt-bs-row bt-gs-member' },
+        h('span', { className: 'bt-gs-who' },
+          h('span', { className: 'bt-row-title' }, remoteBotTitle(person)),
+          h('span', { className: 'bt-tag' }, t('Friend\'s Bot'))),
+        members.length + remotes.length > 2
+          ? h('button', { type: 'button', className: 'bt-x', 'aria-label': t('Remove {name} from the group', { name: remoteBotTitle(person) }), title: t('Remove from group'), onClick: () => update({ removeParticipants: [{ kind: 'bot', id: person.handle || person.id, remote: true }] }) }, '×')
+          : null)),
       adding
         ? [...outsidePeople.map(person => h('button', { key: person.id, type: 'button', className: 'bt-set-row bt-bs-row bt-gs-pick', onClick: () => { setAdding(false); void update({ addParticipants: [{ kind: 'human', id: person.id, displayName: person.displayName }] }) } },
             h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, person.displayName || person.id)),
@@ -103,8 +114,11 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
             h(BotMark, { bot, size: 22 }),
             h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, bot.name)),
             h('span', { className: 'bt-set-hint' }, t('Add')))),
+          ...outsideRemotes.map(bot => h('button', { key: bot.handle, type: 'button', className: 'bt-set-row bt-bs-row bt-gs-pick', onClick: () => { setAdding(false); void update({ addParticipants: [{ kind: 'bot', remote: true, handle: bot.handle }] }) } },
+            h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, remoteBotTitle({ displayName: bot.name, ownerName: bot.homeName || bot.owner, handle: bot.handle, isChief: bot.isChief }))),
+            h('span', { className: 'bt-set-hint' }, t('Add friend\'s Bot')))),
           h('button', { key: 'cancel', type: 'button', className: 'bt-set-row bt-bs-row bt-gs-add', onClick: () => setAdding(false) }, t('Cancel'))]
-        : outside.length + outsidePeople.length > 0
+        : outside.length + outsidePeople.length + outsideRemotes.length > 0
           ? h('button', { type: 'button', className: 'bt-set-row bt-bs-row bt-gs-add', onClick: () => setAdding(true) }, h(PlusIcon), t('Add member'))
           : null,
       h('div', { className: 'bt-set-row bt-gs-note' }, h('span', { className: 'bt-set-hint' },

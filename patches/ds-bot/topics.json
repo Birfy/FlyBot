@@ -86,12 +86,15 @@
   "0012-room-membership": [
     "src/host/room-membership.js",
     "src/host/groups.js",
+    "src/shared/remote-label.js",
     "src/client/group-settings.js",
     "src/client/details-drawer.js",
     "src/client/composer.js",
+    "src/client/header.js",
     "src/client/sources.js",
     "src/client/api.js",
     "test/room-membership.test.js",
-    "test/at-menu.test.js"
+    "test/at-menu.test.js",
+    "test/remote-room.test.js"
   ]
 }

@@ -27,8 +27,10 @@ export function install(rt) {
   const roomLine = (room, self) => {
     const members = room.members.map(rt.botOf).filter(Boolean)
       .map(bot => `${bot.name}${bot.id === room.admin ? ' (admin)' : ''}${bot.id === self ? ' (you)' : ''}`)
+    const remotes = (room.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
+      .map(p => `${String(p.displayName ?? p.handle).replace(/[\u0000-\u001f\u007f-\u009f[\]"<>`]/g, '').slice(0, 60)} (${String(p.ownerName ?? p.ownerHome ?? 'friend').replace(/[\u0000-\u001f\u007f-\u009f[\]"<>`]/g, '').slice(0, 40)}'s Bot)`)
     const parts = [
-      `members: ${members.join(', ')}`,
+      `members: ${[...members, ...remotes].join(', ')}`,
       room.mode === 'admin' && room.admin ? 'plain messages go to the admin first' : 'every member replies in turn',
       room.notice ? `notice: ${room.notice.split('\n')[0].slice(0, 100)}` : '',
       room.workDir ? `members work in ${room.workDir} here` : '',

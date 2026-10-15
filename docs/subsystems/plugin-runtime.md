@@ -46,6 +46,7 @@ FlyBot's plugin API surface on top of the patched core: host hooks, client slots
 2. Slots/registry must keep the client build green (`npm run build`).
 3. Types in `flybot.d.ts` stay in sync with hooks/slots.
 4. Plugins report a host-visible failure with `flybot.warn` (Settings → Feedback / `diagnostics.jsonl`). They must not depend on `ctx.logger`: DSH may export none, and `flybot.warn` delegates to `rt.warn`.
+5. `flybot.roomApprovals.setProvider` lets a plugin (social) attach pending outbound holds to a shared-room view. It does not enable team mode.
 
 ## Tests
 

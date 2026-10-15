@@ -176,8 +176,14 @@ export function install(rt) {
       if (ep === 'create-room') {
         const members = Array.isArray(body?.members) ? body.members : []
         const fromParticipants = Array.isArray(body?.participants)
-          ? body.participants.filter(p => p?.kind === 'bot').map(p => p.id)
+          ? body.participants.filter(p => p?.kind === 'bot' && !p.remote && !p.handle).map(p => p.id)
           : []
+        const remotes = [
+          ...(Array.isArray(body?.participants) ? body.participants : []),
+        ].filter(p => p?.kind === 'bot' && (p.remote || p.handle)).map(p => p.handle || p.id)
+        if (remotes.some(handle => !rt.isPublishedRemote?.(handle))) {
+          return deny('bot/forbidden', 'Only a Chief or a Bot published to friends may join a shared room')
+        }
         const bots = [...new Set([...members, ...fromParticipants])]
         if (bots.length === 0 || bots.every(id => botOwnedBy(actor, id))) return ALLOW
         const humans = listedHumans(body)
@@ -187,6 +193,12 @@ export function install(rt) {
       }
       if (ep === 'update-room') {
         const roomId = body?.id
+        const addedRemotes = [
+          ...(Array.isArray(body?.addParticipants) ? body.addParticipants : []),
+        ].filter(p => p?.kind === 'bot' && (p.remote || p.handle)).map(p => p.handle || p.id)
+        if (addedRemotes.some(handle => !rt.isPublishedRemote?.(handle))) {
+          return deny('bot/forbidden', 'Only a Chief or a Bot published to friends may join a shared room')
+        }
         if (roomOwnedBy(actor, roomId)) {
           const ids = [...(Array.isArray(body?.members) ? body.members : []), ...(Array.isArray(body?.add) ? body.add : []), ...(Array.isArray(body?.remove) ? body.remove : [])]
           if (ids.every(id => botOwnedBy(actor, id))) return ALLOW

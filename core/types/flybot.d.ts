@@ -215,6 +215,10 @@ export interface FlyBot {
     list(): RemoteMember[]
     get(handle: string): RemoteMember | undefined
   }
+  /** Optional: pending Bot Social approvals for a shared room the invited owner is viewing. */
+  roomApprovals: {
+    setProvider(fn: ((room: { id?: string; participants?: unknown[]; sharedFrom?: unknown; viewerRole?: string }, actor?: { memberId?: string }) => unknown[]) | undefined): void
+  }
   approvals: {
     list(filter?: { status?: Approval['status'] | 'all' }): Approval[]
     get(id: string): Approval | undefined

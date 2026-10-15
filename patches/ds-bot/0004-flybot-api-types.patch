@@ -2,10 +2,10 @@ FlyBot patch 0004-flybot-api-types on Fei2411/DeepSeek-Bot@2b10c70 (ds-bot/). Ge
 
 diff --git a/types/flybot.d.ts b/types/flybot.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..7324cdf1f27b2e16f6ee151169790cf0b3ab1b70
+index 0000000000000000000000000000000000000000..a60144306cfc08e649a38f734758af9e4fb1b0cf
 --- /dev/null
 +++ b/types/flybot.d.ts
-@@ -0,0 +1,329 @@
+@@ -0,0 +1,333 @@
 +// FlyBot extension API (version 1). Implemented in src/host/hooks.js (host) and
 +// src/client/flybot-registry.js + flybot-slots.js (browser). Feature plugins declare
 +// `inject: ['flybot']` and use `ctx.flybot`.
@@ -222,6 +222,10 @@ index 0000000000000000000000000000000000000000..7324cdf1f27b2e16f6ee151169790cf0
 +    publish(list: Array<{ handle: string; name?: string; home?: string; homeName?: string; owner?: string }>): void
 +    list(): RemoteMember[]
 +    get(handle: string): RemoteMember | undefined
++  }
++  /** Optional: pending Bot Social approvals for a shared room the invited owner is viewing. */
++  roomApprovals: {
++    setProvider(fn: ((room: { id?: string; participants?: unknown[]; sharedFrom?: unknown; viewerRole?: string }, actor?: { memberId?: string }) => unknown[]) | undefined): void
 +  }
 +  approvals: {
 +    list(filter?: { status?: Approval['status'] | 'all' }): Approval[]

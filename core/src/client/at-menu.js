@@ -4,6 +4,7 @@
 // Both are sources of the shell's trigger menu; the shell's own file and session
 // rows stay beside them, because a source cannot be hidden for one Session.
 import { mentionCandidates, remoteMentionRows } from './flybot-registry.js'
+import { remoteBotTitle } from '../shared/remote-label.js'
 import { t } from './i18n.js'
 import { currentPart, relativeShort } from './text.js'
 
@@ -31,6 +32,8 @@ export function mentionRows(roster, sessionId, query = '') {
         ...here.room.members.map(id => roster.byId[id]).filter(Boolean),
         ...(here.room.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
           .map(p => ({ id: p.id, name: p.displayName || p.id, kind: 'human', role: p.role })),
+        ...(here.room.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
+          .map(p => ({ id: p.handle || p.id, name: remoteBotTitle(p), kind: 'bot', remote: p, handle: p.handle })),
       ]
     : roster.bots.filter(bot => bot.id !== here.self.id)
   const needle = query.trim().toLowerCase()
@@ -89,7 +92,8 @@ export function atSources({ roster, sessions, launched, iconFor }) {
       const team = (mentionRows(snapshot, session.sessionId, query) ?? []).map(row => ({
         name: row.bot ? row.bot.name : row.remote ? `${row.remote.name} (${row.remote.handle})` : t('Everyone'),
         ...(row.bot?.role ? { description: row.bot.role } : {}),
-        ...(row.remote ? { description: `Remote · ${row.remote.home ?? row.remote.handle}` } : {}),
+        ...(row.remote ? { description: remoteBotTitle(row.remote) } : {}),
+        ...(row.bot?.remote ? { description: remoteBotTitle(row.bot.remote === true ? row.bot : row.bot.remote) } : {}),
         ...(row.room ? { description: t('{count} members', { count: row.room.members.length }) } : {}),
         icon: iconFor(row),
         section: t('Bots'),

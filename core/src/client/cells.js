@@ -9,6 +9,7 @@ import { AnsweredCell, SettledQuestion, PendingQuestion } from './questions.js'
 import { SecretToolCell } from './secret-card.js'
 import { dateLocale, t } from './i18n.js'
 import { remoteMessageText } from './flybot-registry.js'
+import { remoteBotTitle } from '../shared/remote-label.js'
 import { fileSize } from './flybot-slots.js'
 import { call } from './api.js'
 import { failureLabel } from './diagnostics.js'
@@ -192,7 +193,12 @@ export function remoteSpeaker(source, roster) {
   const handle = source.remote.handle
   const member = (roster.remoteBots ?? []).find(bot => bot.handle === handle)
   const chat = (roster.bots ?? []).find(bot => bot.remote?.handle === handle)
-  const name = chat?.name ?? member?.name ?? source.senderName ?? handle
+  const name = remoteBotTitle({
+    displayName: chat?.name ?? member?.name ?? source.senderName ?? handle,
+    ownerName: member?.homeName || member?.owner || chat?.remote?.homeName || chat?.remote?.owner,
+    handle,
+    isChief: member?.isChief ?? chat?.remote?.isChief,
+  })
   // The sidebar's Bot record when there is one; else a stable look derived from the handle.
   const bot = chat ?? { id: `remote:${handle}`, name, color: member?.color, shape: member?.shape }
   return { bot, member, name, handle, chatId: chat ? currentPart(chat) : undefined }
