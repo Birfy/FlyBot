@@ -843,3 +843,29 @@ test('Friends\' Bots (#69): no cue when status reports no pending approvals', ()
   assert.equal(all.some(n => n.props['data-flybot'] === 'pending-badge' || n.props['data-flybot'] === 'pending-approvals'), false)
   assert.equal(plugin.PendingApprovals({ items: [] }), null)
 })
+
+test('a paused conversation explains the pause and names the console, without retrying other members', async (t) => {
+  const { ctx, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  // Like the server's owner MCP: a failed tool call carries the platform error's code and message.
+  const base = server.fetch
+  server.fetch = async (url, init) => {
+    const body = JSON.parse(init.body)
+    if (body.params?.name === 'send_as_member') {
+      server.calls.push({ url, name: body.params.name, args: body.params.arguments })
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { isError: true, content: [{ type: 'text', text: JSON.stringify({ code: 'conversation_paused', message: 'turn budget exhausted; owners can extend the conversation' }) }] } }), { status: 200 })
+    }
+    return base(url, init)
+  }
+  const social = createSocial(ctx.flybot, { server: 'https://social.test', inboxPollMs: 0 }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  // The user's direct chat: the error says the conversation is paused and what does help,
+  // and the pause is not retried with the friendship's other member Bots.
+  await assert.rejects(social.sendChat({ handle: '@coder.bob.home', text: 'hello there' }),
+    /Bot Social paused this conversation \(turn budget exhausted.*https:\/\/social\.test\/ui/)
+  assert.equal(server.calls.filter(c => c.name === 'send_as_member').length, 1)
+  // The same for a Bot's send through the transport (message_friend_bot).
+  await assert.rejects(ctx.flybot.bot.send({ from: 'a', to: '@coder.bob.home', text: 'hello from chief' }), /paused this conversation/)
+})

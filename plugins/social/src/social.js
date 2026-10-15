@@ -352,9 +352,20 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   }))
 
   // ------------------------------------------------------------ transport
+  // Bot Social pauses conversations by policy (turn budget reached, loop suspected,
+  // emergency stop) and rejects sends with `conversation_paused`. The pause belongs to
+  // the conversation, not to the member that hit it: resending or switching members
+  // cannot help, so both send paths turn the error into one that says what does.
+  const isPaused = error => error?.code === 'conversation_paused' || /conversation_paused|turn budget exhausted|loop detected|conversation paused/i.test(String(error?.message ?? error))
+  const mapSendError = (error) => {
+    if (!isPaused(error)) return error
+    const reason = String(error?.message ?? error).replace(/^Bot Social\s+\S+:\s*/, '')
+    const at = config.server ? ` at ${String(config.server).replace(/\/+$/, '')}/ui` : ''
+    return new Error(`Bot Social paused this conversation (${reason}). Resending cannot help: approve pending messages or extend the conversation in the Bot Social console${at}, or remove and re-add this friend to start a new one.`)
+  }
   disposers.push(flybot.transports.add('bot-social', {
     async send(msg) {
-      try { return await sendOut(msg) } finally { dropStaged(msg.attachments) }
+      try { return await sendOut(msg) } catch (error) { throw mapSendError(error) } finally { dropStaged(msg.attachments) }
     },
   }))
   async function sendOut(msg) {
@@ -415,6 +426,8 @@ export function createSocial(service, config = {}, { client: given, home: givenH
         }
         return ''
       } catch (error) {
+        // A pause belongs to the conversation, not to this member: another Bot cannot send either.
+        if (isPaused(error)) throw mapSendError(error)
         lastError = error
         if (!/no_relationship|no active relationship/i.test(String(error?.message ?? error))) throw error
       }
