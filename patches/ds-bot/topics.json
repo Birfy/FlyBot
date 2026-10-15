@@ -50,6 +50,8 @@
     "src/host/remote-chat.js",
     "src/host/channel.js",
     "src/host/delivery.js",
+    "src/client/characters.js",
+    "src/client/mark.js",
     "test/remote-chat.test.js",
     "test/inbound-ui.test.js"
   ],

@@ -1513,11 +1513,14 @@ function defaultShape(id) {
   value = Math.imul(value ^ value >>> 13, 3266489909);
   return DEFAULT_SHAPES[((value ^ value >>> 16) >>> 0) % DEFAULT_SHAPES.length];
 }
-var colorOf = (bot) => isColor(bot?.color) ? bot.color : bot?.id ? defaultColor(String(bot.id)) : "black";
+var remoteSeed = (handle) => `remote:${String(handle ?? "").trim().replace(/^@+/, "").toLowerCase()}`;
+var lookSeed = (bot) => typeof bot?.remote?.handle === "string" && bot.remote.handle.trim() !== "" ? remoteSeed(bot.remote.handle) : bot?.id !== void 0 ? String(bot.id) : void 0;
+var colorOf = (bot) => isColor(bot?.color) ? bot.color : lookSeed(bot) !== void 0 ? defaultColor(lookSeed(bot)) : "black";
 function lookOf(bot) {
   const avatar = bot?.avatar ?? {};
+  const seed = lookSeed(bot);
   return {
-    shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? defaultShape(String(bot.id)) : FALLBACK_SHAPE,
+    shape: hasShape(avatar.shape) ? avatar.shape : seed !== void 0 ? defaultShape(seed) : FALLBACK_SHAPE,
     image: avatar.image,
     color: colorOf(bot)
   };
@@ -4406,7 +4409,7 @@ function remoteSpeaker(source, roster) {
     handle,
     isChief: member?.isChief ?? chat?.remote?.isChief
   });
-  const bot = chat ?? { id: `remote:${handle}`, name, color: member?.color, shape: member?.shape };
+  const bot = chat ?? { id: remoteSeed(handle), name, color: member?.color, shape: member?.shape };
   return { bot, member, name, handle, chatId: chat ? currentPart(chat) : void 0 };
 }
 function RemoteMessage({ source, text, roster, actions, sessionId, msgKey, useUi }) {

@@ -7,7 +7,7 @@ import { build } from 'esbuild'
 // The inbound friend conversation's display: trace lines, the thinking row, the remote speaker.
 const { outputFiles } = await build({
   stdin: {
-    contents: "export { stripTrace, previewOf, nameMentions } from './src/client/text.js'\nexport { remoteSpeaker } from './src/client/cells.js'",
+    contents: "export { stripTrace, previewOf, nameMentions } from './src/client/text.js'\nexport { remoteSpeaker } from './src/client/cells.js'\nexport { lookOf } from './src/client/characters.js'",
     resolveDir: fileURLToPath(new URL('..', import.meta.url)),
   },
   bundle: true, format: 'cjs', platform: 'browser', write: false, logLevel: 'silent',
@@ -25,7 +25,7 @@ runInNewContext(outputFiles[0].text, {
     throw new Error(`Unexpected platform module ${name}`)
   },
 })
-const { stripTrace, previewOf, nameMentions, remoteSpeaker } = module.exports
+const { stripTrace, previewOf, nameMentions, remoteSpeaker, lookOf } = module.exports
 
 test('a reply opening with a delegation trace shows without it', () => {
   assert.equal(stripTrace('Chief → 助手\n\nHi Chief! Good to hear from you.'), 'Hi Chief! Good to hear from you.')
@@ -80,4 +80,26 @@ test("a friend Bot's handle in a preview reads as its display name (#71)", () =>
     { handle: '@a.x.home', name: '代码审查官' },
   ] }
   assert.equal(nameMentions('@b.x.home 你在?', nested), '@请找 @a.x.home 的主人 你在?')
+})
+
+test("a friend Bot's generated look is seeded by its handle: with or without its chat record, one look (#84)", () => {
+  const source = { remote: { handle: '@bot-2a758c0f.danyang.home' }, senderName: 'X' }
+  const record = { id: 'session-y', name: 'X', remote: { handle: '@bot-2a758c0f.danyang.home' } }
+  const withRecord = remoteSpeaker(source, { bots: [record], remoteBots: [] })
+  const without = remoteSpeaker(source, { bots: [], remoteBots: [] })
+  assert.equal(withRecord.bot, record)
+  const kept = lookOf(withRecord.bot)
+  const fallback = lookOf(without.bot)
+  assert.equal(kept.shape, fallback.shape)
+  assert.equal(kept.color, fallback.color)
+})
+
+test('handles equal modulo @ and case share one look; a stored look still wins', () => {
+  const at = lookOf({ id: 'a', remote: { handle: '@Bot.X.home' } })
+  const bare = lookOf({ id: 'b', remote: { handle: 'bot.x.home' } })
+  assert.equal(at.shape, bare.shape)
+  assert.equal(at.color, bare.color)
+  const owned = lookOf({ id: 'c', remote: { handle: '@bot.x.home' }, color: 'green', avatar: { shape: 'kitty' } })
+  assert.equal(owned.shape, 'kitty')
+  assert.equal(owned.color, 'green')
 })

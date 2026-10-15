@@ -85,7 +85,7 @@ index 3651a710fe5fb33dfd2f056edbbb220a43bec732..65c268530255fa7465f4485cc11a9182
        h('button', { type: 'button', className: 'bt-set-row bt-bs-row', onClick: duplicate },
          h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Duplicate')), h('span', { className: 'bt-set-hint' }, t('A copy with the same job and model, and fresh memory.'))),
 diff --git a/src/client/cells.js b/src/client/cells.js
-index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..32ef57c4c70cd12c1c795c4a140607c48f5f3875 100644
+index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..496f47999f8af691f1f8ad64258db09c3470477c 100644
 --- a/src/client/cells.js
 +++ b/src/client/cells.js
 @@ -2,12 +2,16 @@ import { createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useR
@@ -95,7 +95,8 @@ index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..32ef57c4c70cd12c1c795c4a140607c4
 -import { linkMentions, mentionTarget, dayLabel, contentText, stripHeader, isHiddenTurn, isRelayContext, relaysBefore, relayPart, commRunOf, toolName, toolArgs, reminderPrompts } from './text.js'
 +import { currentPart, linkMentions, mentionTarget, dayLabel, contentText, stripHeader, stripTrace, isHiddenTurn, isRelayContext, relaysBefore, relayPart, commRunOf, toolName, toolArgs, reminderPrompts } from './text.js'
  import { SmileIcon, ReplyIcon, DotsIcon, CheckIcon, DownloadIcon, CopyIcon, MemoryIcon } from './icons.js'
- import { colorOf, toolState, BotMark, RoomAvatar } from './mark.js'
+-import { colorOf, toolState, BotMark, RoomAvatar } from './mark.js'
++import { colorOf, remoteSeed, toolState, BotMark, RoomAvatar } from './mark.js'
  import { AnsweredCell, SettledQuestion, PendingQuestion } from './questions.js'
  import { SecretToolCell } from './secret-card.js'
  import { dateLocale, t } from './i18n.js'
@@ -127,7 +128,7 @@ index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..32ef57c4c70cd12c1c795c4a140607c4
    const running = data.status === 'running'
    // A streaming reply stands in for the activity row.
    useLiveNote(actions, sessionId, `text:${node.key ?? data.seq}`, !hidden && running && texts.length > 0 ? { text: true } : null)
-@@ -180,6 +186,71 @@ function GroupMessage({ bot, text, room, roster, actions, msgKey, useUi }) {
+@@ -180,6 +186,72 @@ function GroupMessage({ bot, text, room, roster, actions, msgKey, useUi }) {
      h(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room?.id, msgKey, useUi, lead }))
  }
  
@@ -144,8 +145,9 @@ index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..32ef57c4c70cd12c1c795c4a140607c4
 +    handle,
 +    isChief: member?.isChief ?? chat?.remote?.isChief,
 +  })
-+  // The sidebar's Bot record when there is one; else a stable look derived from the handle.
-+  const bot = chat ?? { id: `remote:${handle}`, name, color: member?.color, shape: member?.shape }
++  // The sidebar's Bot record when there is one; else a synthetic one whose id seeds the
++  // same handle-derived look the record would get (characters.js remoteSeed).
++  const bot = chat ?? { id: remoteSeed(handle), name, color: member?.color, shape: member?.shape }
 +  return { bot, member, name, handle, chatId: chat ? currentPart(chat) : undefined }
 +}
 +
@@ -199,7 +201,7 @@ index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..32ef57c4c70cd12c1c795c4a140607c4
  // A centered event line that names a group chat and opens it.
  function GroupEvent({ prefix, room, name, roster, actions }) {
    return h('div', { className: 'bt-event' },
-@@ -331,6 +402,11 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
+@@ -331,6 +403,11 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
      : body
  
    function triggerBody() {
@@ -211,7 +213,7 @@ index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..32ef57c4c70cd12c1c795c4a140607c4
      if (source.kind === 'bot') {
        // A part opens with its handoff package, so the earlier parts go right above it.
        if (source.handoff === true) return roster.roomsById[sessionId] ? null : h(EarlierParts, { sessionId, roster, actions })
-@@ -571,7 +647,10 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
+@@ -571,7 +648,10 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
      replies.map((reply, index) => {
        const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? 'gray' }
        if (reply.kind === 'user') {
