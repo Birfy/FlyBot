@@ -21,7 +21,10 @@ const team = () => ({
 
 async function start(config = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-flybot-'))
-  writeFileSync(join(home, 'state.json'), JSON.stringify(team()))
+  const state = team()
+  Object.assign(state.rooms, config.rooms ?? {})
+  const { rooms, ...applyConfig } = config
+  writeFileSync(join(home, 'state.json'), JSON.stringify(state))
   const ctx = fakeContext()
   const agents = new Map()
   const agentOf = (id) => {
@@ -48,7 +51,7 @@ async function start(config = {}) {
     if (options.path.endsWith('bot')) route = options
     return register(options)
   }
-  apply(ctx, { home, ...config })
+  apply(ctx, { home, ...applyConfig })
   const tool = (name, args, sessionId) => ctx.registeredTools.get(name).execute(args, { agent: { id: sessionId } })
   const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   await tool('list_bots', {}, 'a')
@@ -57,7 +60,7 @@ async function start(config = {}) {
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   }
   const received = id => (agents.get(id)?.calls ?? []).map(([, m]) => m.content.map(b => b.text).join('\n'))
-  return { ctx, fb: ctx.flybot, tool, call, home, stop, received }
+  return { ctx, fb: ctx.flybot, tool, call, home, stop, received, agents }
 }
 
 test('apply provides the flybot service with the agreed surface', async (t) => {
@@ -354,6 +357,48 @@ test('mentions (#13): a friend\'s Bot named with @ gets the message once; code, 
   ctx.emitArgs('session/event', { id: 'a' }, { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '@helper.friend.home 你好' }] } })
   await new Promise(resolve => setTimeout(resolve, 30))
   assert.equal(out.length, 1)
+})
+
+test('mentions in a group (#80, #81): the room gets a receipt — sent points to the friend\'s chat, a hold or failure says why', async (t) => {
+  const { ctx, fb, stop, agents } = await start({
+    rooms: { 'room-1': { id: 'room-1', name: 'Group', members: ['a', 'b'], admin: 'a', mode: 'admin', notice: '', createdAt: 1, createdBy: null } },
+  })
+  t.after(stop)
+  const out = []
+  fb.transports.add('bot-social', { send: async msg => { out.push(msg); return { exchangeId: `r${out.length}` } } })
+  fb.scope('social').remote.publish([{ handle: '@helper.friend.home', name: '助手', home: '@friend.home' }])
+  let seq = 0
+  const say = async text => {
+    ctx.emitArgs('session/event', { id: 'room-1' }, { type: 'user/message', seq: ++seq, data: { source: { kind: 'user' }, content: [{ type: 'text', text }] } })
+    await delay(30)
+  }
+  const receipts = () => (agents.get('room-1')?.calls ?? []).map(([, m]) => m.content.map(b => b.text).join('\n'))
+  await say('@helper.friend.home 你好')
+  assert.equal(out.length, 1)
+  // One receipt, where the reply lands (#80): a friend's Bot's answer never re-enters the group.
+  assert.equal(receipts().length, 1)
+  assert.match(receipts()[0], /助手: sent — its replies appear in its own chat under Friends' Bots, not in this group/)
+  const posted = agents.get('room-1').calls[0][1]
+  assert.equal(posted.source.kind, 'bot')
+  assert.equal(posted.source.role, 'mention')
+  assert.equal(posted.source.form, 'relay')
+  assert.equal(posted.source.roomId, 'room-1')
+  // A plain message gets no receipt.
+  await say('no mentions here')
+  assert.equal(receipts().length, 1)
+  // A hold (#81) says what is waiting and where.
+  fb.bot.send.use({ name: 'deny-some', handle: m => (m.target?.remote === true && /no/.test(m.text) ? { action: 'deny', reason: 'no friendship' } : undefined) })
+  fb.bot.send.use({ name: 'hold-remote', handle: m => (m.target?.remote === true ? { action: 'hold', reason: 'check with the user' } : undefined) })
+  await say('@helper.friend.home say no')
+  assert.equal(out.length, 1)
+  assert.match(receipts()[1], /助手: not sent — no friendship/)
+  await say('@helper.friend.home say yes')
+  assert.equal(out.length, 1)
+  assert.match(receipts()[2], /助手: held for your approval — check with the user/)
+  // A mention from a Bot's own chat stays as it was: no receipt outside a group.
+  ctx.emitArgs('session/event', { id: 'b' }, { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '@helper.friend.home hi' }] } })
+  await delay(30)
+  assert.equal((agents.get('b')?.calls ?? []).length, 0)
 })
 
 test('host API (#18): reserved names and the shared scope throw, listeners get copies, changes carry an epoch', async (t) => {

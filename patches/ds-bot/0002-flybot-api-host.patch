@@ -59,10 +59,10 @@ index 9cdb56ac60dda8bb9f364eb0791908a867412210..6f275b131462facfa0e83d05128f1a88
  export function createRuntime(ctx, config = {}) {
 diff --git a/src/host/hooks.js b/src/host/hooks.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..1e9a0f55dc6fdbdd83ca57bb7c0d9e3460cd134f
+index 0000000000000000000000000000000000000000..04edf52487be21acb00dd0e4e866959078488f92
 --- /dev/null
 +++ b/src/host/hooks.js
-@@ -0,0 +1,723 @@
+@@ -0,0 +1,753 @@
 +// FlyBot hooks: the `flybot` service feature plugins (plugins/social, plugins/tree)
 +// build on. Installed after resume.js, so its gate around rt.deliver is the outermost
 +// wrapper: every Bot-to-Bot message, including message_bot, stop_bot, and replies,
@@ -75,7 +75,10 @@ index 0000000000000000000000000000000000000000..1e9a0f55dc6fdbdd83ca57bb7c0d9e34
 +// Types: ds-bot/types/flybot.d.ts. Plugins call flybot.scope('<plugin>') to get the
 +// same API with their own field namespace; the unscoped API uses namespace 'shared'.
 +import { randomUUID } from 'node:crypto'
++import { createUserMessage } from '@deepseek-ai/dsh-llm'
 +import { mentionSpans } from '../shared/mentions.js'
++import { cleanName } from './delivery.js'
++import { SOURCE_KIND } from './constants.js'
 +import { defineTool } from '@deepseek-ai/dsh-tools'
 +
 +export const FLYBOT_API_VERSION = 1
@@ -668,7 +671,34 @@ index 0000000000000000000000000000000000000000..1e9a0f55dc6fdbdd83ca57bb7c0d9e34
 +        results.push({ handle, action: 'deny', reason: error?.message ?? String(error) })
 +      }
 +    }
++    await mentionReceipt(sessionId, room, results, known)
 +    return results
++  }
++
++  // A group hears what each @ of a friend's Bot did (#80, #81): the answer never
++  // re-enters the group (it lands in the friend's Bot's own chat), and a denied or
++  // failed send was visible only in this log. One muted line in the room, posted as a
++  // relay role the room's round machinery does not answer (groups.js `opens`).
++  async function mentionReceipt(sessionId, room, results, known) {
++    if (room === undefined || results.length === 0) return
++    const line = value => String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240)
++    const lines = results.map(({ handle, action, reason }) => {
++      const name = cleanName(known.get(handle)?.name, handle)
++      const why = line(reason)
++      if (action === 'deny') return `${name}: not sent${why ? ` — ${why}` : ''}`
++      if (action === 'hold') return `${name}: held for your approval${why ? ` — ${why}` : ''}`
++      return `${name}: sent — its replies appear in its own chat under Friends' Bots, not in this group`
++    })
++    try {
++      const agent = await rt.resolveAgent(sessionId)
++      agent.followup(createUserMessage({
++        content: [{ type: 'text', text: lines.join('\n') }],
++        source: { kind: SOURCE_KIND, form: 'relay', role: 'mention', roomId: room.id, exchangeId: randomUUID(), hop: 0 },
++      }))
++      await ctx.sessions.flush(agent.session)
++    } catch (error) {
++      warn('flybot: mention receipt for %s failed: %s', sessionId, error)
++    }
 +  }
 +  const textOfContent = content => (Array.isArray(content) ? content.map(block => (block?.type === 'text' ? block.text : '')).join('\n') : String(content ?? ''))
 +  ctx.on('session/event', (session, event) => {
@@ -1474,10 +1504,10 @@ index 62fed26b0f4449349b2a06e219c18324109c7993..58fcd80ea8ad0ec119377f728853a977
        const dispose = execute()
 diff --git a/test/flybot.test.js b/test/flybot.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..b9879d6a88743ca03df3f195e222ec348560803d
+index 0000000000000000000000000000000000000000..9cf72616e93964014df05287fa3a5bc53059b7f2
 --- /dev/null
 +++ b/test/flybot.test.js
-@@ -0,0 +1,478 @@
+@@ -0,0 +1,523 @@
 +import assert from 'node:assert/strict'
 +import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 +import { tmpdir } from 'node:os'
@@ -1501,7 +1531,10 @@ index 0000000000000000000000000000000000000000..b9879d6a88743ca03df3f195e222ec34
 +
 +async function start(config = {}) {
 +  const home = mkdtempSync(join(tmpdir(), 'ds-bot-flybot-'))
-+  writeFileSync(join(home, 'state.json'), JSON.stringify(team()))
++  const state = team()
++  Object.assign(state.rooms, config.rooms ?? {})
++  const { rooms, ...applyConfig } = config
++  writeFileSync(join(home, 'state.json'), JSON.stringify(state))
 +  const ctx = fakeContext()
 +  const agents = new Map()
 +  const agentOf = (id) => {
@@ -1528,7 +1561,7 @@ index 0000000000000000000000000000000000000000..b9879d6a88743ca03df3f195e222ec34
 +    if (options.path.endsWith('bot')) route = options
 +    return register(options)
 +  }
-+  apply(ctx, { home, ...config })
++  apply(ctx, { home, ...applyConfig })
 +  const tool = (name, args, sessionId) => ctx.registeredTools.get(name).execute(args, { agent: { id: sessionId } })
 +  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
 +  await tool('list_bots', {}, 'a')
@@ -1537,7 +1570,7 @@ index 0000000000000000000000000000000000000000..b9879d6a88743ca03df3f195e222ec34
 +    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
 +  }
 +  const received = id => (agents.get(id)?.calls ?? []).map(([, m]) => m.content.map(b => b.text).join('\n'))
-+  return { ctx, fb: ctx.flybot, tool, call, home, stop, received }
++  return { ctx, fb: ctx.flybot, tool, call, home, stop, received, agents }
 +}
 +
 +test('apply provides the flybot service with the agreed surface', async (t) => {
@@ -1834,6 +1867,48 @@ index 0000000000000000000000000000000000000000..b9879d6a88743ca03df3f195e222ec34
 +  ctx.emitArgs('session/event', { id: 'a' }, { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '@helper.friend.home 你好' }] } })
 +  await new Promise(resolve => setTimeout(resolve, 30))
 +  assert.equal(out.length, 1)
++})
++
++test('mentions in a group (#80, #81): the room gets a receipt — sent points to the friend\'s chat, a hold or failure says why', async (t) => {
++  const { ctx, fb, stop, agents } = await start({
++    rooms: { 'room-1': { id: 'room-1', name: 'Group', members: ['a', 'b'], admin: 'a', mode: 'admin', notice: '', createdAt: 1, createdBy: null } },
++  })
++  t.after(stop)
++  const out = []
++  fb.transports.add('bot-social', { send: async msg => { out.push(msg); return { exchangeId: `r${out.length}` } } })
++  fb.scope('social').remote.publish([{ handle: '@helper.friend.home', name: '助手', home: '@friend.home' }])
++  let seq = 0
++  const say = async text => {
++    ctx.emitArgs('session/event', { id: 'room-1' }, { type: 'user/message', seq: ++seq, data: { source: { kind: 'user' }, content: [{ type: 'text', text }] } })
++    await delay(30)
++  }
++  const receipts = () => (agents.get('room-1')?.calls ?? []).map(([, m]) => m.content.map(b => b.text).join('\n'))
++  await say('@helper.friend.home 你好')
++  assert.equal(out.length, 1)
++  // One receipt, where the reply lands (#80): a friend's Bot's answer never re-enters the group.
++  assert.equal(receipts().length, 1)
++  assert.match(receipts()[0], /助手: sent — its replies appear in its own chat under Friends' Bots, not in this group/)
++  const posted = agents.get('room-1').calls[0][1]
++  assert.equal(posted.source.kind, 'bot')
++  assert.equal(posted.source.role, 'mention')
++  assert.equal(posted.source.form, 'relay')
++  assert.equal(posted.source.roomId, 'room-1')
++  // A plain message gets no receipt.
++  await say('no mentions here')
++  assert.equal(receipts().length, 1)
++  // A hold (#81) says what is waiting and where.
++  fb.bot.send.use({ name: 'deny-some', handle: m => (m.target?.remote === true && /no/.test(m.text) ? { action: 'deny', reason: 'no friendship' } : undefined) })
++  fb.bot.send.use({ name: 'hold-remote', handle: m => (m.target?.remote === true ? { action: 'hold', reason: 'check with the user' } : undefined) })
++  await say('@helper.friend.home say no')
++  assert.equal(out.length, 1)
++  assert.match(receipts()[1], /助手: not sent — no friendship/)
++  await say('@helper.friend.home say yes')
++  assert.equal(out.length, 1)
++  assert.match(receipts()[2], /助手: held for your approval — check with the user/)
++  // A mention from a Bot's own chat stays as it was: no receipt outside a group.
++  ctx.emitArgs('session/event', { id: 'b' }, { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '@helper.friend.home hi' }] } })
++  await delay(30)
++  assert.equal((agents.get('b')?.calls ?? []).length, 0)
 +})
 +
 +test('host API (#18): reserved names and the shared scope throw, listeners get copies, changes carry an epoch', async (t) => {
