@@ -10,6 +10,7 @@ All notable changes to FlyBot (earlier: DS Bot) are listed here. The format foll
 
 ### Fixed
 
+- Peer-published Bot labels (`name`, `homeName`, `owner`) are sanitized at `cleanRemote`: `@` and control characters/newlines are stripped, then the 60-character cap still applies, so a display name cannot impersonate another member's handle. ([#75](https://github.com/ThinkFlowLab/FlyBot/issues/75))
 - A chat with a friend's Bot that Bot Social has paused (turn budget reached, loop suspicion, emergency stop) now says so and points at the Bot Social console, instead of failing with a bare "Not sent: …" card. A paused conversation is no longer retried with the friendship's other Bots. ([#72](https://github.com/ThinkFlowLab/FlyBot/issues/72))
 
 ## [0.1.0] - 2026-10-14
