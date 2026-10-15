@@ -4540,6 +4540,7 @@ function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnClock, us
     if (source.kind === "bot") {
       if (source.handoff === true) return roster.roomsById[sessionId] ? null : (0, import_react7.createElement)(EarlierParts, { sessionId, roster, actions });
       if (source.role === "kickoff" || source.role === "room") return null;
+      if (source.role === "mention") return (0, import_react7.createElement)("div", { className: "bt-event" }, (0, import_react7.createElement)("span", null, contentText(data.content)));
       if (source.role === "secret" || deferred) return null;
       if (source.role === "post") {
         if (source.failed !== void 0 || source.resumed === true || source.stopped === true) return null;

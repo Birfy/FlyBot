@@ -68,7 +68,7 @@ index 3651a710fe5fb33dfd2f056edbbb220a43bec732..65c268530255fa7465f4485cc11a9182
        h('button', { type: 'button', className: 'bt-set-row bt-bs-row', onClick: duplicate },
          h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Duplicate')), h('span', { className: 'bt-set-hint' }, t('A copy with the same job and model, and fresh memory.'))),
 diff --git a/src/client/cells.js b/src/client/cells.js
-index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..b8f81f0a208bcdeb452135517c230e20cd3cf606 100644
+index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..d4808dc9e822e62ef1e28c039f7e80519a11056a 100644
 --- a/src/client/cells.js
 +++ b/src/client/cells.js
 @@ -2,12 +2,15 @@ import { createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useR
@@ -176,7 +176,7 @@ index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..b8f81f0a208bcdeb452135517c230e20
  // A centered event line that names a group chat and opens it.
  function GroupEvent({ prefix, room, name, roster, actions }) {
    return h('div', { className: 'bt-event' },
-@@ -331,6 +396,11 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
+@@ -331,11 +396,19 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
      : body
  
    function triggerBody() {
@@ -188,6 +188,14 @@ index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..b8f81f0a208bcdeb452135517c230e20
      if (source.kind === 'bot') {
        // A part opens with its handoff package, so the earlier parts go right above it.
        if (source.handoff === true) return roster.roomsById[sessionId] ? null : h(EarlierParts, { sessionId, roster, actions })
+       // Group turns belong to the group chat; the member's own chat stays one-to-one.
+       if (source.role === 'kickoff' || source.role === 'room') return null
++      // The host's receipt for the user's @ of a friend's Bot in this group (#80):
++      // where the message went, or why it did not leave.
++      if (source.role === 'mention') return h('div', { className: 'bt-event' }, h('span', null, contentText(data.content)))
+       // The secret card itself shows what the user did; the note to the Bot stays out.
+       if (source.role === 'secret' || deferred) return null
+       if (source.role === 'post') {
 diff --git a/src/client/context-menu.js b/src/client/context-menu.js
 index 48b001892b5646e43b0aa01c8b98ce31d9def699..2fc397c61326b38cf7110b9704757c801bc0b079 100644
 --- a/src/client/context-menu.js

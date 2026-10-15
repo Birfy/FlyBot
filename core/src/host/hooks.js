@@ -10,7 +10,10 @@
 // Types: ds-bot/types/flybot.d.ts. Plugins call flybot.scope('<plugin>') to get the
 // same API with their own field namespace; the unscoped API uses namespace 'shared'.
 import { randomUUID } from 'node:crypto'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { mentionSpans } from '../shared/mentions.js'
+import { cleanName } from './delivery.js'
+import { SOURCE_KIND } from './constants.js'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
 export const FLYBOT_API_VERSION = 1
@@ -575,7 +578,34 @@ export function install(rt) {
         results.push({ handle, action: 'deny', reason: error?.message ?? String(error) })
       }
     }
+    await mentionReceipt(sessionId, room, results, known)
     return results
+  }
+
+  // A group hears what each @ of a friend's Bot did (#80, #81): the answer never
+  // re-enters the group (it lands in the friend's Bot's own chat), and a denied or
+  // failed send was visible only in this log. One muted line in the room, posted as a
+  // relay role the room's round machinery does not answer (groups.js `opens`).
+  async function mentionReceipt(sessionId, room, results, known) {
+    if (room === undefined || results.length === 0) return
+    const line = value => String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240)
+    const lines = results.map(({ handle, action, reason }) => {
+      const name = cleanName(known.get(handle)?.name, handle)
+      const why = line(reason)
+      if (action === 'deny') return `${name}: not sent${why ? ` — ${why}` : ''}`
+      if (action === 'hold') return `${name}: held for your approval${why ? ` — ${why}` : ''}`
+      return `${name}: sent — its replies appear in its own chat under Friends' Bots, not in this group`
+    })
+    try {
+      const agent = await rt.resolveAgent(sessionId)
+      agent.followup(createUserMessage({
+        content: [{ type: 'text', text: lines.join('\n') }],
+        source: { kind: SOURCE_KIND, form: 'relay', role: 'mention', roomId: room.id, exchangeId: randomUUID(), hop: 0 },
+      }))
+      await ctx.sessions.flush(agent.session)
+    } catch (error) {
+      warn('flybot: mention receipt for %s failed: %s', sessionId, error)
+    }
   }
   const textOfContent = content => (Array.isArray(content) ? content.map(block => (block?.type === 'text' ? block.text : '')).join('\n') : String(content ?? ''))
   ctx.on('session/event', (session, event) => {

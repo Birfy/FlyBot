@@ -46,6 +46,7 @@ FlyBot's plugin API surface on top of the patched core: host hooks, client slots
 2. Slots/registry must keep the client build green (`npm run build`).
 3. Types in `flybot.d.ts` stay in sync with hooks/slots.
 4. Plugins report a host-visible failure with `flybot.warn` (Settings → Feedback / `diagnostics.jsonl`). They must not depend on `ctx.logger`: DSH may export none, and `flybot.warn` delegates to `rt.warn`.
+5. A user's @ of a friend's Bot in a group gets a receipt line in that group (`hooks.js` `mentionReceipt`, relay role `mention`): where the reply lands, or why the send was denied, held, or failed. The receipt's role stays outside the room round trigger (`groups.js` `opens`), so it never opens a round; peer names go through `cleanName`.
 
 ## Tests
 
