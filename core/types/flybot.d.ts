@@ -184,6 +184,8 @@ export interface FlyBot {
   /** True while another dsh holds the team: no polling, no writes. */
   readOnly(): boolean
   on: On
+  /** Writes a warning to the host diagnostics log (Settings → Feedback). */
+  warn(template: string, ...args: unknown[]): void
   fields: BotFields
   bot: {
     get(id: BotId): BotView | undefined

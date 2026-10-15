@@ -45,6 +45,7 @@ FlyBot's plugin API surface on top of the patched core: host hooks, client slots
 1. Hooks are the only sanctioned extension surface; never monkey-patch DSH.
 2. Slots/registry must keep the client build green (`npm run build`).
 3. Types in `flybot.d.ts` stay in sync with hooks/slots.
+4. Plugins report a host-visible failure with `flybot.warn` (Settings → Feedback / `diagnostics.jsonl`). They must not depend on `ctx.logger`: DSH may export none, and `flybot.warn` delegates to `rt.warn`.
 
 ## Tests
 

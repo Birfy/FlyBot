@@ -13,11 +13,19 @@ window.__ModuleLoader__.load({
 
     // Errors in English. ds-bot's api.js may localize transport errors ("HTTP 404" becomes
     // Chinese in a zh UI), so the panel words them from the error code instead.
+    const isSocialMissing = (e) => {
+      const code = String(e?.code ?? '')
+      const message = String(e?.message ?? e ?? '')
+      return code === 'bot/not-found' || /Unknown FlyBot endpoint social\//i.test(message)
+    }
     const errorText = (e) => {
       const code = String(e?.code ?? '')
       const http = code.match(/^HTTP_(\d+)$/)
       if (http) return `The FlyBot host did not answer (HTTP ${http[1]}). Reload the page; if this keeps happening, restart FlyBot web.`
       if (code === 'NETWORK') return 'Could not reach FlyBot. Check that it is still running.'
+      if (isSocialMissing(e)) {
+        return 'Social is not running: the plugin did not start. If a home handle was taken, change displayName in the flybot-social config and restart. Otherwise see Settings → Feedback.'
+      }
       return String(e?.message ?? e)
     }
 
@@ -135,6 +143,7 @@ window.__ModuleLoader__.load({
       const homes = data?.homes ?? []
       const count = homes.reduce((n, entry) => n + entry.bots.length, 0)
       const chats = remoteChats ?? []
+      const unavailable = error.startsWith('Social is not running:')
       const toggleAuto = async (home, on) => {
         setSaving(home)
         try { const r = await call('social/auto-accept', { home, on }); setAuto(value => ({ ...value, [home]: r.autoAccept })) } catch (e) { setError(errorText(e)) } finally { setSaving('') }
@@ -153,11 +162,11 @@ window.__ModuleLoader__.load({
             h('span', { className: 'fs-title' }, 'Friends\' Bots'),
             data ? h('span', { className: 'fs-count', title: `${count} ${count === 1 ? 'Bot' : 'Bots'}` }, String(count)) : null,
             pending.length ? h('span', { className: 'fs-tag fs-pending-tag', 'data-flybot': 'pending-badge', title: `${pending.length} outbound ${pending.length === 1 ? 'reply' : 'replies'} waiting for your approval` }, `${pending.length} to approve`) : null),
-          h('button', { type: 'button', className: 'fs-icon', 'aria-expanded': adding, title: 'Add a friend', onClick: () => { setAdding(!adding); setOpen(true) } }, adding ? 'Done' : '+ Add')),
+          unavailable ? null : h('button', { type: 'button', className: 'fs-icon', 'aria-expanded': adding, title: 'Add a friend', onClick: () => { setAdding(!adding); setOpen(true) } }, adding ? 'Done' : '+ Add')),
         open ? h('div', { className: 'fs-body' },
           h(PendingApprovals, { items: pending, busy: saving, onDecide: decide }),
-          adding ? h(AddFriend, { onChange: () => load().then(loadSettings) }) : null,
-          error ? h('div', { className: 'fs-status', 'data-tone': 'error', style: { padding: '4px 10px' } }, error) : null,
+          adding && !unavailable ? h(AddFriend, { onChange: () => load().then(loadSettings) }) : null,
+          unavailable ? h('div', { className: 'fs-empty', 'data-flybot': 'social-unavailable' }, error) : error ? h('div', { className: 'fs-status', 'data-tone': 'error', style: { padding: '4px 10px' } }, error) : null,
           data === null && !error ? h('div', { className: 'fs-hint' }, 'Loading…') : null,
           homes.map(entry => {
             const shut = closed[entry.home] === true
