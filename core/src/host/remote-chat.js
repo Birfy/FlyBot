@@ -167,6 +167,7 @@ export function install(rt) {
       source: { kind: SOURCE_KIND, form: REMOTE_FORM, role: 'remote', exchangeId: randomUUID(), senderName: shownName, hop: 0, remote: { handle, ...(home ? { home } : {}) }, text: String(text) },
     }))
     await ctx.sessions.flush(agent.session)
+    await rt.ingestRemoteRoomLine?.({ handle, text, name: shownName }).catch(error => warn('ds-bot: room ingest for %s failed: %s', handle, error))
     return id
   }
 

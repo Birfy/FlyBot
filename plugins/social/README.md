@@ -10,8 +10,10 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
   Friends' Bots shows **Social is not running:** with the reason — including the taken
   handle and to change `displayName` in the flybot-social config — instead of the host's
   `Unknown FlyBot endpoint` message. The same failure is written to Settings → Feedback.
-- **Members**: each local Bot becomes `@<bot>.<home>` (`add_home_member`), stored as field
-  `social.member`; new Bots join on `bot.created`, deleted ones are revoked on `bot.removed`.
+- **Members**: each *published* local Bot becomes `@<bot>.<home>` (`add_home_member`), stored as field
+  `social.member`; a Bot is published by its owner (the Chief is by default, #51), registers when published
+  (`bot.published`), and deleted ones are revoked on `bot.removed`. Unpublished Bots get no identity, are not polled
+  and cannot sign sends or take invites; unpublishing keeps the identity unused instead of revoking it.
 - **Remote roster**: `list_remote_bots` → friends' Bots grouped by home; sidebar section
   `flybot.sidebar.section#social` with a remote badge, `@` rows via
   `flybot.composer.mention#social`. Remote Bots never enter `bot.list()`.
@@ -22,7 +24,7 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
   the `bot-social` transport sends it signed as the member (`send_as_member`).
 - **Inbound**: each member's inbox is polled; messages reach that Bot's chat as untrusted text (no owner approval).
 - **Outbound hold (Bot Social)**: a draft the server keeps as `pending_approval` is listed on `social/status` (`pendingApprovals`, `approvals`) and in **Friends' Bots** (badge + Approve / Reject). The owner's click calls `decide_approval` (confirm code used in the same step). This is separate from FlyBot's local approval card. Auto-accept on a friendship skips the hold for later messages.
-- **Tools** (every local Bot): `list_friend_bots`, `message_friend_bot`.
+- **Tools** (every local Bot; an unpublished Bot's send is refused): `list_friend_bots`, `message_friend_bot`.
 - **Legacy**: with `token` + `botId` and no home, the per-bot identity path
   (`start_conversation` / `send_message`) still works.
 

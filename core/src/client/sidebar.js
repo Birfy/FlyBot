@@ -11,6 +11,7 @@ import { reducedMotion } from './activity-row.js'
 import { Shimmer, workPhrase } from './cells.js'
 import { springEasing, SPRING_SHAPE } from './motion.js'
 import { hostText, t } from './i18n.js'
+import { remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
 import { showsDshRow } from './dsh-offer.js'
 
 // -------------------------------------------------------------------------
@@ -62,14 +63,15 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     actions.openMenu({ kind: 'bot', id, x: event.clientX, y: event.clientY })
   }
   const pinned = bot.pinned === true && !tile
-  const label = [bot.name, main ? t('Main Bot') : '', pinned ? t('Pinned') : '', running || away ? t('Working') : '', approval ? t('Waiting for your approval') : alert ? t('Waiting for your answer') : '', unread ? t('Unread activity') : ''].filter(Boolean).join(', ')
+  const shown = bot.remote ? remoteBotTitle({ displayName: bot.name, ownerName: bot.remote.homeName || bot.remote.owner, handle: bot.remote.handle, isChief: bot.remote.isChief }) : bot.name
+  const label = [shown, main ? t('Main Bot') : '', pinned ? t('Pinned') : '', running || away ? t('Working') : '', approval ? t('Waiting for your approval') : alert ? t('Waiting for your answer') : '', unread ? t('Unread activity') : ''].filter(Boolean).join(', ')
   if (tile && wide) {
     return h('div', { className: 'bt-tile-wrap' }, h('button', {
       type: 'button', className: 'bt-tile', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
       'data-bot-id': id, title: preview || bot.name, onClick: () => actions.openSession(id), onContextMenu,
     },
     h(BotAvatar, { bot, size: 60, state, main: true }),
-    h('span', { className: 'bt-tile-name' }, bot.name),
+    h('span', { className: 'bt-tile-name' }, shown),
     bot.role ? h('span', { className: 'bt-chip' }, bot.role) : null))
   }
   return h('button', {
@@ -79,7 +81,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   h(BotAvatar, { bot, size: 36, state, main }),
   pinned && !wide ? h(PinMark) : null,
   wide ? h('span', { className: 'bt-row-body' },
-    h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, bot.name), bot.remote ? h(RemoteMark, { remote: bot.remote }) : null, pinned ? h(PinMark) : null),
+    h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, shown), bot.remote ? h(RemoteMark, { remote: bot.remote }) : null, pinned ? h(PinMark) : null),
     awayLine ? h('span', { className: 'bt-row-preview' }, awayLine) : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
   wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null)
 }
@@ -104,7 +106,9 @@ function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSess
   const workingLine = first ? workLine(first.name, members[0].tool, members.length - 1) : null
   if (room.hidden && !active) return null
   const pinned = room.pinned === true
-  const label = [room.name, pinned ? t('Pinned') : '', members.length > 0 ? t('Working') : '', approval ? t('Waiting for your approval') : ''].filter(Boolean).join(', ')
+  const title = room.displayName || (room.sharedFrom ? sharedRoomTitle(room.sharedFrom.inviterName) : room.name)
+  const waiting = approval || (room.pendingCount ?? 0) > 0
+  const label = [title, pinned ? t('Pinned') : '', members.length > 0 ? t('Working') : '', waiting ? t('Waiting for your approval') : ''].filter(Boolean).join(', ')
   return h('button', {
     type: 'button', className: 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
     'data-room-id': id, onClick: () => actions.openSession(id),
@@ -113,9 +117,9 @@ function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSess
   h(RoomAvatar, { room, roster, size: 36 }),
   pinned && !wide ? h(PinMark) : null,
   wide ? h('span', { className: 'bt-row-body' },
-    h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, room.name), pinned ? h(PinMark) : null),
+    h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, title), room.sharedFrom ? h('span', { className: 'bt-tag' }, t('Shared')) : null, pinned ? h(PinMark) : null),
     workingLine ? h('span', { className: 'bt-row-preview' }, workingLine) : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
-  wide && approval && !active ? h('span', { className: 'bt-unread bt-unread-wait', 'aria-hidden': true })
+  wide && waiting && !active ? h('span', { className: 'bt-unread bt-unread-wait', 'aria-hidden': true })
     : wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null)
 }
 

@@ -5,8 +5,16 @@
 // behavior is untouched. This is not team mode: it is the access foundation the team
 // gates build on (docs/subsystems/team.md).
 //
+// Room membership (#50) adds one exception: a signed-in human may reach a room they
+// currently belong to (history, send, progress, participant changes they may make),
+// even when its Chiefs belong to more than one owner. Specialists and private 1:1
+// chats stay owner-scoped. Team mode stays disabled.
+//
 // Install order matters: right after member-auth, so rt.authzEnforced sees the same
 // state.authSessions the sign-in surface writes, and before any module it gates.
+
+import { currentParticipants, roomVisibleTo } from './room-membership.js'
+import { isPublished } from './reach.js'
 
 // Endpoints a request without an actor may still reach. auth-invite keeps the
 // bootstrap rule in member-auth (first invite signs the installing human in).
@@ -32,11 +40,11 @@ const BOT_TARGETED = new Set([
   'memory-view', 'memory-ask', 'memory-forget',
   'schedules', 'schedule-create', 'schedule-delete',
   'agent-session', 'agent-adopt', 'agent-archive', 'agent-rename', 'remove-agent',
-  'stop-member-work', 'set-main',
+  'stop-member-work', 'set-main', 'set-published',
 ])
 
 // Endpoints whose body names a room.
-const ROOM_TARGETED = new Set(['update-room', 'delete-room', 'room-progress', 'create-room'])
+const ROOM_TARGETED = new Set(['update-room', 'delete-room', 'room-progress', 'create-room', 'room-history', 'room-post'])
 
 // Endpoints whose body names a Session.
 const SESSION_TARGETED = new Set(['earlier', 'send', 'answer-question', 'dismiss-question', 'approval-answer', 'exchange'])
@@ -64,6 +72,33 @@ export function install(rt) {
     })
   }
 
+  // Shared rooms (#50): a current human participant may read and speak. Private
+  // owner rooms still match roomOwnedBy (legacy rooms with no participants).
+  const roomMemberOf = (actor, roomId) => roomVisibleTo(state, actor, roomId)
+
+  const listedHumans = (body) => {
+    const ids = new Set()
+    if (Array.isArray(body?.participants)) {
+      for (const p of body.participants) {
+        if (p?.kind === 'human' && typeof p.id === 'string') ids.add(p.id)
+      }
+    }
+    if (Array.isArray(body?.humans)) {
+      for (const id of body.humans) if (typeof id === 'string') ids.add(id)
+    }
+    return ids
+  }
+
+  const permittedSharedBot = (actor, botId, humans) => {
+    const bot = (state.bots || {})[botId]
+    if (!bot) return false
+    if (bot.ownerId === actor.memberId) return true
+    const owners = new Set(humans)
+    owners.add(actor.memberId)
+    // Another owner's Bot joins only if its owner published it (the Chief by default, #51).
+    return isPublished(state, botId) && owners.has(bot.ownerId)
+  }
+
   // A sessionId may be a Bot's id, its current chat Session, a group Session, an
   // earlier part, or a room Session: resolve it to its Bot or room and apply that
   // owner's rule. `rt.botOf` maps a Bot id to the Bot object; the store's owner maps
@@ -72,11 +107,12 @@ export function install(rt) {
   const sessionOwnedBy = (actor, sessionId) => {
     const id = String(sessionId ?? '')
     if (id === '') return false
+    if (state.rooms?.[id]) return roomMemberOf(actor, id) || roomOwnedBy(actor, id)
     const bot = rt.botOf?.(id)
     if (bot !== undefined && bot !== null) return botOwnedBy(actor, bot.id)
     const owner = rt.groupOwners?.get(id) ?? rt.pastOwners?.get(id)
     if (owner) {
-      if (owner.roomId !== undefined) return roomOwnedBy(actor, owner.roomId)
+      if (owner.roomId !== undefined) return roomMemberOf(actor, owner.roomId) || roomOwnedBy(actor, owner.roomId)
       if (owner.botId !== undefined) return botOwnedBy(actor, owner.botId)
       return false
     }
@@ -84,13 +120,16 @@ export function install(rt) {
     if (typeof selfBotId === 'string' && selfBotId !== '') return botOwnedBy(actor, selfBotId)
     for (const room of Object.values(state.rooms || {})) {
       const sessions = room.sessions ?? {}
-      if (Object.values(sessions).includes(id) || Object.values(room.segments ?? {}).some(list => (list ?? []).some(s => s?.sessionId === id))) return roomOwnedBy(actor, room.id)
+      if (Object.values(sessions).includes(id) || Object.values(room.segments ?? {}).some(list => (list ?? []).some(s => s?.sessionId === id))) {
+        return roomMemberOf(actor, room.id) || roomOwnedBy(actor, room.id)
+      }
     }
     return false
   }
 
   rt.botOwnedBy = botOwnedBy
   rt.roomOwnedBy = roomOwnedBy
+  rt.roomMemberOf = roomMemberOf
   rt.sessionOwnedBy = sessionOwnedBy
 
   // Alone on the deployment nothing is shared, so deployment-wide surfaces stay
@@ -103,10 +142,19 @@ export function install(rt) {
   rt.ownedView = (full, actor) => {
     if (!(rt.authzEnforced() && actor)) return full
     const bySession = obj => Object.fromEntries(Object.entries(obj ?? {}).filter(([id]) => sessionOwnedBy(actor, id)))
+    // Shared rooms (#50): rooms the actor owns or currently belongs to, and the Bots in
+    // them, so the shared room renders for every participant.
+    const rooms = full.rooms.filter(room => roomMemberOf(actor, room.id) || roomOwnedBy(actor, room.id))
+    const sharedBots = new Set()
+    for (const room of rooms) {
+      for (const id of room.members ?? []) sharedBots.add(id)
+      for (const p of room.participants ?? []) if (p.kind === 'bot' && p.leftSeq === undefined) sharedBots.add(p.id)
+    }
     return {
       ...full,
-      bots: full.bots.filter(bot => bot.ownerId === actor.memberId),
-      rooms: full.rooms.filter(room => rt.roomOwnedBy(actor, room.id)),
+      bots: full.bots.filter(bot => bot.ownerId === actor.memberId || sharedBots.has(bot.id)),
+      rooms,
+      self: { memberId: actor.memberId, displayName: actor.displayName },
       questions: bySession(full.questions),
       exchangeTurns: bySession(full.exchangeTurns),
       agents: alone() ? full.agents : [],
@@ -122,7 +170,7 @@ export function install(rt) {
       activity: pick(full.activity),
       work: {
         bots: pick(full.work.bots),
-        rooms: Object.fromEntries(Object.entries(full.work.rooms ?? {}).filter(([id]) => rt.roomOwnedBy(actor, id))),
+        rooms: Object.fromEntries(Object.entries(full.work.rooms ?? {}).filter(([id]) => roomMemberOf(actor, id) || roomOwnedBy(actor, id))),
         approvals: full.work.approvals.filter(entry => mine(entry.botId)),
       },
       memoryNews: pick(full.memoryNews),
@@ -176,8 +224,13 @@ export function install(rt) {
       }
       if (ep === 'usage') return body?.botId === undefined ? ALLOW : requireBot(body.botId)
       if (ep === 'set-main') return requireBot(body?.id)
+      if (ep === 'set-flags') {
+        const id = body?.id ?? body?.botId
+        if (botOwnedBy(actor, id) || roomOwnedBy(actor, id) || roomMemberOf(actor, id)) return ALLOW
+        return deny('bot/forbidden', 'You do not own that conversation')
+      }
       if (ep === 'stop-member-work') {
-        const roomOk = roomOwnedBy(actor, body?.roomId)
+        const roomOk = roomOwnedBy(actor, body?.roomId) || roomMemberOf(actor, body?.roomId)
         const botOk = botOwnedBy(actor, body?.botId)
         return roomOk || botOk ? ALLOW : deny('bot/forbidden', 'You do not own that Bot or room')
       }
@@ -189,14 +242,61 @@ export function install(rt) {
         // A room with no member Bot would belong to nobody (a room is owned through
         // its members), so it is refused here rather than created unownable.
         const members = Array.isArray(body?.members) ? body.members : []
-        if (members.length > 0 && members.every(id => botOwnedBy(actor, id))) return ALLOW
+        const fromParticipants = Array.isArray(body?.participants)
+          ? body.participants.filter(p => p?.kind === 'bot' && !p.remote && !p.handle).map(p => p.id)
+          : []
+        const remotes = [
+          ...(Array.isArray(body?.participants) ? body.participants : []),
+        ].filter(p => p?.kind === 'bot' && (p.remote || p.handle)).map(p => p.handle || p.id)
+        if (remotes.some(handle => !rt.isPublishedRemote?.(handle))) {
+          return deny('bot/forbidden', 'Only a Chief or a Bot published to friends may join a shared room')
+        }
+        const bots = [...new Set([...members, ...fromParticipants])]
+        // A room with nothing in it would belong to nobody; one made only of other
+        // participants (humans, published remote Bots) is a shared room (#50, #51).
+        const hasParticipants = Array.isArray(body?.participants) && body.participants.length > 0
+        if (bots.length === 0 && !hasParticipants) return deny('bot/forbidden', 'You do not own every Bot in that room')
+        if (bots.every(id => botOwnedBy(actor, id))) return ALLOW
+        const humans = listedHumans(body)
+        humans.add(actor.memberId)
+        if (bots.every(id => permittedSharedBot(actor, id, humans))) return ALLOW
         return deny('bot/forbidden', 'You do not own every Bot in that room')
       }
       if (ep === 'update-room') {
-        const ids = [body?.id]
-        for (const list of [body?.members, body?.add, body?.remove]) if (Array.isArray(list)) ids.push(...list)
-        if (ids.filter(id => id !== undefined).every(id => (id === body?.id ? roomOwnedBy(actor, id) : botOwnedBy(actor, id)))) return ALLOW
+        const roomId = body?.id
+        const addedRemotes = [
+          ...(Array.isArray(body?.addParticipants) ? body.addParticipants : []),
+        ].filter(p => p?.kind === 'bot' && (p.remote || p.handle)).map(p => p.handle || p.id)
+        if (addedRemotes.some(handle => !rt.isPublishedRemote?.(handle))) {
+          return deny('bot/forbidden', 'Only a Chief or a Bot published to friends may join a shared room')
+        }
+        if (roomOwnedBy(actor, roomId)) {
+          const ids = []
+          for (const list of [body?.members, body?.add, body?.remove]) if (Array.isArray(list)) ids.push(...list)
+          if (ids.every(id => botOwnedBy(actor, id))) return ALLOW
+        }
+        if (roomMemberOf(actor, roomId)) {
+          const humans = listedHumans(body)
+          humans.add(actor.memberId)
+          for (const p of currentParticipants(state.rooms?.[roomId])) {
+            if (p.kind === 'human') humans.add(p.id)
+          }
+          const bots = [...(Array.isArray(body?.add) ? body.add : []), ...(Array.isArray(body?.members) ? body.members : [])]
+          if (bots.every(id => permittedSharedBot(actor, id, humans) || botOwnedBy(actor, id))) return ALLOW
+          if (bots.length === 0) return ALLOW
+        }
         return deny('bot/forbidden', 'You do not own that room or one of its Bots')
+      }
+      if (ep === 'room-history' || ep === 'room-progress' || ep === 'room-post') {
+        const id = body?.id ?? body?.roomId
+        return roomMemberOf(actor, id) || roomOwnedBy(actor, id) ? ALLOW : deny('bot/forbidden', 'You are not a member of that room')
+      }
+      if (ep === 'delete-room') {
+        const id = body?.id ?? body?.roomId
+        if (roomOwnedBy(actor, id)) return ALLOW
+        const room = state.rooms?.[id]
+        const me = currentParticipants(room).find(p => p.kind === 'human' && p.id === actor.memberId)
+        return me?.role === 'admin' ? ALLOW : deny('bot/forbidden', 'You do not own that room')
       }
       return requireRoom(body?.id ?? body?.roomId)
     }

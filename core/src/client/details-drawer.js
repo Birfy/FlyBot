@@ -14,6 +14,8 @@ import { ScheduleSummary } from './schedules.js'
 import { Segmented, useGlide, useMorph } from './motion.js'
 import { MemberWork, useMemberWork } from './member-status.js'
 import { t } from './i18n.js'
+import { remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
+import { call } from './api.js'
 
 function transcriptOf(list, id, name, hiddenTurns = []) {
   const outline = list.projectionsBySession?.[id]?.values?.turnOutline ?? list.byId[id]?.projectionValues?.turnOutline
@@ -113,16 +115,74 @@ function About({ text, title = 'About' }) {
 
 // A group's overview: what members read, who is in it, and who answers. Changes are
 // made in its settings.
+function SharedRoomApprovals({ room }) {
+  const [items, setItems] = useState(room.pendingApprovals ?? [])
+  const [busy, setBusy] = useState('')
+  useEffect(() => {
+    if (room.viewerRole !== 'invited-owner') return undefined
+    if (Array.isArray(room.pendingApprovals) && room.pendingApprovals.length) {
+      setItems(room.pendingApprovals)
+      return undefined
+    }
+    let alive = true
+    call('social/status', {}).then((value) => {
+      if (!alive) return
+      setItems(Array.isArray(value?.approvals) ? value.approvals : [])
+    }, () => {})
+    return () => { alive = false }
+  }, [room.id, room.viewerRole, room.pendingCount])
+  if (room.viewerRole !== 'invited-owner' || !items.length) return null
+  const decide = async (item, decision) => {
+    setBusy(item.id)
+    try {
+      await call('social/decide-approval', { approvalId: item.id, decision })
+      setItems(list => list.filter(entry => entry.id !== item.id))
+    } finally { setBusy('') }
+  }
+  return h('div', { key: 'approvals', className: 'bt-shared-wait', 'data-flybot': 'room-pending-approvals' },
+    h('div', { className: 'bt-section-title' }, t('Waiting for your approval'), h('span', { className: 'bt-chip' }, t('{count} to approve', { count: items.length }))),
+    items.map(item => h('div', { key: item.id, className: 'bt-set-row' },
+      h('span', { className: 'bt-set-copy' }, item.text || item.summary || item.to || t('Outbound reply')),
+      h('button', { type: 'button', className: 'bt-mini', disabled: busy === item.id, onClick: () => decide(item, 'approve') }, t('Approve')),
+      h('button', { type: 'button', className: 'bt-mini', disabled: busy === item.id, onClick: () => decide(item, 'reject') }, t('Reject')))))
+}
+
 function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) {
+  const humans = (room.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
+  const remotes = (room.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
   const members = room.members.map(id => roster.byId[id]).filter(Boolean)
   const { entries, now } = useMemberWork(room, useWork)
+  const invited = room.viewerRole === 'invited-owner'
+  const title = room.displayName || (room.sharedFrom ? sharedRoomTitle(room.sharedFrom.inviterName) : room.name)
+  const leaveMine = () => {
+    const mine = remotes.find(p => p.ownerId === roster.self?.memberId)
+      || members.find(member => member.ownerId === roster.self?.memberId)
+    if (mine) void actions.updateRoom(room.id, { removeParticipants: [{ kind: 'bot', id: mine.handle || mine.id, remote: Boolean(mine.handle) }] })
+  }
   return [
-    room.notice
-      ? h(About, { key: 'notice', title: 'Notice', text: room.notice })
-      : h('button', { key: 'notice', type: 'button', className: 'bt-more', onClick: openSettings }, t('Add a notice in group settings')),
+    invited && room.sharedFrom
+      ? h('div', { key: 'from', className: 'bt-shared-from' },
+        h('div', { className: 'bt-section-title' }, title),
+        h('div', { className: 'bt-set-hint' }, t('Your Bot was invited to this room by {name}', { name: room.sharedFrom.inviterName })),
+        room.sharedFrom.invitedAt ? h('div', { className: 'bt-set-hint' }, t('Invited {when}', { when: new Date(room.sharedFrom.invitedAt).toLocaleString() })) : null,
+        h('button', { type: 'button', className: 'bt-more', onClick: leaveMine }, t('Remove my Bot')))
+      : room.notice
+        ? h(About, { key: 'notice', title: 'Notice', text: room.notice })
+        : h('button', { key: 'notice', type: 'button', className: 'bt-more', onClick: openSettings }, t('Add a notice in group settings')),
+    h(SharedRoomApprovals, { key: 'approvals', room }),
     h('div', { key: 'members' },
-      h('div', { className: 'bt-section-title' }, t('Members · {count}', { count: members.length })),
-      h('div', { className: 'bt-members', role: 'list' }, members.map((member) => {
+      h('div', { className: 'bt-section-title' }, t('Members · {count}', { count: members.length + humans.length + remotes.length })),
+      h('div', { className: 'bt-members', role: 'list' }, [
+        ...humans.map(person => h('div', { key: person.id, role: 'listitem' },
+          h('div', { className: 'bt-member' },
+            h('span', { className: 'bt-member-name' }, h('span', null, person.displayName || person.id)),
+            h('span', { className: 'bt-chip' }, t('Human')),
+            person.role === 'admin' ? h('span', { className: 'bt-chip bt-chip-admin' }, t('Admin')) : null))),
+        ...remotes.map(person => h('div', { key: person.handle || person.id, role: 'listitem' },
+          h('div', { className: 'bt-member' },
+            h('span', { className: 'bt-member-name' }, h('span', null, remoteBotTitle(person))),
+            h('span', { className: 'bt-chip' }, t('Friend\'s Bot'))))),
+        ...members.map((member) => {
         const entry = entries.find(item => item.id === member.id)
         return h('div', { key: member.id, role: 'listitem' },
           h('div', { className: 'bt-member' },
@@ -131,7 +191,7 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) 
               h('span', null, member.name)),
             room.admin === member.id ? h('span', { className: 'bt-chip bt-chip-admin' }, t('Admin')) : null),
           entry ? h(MemberWork, { entry, bot: member, room, roster, actions, now }) : null)
-      }))),
+      })])),
     h('div', { key: 'mode' }, h('div', { className: 'bt-section-title' }, t('Who answers')),
       h('div', { className: 'bt-kv' }, h('span', null, t(ROOM_MODES.find(([id]) => id === shownMode(room, roster))?.[1] ?? 'Everyone')))),
     usage ? h('div', { key: 'usage' }, h('div', { className: 'bt-section-title' }, t('Usage')),

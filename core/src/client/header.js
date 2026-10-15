@@ -6,6 +6,7 @@ import { botState, BotAvatar, RoomAvatar } from './mark.js'
 import { ActivityIndicator } from './activity-row.js'
 import { clockLabel, openingTurn, unseenSince } from './cells.js'
 import { t } from './i18n.js'
+import { remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
 
 // -------------------------------------------------------------------------
 // Conversation header
@@ -68,7 +69,9 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
   const bot = roster.byId[sessionId]
   const room = roster.roomsById[sessionId]
   const detailsOpen = useUi(state => state.details === sessionId)
-  const name = bot?.name ?? room?.name ?? ''
+  const name = bot?.remote
+    ? remoteBotTitle({ displayName: bot.name, ownerName: bot.remote.homeName || bot.remote.owner, handle: bot.remote.handle, isChief: bot.remote.isChief })
+    : (room?.displayName || (room?.sharedFrom ? sharedRoomTitle(room.sharedFrom.inviterName) : room?.name) || bot?.name || '')
   const useNews = useMemoryNews ?? noNews
   const memoryIds = bot ? [bot.id] : room?.members ?? []
   const notice = useMemoryNotice(memoryIds, useNews)
@@ -97,7 +100,7 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
     },
     bot ? h(BotAvatar, { bot, size: 24, state: botState(running, doing, roster.questions?.[currentPart(bot)] !== undefined), badge: false })
       : room ? h(RoomAvatar, { room, roster, size: 24 }) : null,
-    h('span', { className: 'bt-pill-name' }, bot?.name ?? room?.name ?? (title || t('New chat'))),
+    h('span', { className: 'bt-pill-name' }, name || title || t('New chat')),
     h(MemoryNotice, { shown: memoryNotice }),
     h('span', { className: 'bt-pill-go', 'aria-hidden': true }, h(GoArrow))),
     h('span', { className: 'bt-sr', role: 'status' }, memoryNotice ? t('Memory updated') : ''),

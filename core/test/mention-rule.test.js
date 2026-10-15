@@ -90,7 +90,7 @@ test("a friend's Bot answers its handle too, and the chip reads its display name
   // like a name mention, under the display name from the roster.
   const parts = userTextParts('@bot-2a758c0f.danyang.home 你是?', members)
   assert.deepEqual(plain(parts.filter(part => part.bot).map(part => part.bot.id)), ['f'])
-  assert.equal(parts[0].bot.mentionLabel, '代码审查官')
+  assert.equal(parts[0].bot.mentionLabel, "代码审查官 · danyang's Bot")
   assert.deepEqual(plain(parts[1]), { text: ' 你是?' })
   // The display-name form still matches the Bot itself, and an address before @ stays text.
   const named = userTextParts('@代码审查官 你是谁', members)

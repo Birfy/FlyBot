@@ -9,7 +9,7 @@ import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } fro
 import { lookOf } from './mark.js'
 import { TeamSidebar, ConnectPlugins, YouAvatar, AccountLauncher, FooterAccount, BrandMark, BrandName, BotReturn, SIDEBAR_CSS, RETURN_CSS, holdShellShortcuts } from './sidebar.js'
 import { HeaderPill } from './header.js'
-import { ComposerPlus, ComposerVoice, menuIcons } from './composer.js'
+import { ComposerIdentity, ComposerPlus, ComposerVoice, menuIcons } from './composer.js'
 import { CHATS_SOURCE, atSources } from './at-menu.js'
 import { VOICE_BUNDLE } from './speech.js'
 import { sameVersion } from './dsh-offer.js'
@@ -813,6 +813,7 @@ export function apply(ctx) {
     shadow('conversation.composer.dock', { id: 'activity', order: 0, priority: -10 }, Nothing),
     shadow('conversation.composer.dock', { id: 'usage', order: 1, priority: -10 }, Nothing),
     shadow('conversation.input.left', { id: 'bot-plus', order: -100, inject: face }, ComposerPlus),
+    shadow('conversation.input.left', { id: 'bot-as', order: -90, inject: face }, ComposerIdentity),
     shadow('conversation.input.right', { id: 'bot-voice', order: 100, inject: face }, ComposerVoice),
     shadow('conversation.composer', {
       priority: -10,
