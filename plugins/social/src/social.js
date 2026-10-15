@@ -484,40 +484,71 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
   // Hide a friend's Bot on this install only: persist, leave every room it is in, do not unfriend.
   // It stays hidden across refresh while it remains granted. If the owner revokes the grant, the
   // hide is forgotten; an explicit re-grant (it appears on list_remote_bots again) shows it.
-  async function leaveRoomsWith(handle) {
-    const key = norm(handle)
-    const left = []
+  function roomsHolding(key) {
+    const listed = []
     for (const [faceId, meta] of Object.entries(settings.faceRooms ?? {})) {
       const room = flybot.rooms?.ofFace?.(faceId)
       const members = room?.participants ?? []
       const has = members.some(p => p.leftSeq === undefined && p.handle && norm(p.handle) === key)
       if (!has || !meta?.localRoomId) continue
-      try {
-        await leaveFaceRoom({ roomId: meta.localRoomId, faceRoomId: faceId })
-        left.push({ id: meta.localRoomId, origin: 'face-to-face', faceRoomId: faceId })
-      } catch (error) { warn('leave face room after hide failed', error) }
+      listed.push({ id: meta.localRoomId, origin: 'face-to-face', faceRoomId: faceId })
     }
-    if (typeof flybot.rooms?.list !== 'function') return left
+    if (typeof flybot.rooms?.list !== 'function') return listed
     for (const room of flybot.rooms.list()) {
       if (room.origin === 'face-to-face') continue
       const hit = (room.participants ?? []).find(p => p.leftSeq === undefined && p.remote && p.handle && norm(p.handle) === key)
       if (!hit) continue
-      try {
-        await flybot.rooms.removeParticipant(room.id, { kind: 'bot', id: hit.handle || hit.id, remote: true })
-        left.push({ id: room.id, origin: room.origin || 'group' })
-      } catch (error) { warn('remove hidden Bot from room failed', error) }
+      listed.push({ id: room.id, origin: room.origin || 'group' })
     }
-    return left
+    return listed
+  }
+  // Independent rooms leave together. Sequential await was the hide-click stall:
+  // each removeParticipant / face leave is a host round-trip.
+  async function leaveRoomsWith(handle) {
+    const key = norm(handle)
+    const jobs = []
+    for (const [faceId, meta] of Object.entries(settings.faceRooms ?? {})) {
+      const room = flybot.rooms?.ofFace?.(faceId)
+      const members = room?.participants ?? []
+      const has = members.some(p => p.leftSeq === undefined && p.handle && norm(p.handle) === key)
+      if (!has || !meta?.localRoomId) continue
+      jobs.push(leaveFaceRoom({ roomId: meta.localRoomId, faceRoomId: faceId })
+        .then(() => ({ id: meta.localRoomId, origin: 'face-to-face', faceRoomId: faceId }))
+        .catch(error => { warn('leave face room after hide failed', error); return null }))
+    }
+    if (typeof flybot.rooms?.list === 'function') {
+      for (const room of flybot.rooms.list()) {
+        if (room.origin === 'face-to-face') continue
+        const hit = (room.participants ?? []).find(p => p.leftSeq === undefined && p.remote && p.handle && norm(p.handle) === key)
+        if (!hit) continue
+        jobs.push(Promise.resolve(flybot.rooms.removeParticipant(room.id, { kind: 'bot', id: hit.handle || hit.id, remote: true }))
+          .then(() => ({ id: room.id, origin: room.origin || 'group' }))
+          .catch(error => { warn('remove hidden Bot from room failed', error); return null }))
+      }
+    }
+    return (await Promise.all(jobs)).filter(Boolean)
+  }
+  async function afterHideRemote(key) {
+    await leaveRoomsWith(key)
+    fetchedAt = 0
+    try {
+      await remoteBots({ fresh: true })
+    } catch (error) {
+      warn('hide-remote roster refresh failed', error)
+    }
   }
   async function hideRemote(handle) {
     const key = norm(handle)
     if (!key || key === '@') throw new Error('which Bot?')
     settings = hideRemoteInSettings(settings, key, now())
     saveSettings()
-    const leftRooms = await leaveRoomsWith(key)
-    fetchedAt = 0
-    const roster = await remoteBots({ fresh: true })
-    return { handle: key, hidden: true, leftRooms, homes: roster.homes }
+    remote = { homes: filterHiddenHomes(remote.homes, settings) }
+    flybot.remote?.publish(remote.homes.flatMap(entry => entry.bots.map(bot => ({
+      handle: bot.handle, name: bot.name, home: entry.home, homeName: entry.name, owner: entry.owner,
+    }))))
+    const leftRooms = roomsHolding(key)
+    void afterHideRemote(key).catch(error => warn('hide-remote follow-up failed', error))
+    return { handle: key, hidden: true, leftRooms, homes: remote.homes }
   }
   // Whether this local Bot is one the friendship with that friend home covers.
   const covered = (entry, botId) => !entry?.via?.length || entry.via.includes(norm(memberOf(botId)?.handle ?? ''))
