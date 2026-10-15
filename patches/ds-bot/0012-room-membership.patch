@@ -354,10 +354,10 @@ index 7dbcc2cabf67187336152d01270d381f5bedda79..da2a182aa438c3aeb188908e137db2b8
    }))
 diff --git a/src/host/room-membership.js b/src/host/room-membership.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e294c84d0e
+index 0000000000000000000000000000000000000000..68b463ad088efd116bce0473778e793f36d5465b
 --- /dev/null
 +++ b/src/host/room-membership.js
-@@ -0,0 +1,776 @@
+@@ -0,0 +1,825 @@
 +// Room membership (#50/#50 follow-up): typed human, local-bot and published remote-bot
 +// participants, room roles, persistent author ids, membership-window history. This is
 +// not team mode — the gates in docs/subsystems/team.md stay unsatisfied.
@@ -381,15 +381,19 @@ index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e2
 +//   (for an invited owner, their Bot's interval). Leaving closes the interval and
 +//   withdraws all history access. Rejoining opens a new interval at the then-current
 +//   seq; prior intervals do not come back. Non-members cannot read or inject.
-+//   Unpublished specialists stay owner-private. Only a designated Chief or a Bot
-+//   published to friends (`state.flybot.remote`, cleanRemote) may be added across
-+//   owners.
++//   Unpublished specialists stay owner-private. Across owners (and with remote
++//   participants) only a *published* local Bot (the owner's choice; the designated
++//   Chief by default, see reach.js) or a Bot that joined by room code (`viaCode`, #83;
++//   reachable in this room only, while a member), and a Bot published to friends
++//   (`state.flybot.remote`, cleanRemote) may be added. A Bot that stops qualifying
++//   (unpublished, Chief replaced) leaves such rooms at once (rt.evictUnshared).
 +//
 +// Inbound shared rooms (`origin: 'inbound-share'`) are the remote owner's projection
 +// of a friend's room that invited their published Bot.
 +
 +import { cleanPeerName, disambiguatedRemoteTitle, isChiefRecord, remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
 +import { cleanName, fenceUntrusted } from './delivery.js'
++import { isPublished, mayShareRoom } from './reach.js'
 +
 +const KINDS = new Set(['human', 'bot'])
 +const ROLES = new Set(['admin', 'member'])
@@ -634,7 +638,7 @@ index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e2
 +  return [...humans, ...bots]
 +}
 +
-+function permittedBot(state, room, botId, humans) {
++function permittedBot(state, room, botId, humans, { viaCode = false } = {}) {
 +  const bot = state.bots?.[botId]
 +  if (!bot) return false
 +  const owners = new Set(humans)
@@ -644,7 +648,7 @@ index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e2
 +  }
 +  if (state.bots[botId]?.ownerId) owners.add(bot.ownerId)
 +  const cross = owners.size > 1
-+  if (cross) return isDesignatedChief(state, botId) && humans.has(bot.ownerId)
++  if (cross) return (isPublished(state, botId) && humans.has(bot.ownerId)) || viaCode
 +  return bot.ownerId === [...owners][0]
 +}
 +
@@ -738,12 +742,19 @@ index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e2
 +    return { ...line, who: name, ...(id ? { authorId: id, authorKind: 'human' } : {}) }
 +  }
 +
-+  function assertAddable(room, draft, actor) {
++  const REMOTE_ROOM_MESSAGE = 'Only a published Bot (or one that joined with the room code) may be in a room with friends\' Bots'
++  const hasRemote = room => currentParticipants(room).some(isRemoteParticipant)
++  // Local members that may not stay in a room with remote participants or other owners.
++  const unsharable = room => currentParticipants(room).filter(p => p.kind === 'bot' && !p.remote && !mayShareRoom(state, room, p.id))
++
++  // `viaCode` (a room-code join, #83) is an internal option: it is never read from a request body.
++  function assertAddable(room, draft, actor, { viaCode = false } = {}) {
 +    if (!KINDS.has(draft.kind)) throw invalid('Participant kind must be human or bot')
 +    if (isRemoteDraft(draft)) {
 +      const published = publishedRemoteOf(state, draft.handle || draft.id)
 +      if (!published) throw forbidden('Only a Chief or a Bot published to friends may join a shared room')
 +      if (participantOf(room, 'bot', published.handle)) throw invalid('That participant is already in the room')
++      if (unsharable(room).length > 0) throw forbidden(REMOTE_ROOM_MESSAGE)
 +      return published
 +    }
 +    if (typeof draft.id !== 'string' || draft.id === '') throw invalid('A participant needs an id')
@@ -756,7 +767,7 @@ index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e2
 +      if (humans.size > 1) {
 +        for (const p of currentParticipants(room).filter(item => item.kind === 'bot' && !item.remote)) {
 +          const ownerId = state.bots?.[p.id]?.ownerId
-+          if (!isDesignatedChief(state, p.id) || !humans.has(ownerId)) {
++          if (!mayShareRoom(state, room, p.id) || !humans.has(ownerId)) {
 +            throw forbidden('Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief')
 +          }
 +        }
@@ -768,23 +779,26 @@ index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e2
 +    const humans = new Set(currentParticipants(room).filter(p => p.kind === 'human').map(p => p.id))
 +    if (actor?.memberId) humans.add(actor.memberId)
 +    humans.add(bot.ownerId)
-+    if (!permittedBot(state, room, draft.id, humans)) {
-+      if (isSpecialist(state, draft.id) && (isCrossOwnerRoom(room, state) || humans.size > 1)) {
++    if (!permittedBot(state, room, draft.id, humans, { viaCode })) {
++      if (!isPublished(state, draft.id) && (isCrossOwnerRoom(room, state) || humans.size > 1)) {
 +        throw forbidden('Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief')
 +      }
-+      throw forbidden('Only a designated Chief of a room member may join a shared room')
++      throw forbidden('Only a published Bot of a room member may join a shared room')
 +    }
++    if (hasRemote(room) && !viaCode && !isPublished(state, draft.id)) throw forbidden(REMOTE_ROOM_MESSAGE)
 +    const nextOwners = new Set(humans)
 +    if (nextOwners.size > 1) {
 +      for (const p of currentParticipants(room).filter(item => item.kind === 'bot' && !item.remote)) {
-+        if (isSpecialist(state, p.id)) {
++        if (!mayShareRoom(state, room, p.id)) {
 +          throw forbidden('Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief')
 +        }
 +      }
 +    }
 +  }
 +
-+  rt.addRoomParticipant = function addRoomParticipant(roomId, draft, actor) {
++  // `opts.viaCode`: the Bot joins with the room's code (#83): it needs no publication, and is
++  // reachable in this room only, while it is a member. Internal: request bodies cannot set it.
++  rt.addRoomParticipant = function addRoomParticipant(roomId, draft, actor, opts = {}) {
 +    return withRoomLock(async () => {
 +      const room = rt.roomOf(roomId)
 +      if (room === undefined) throw invalid('Unknown group chat')
@@ -793,7 +807,8 @@ index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e2
 +        throw forbidden('Only a room admin can add participants')
 +      }
 +      const kind = draft.kind
-+      const published = assertAddable(room, draft, actor)
++      const viaCode = opts?.viaCode === true && draft.kind === 'bot' && !isRemoteDraft(draft)
++      const published = assertAddable(room, draft, actor, { viaCode })
 +      const role = draft.role === 'admin' ? 'admin' : 'member'
 +      const invitedBy = actor?.memberId
 +      const invitedByName = actor ? displayNameFor(state, actor.memberId, actor.displayName) : undefined
@@ -853,6 +868,7 @@ index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e2
 +          displayName,
 +          joinedSeq: line.seq,
 +          joinedAt: invitedAt,
++          ...(viaCode ? { viaCode: true } : {}),
 +          ...(invitedBy && kind === 'bot' ? { invitedBy, invitedByName, invitedAt } : {}),
 +        }
 +        room.participants.push(record)
@@ -1014,6 +1030,8 @@ index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e2
 +        throw forbidden('Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief')
 +      }
 +    }
++    // A room with a friend's Bot takes only published local Bots (a room code cannot be used here).
++    if (hasRemote(room) && unsharable(room).length > 0) throw forbidden(REMOTE_ROOM_MESSAGE)
 +    syncMembers(room)
 +    return room
 +  }
@@ -1026,15 +1044,23 @@ index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e2
 +    }))
 +  }
 +
++  // Room lines go out to the friends' Bots in the room, checked per author and per recipient
++  // (#51): a line written by a local Bot that may not share the room never leaves, a friend's
++  // Bot that is no longer published to us gets nothing, and the sending Bot is one that may
++  // speak outside (bot.send then runs the reach policy on every single send).
 +  rt.fanoutRoomLine = async function fanoutRoomLine(room, line) {
 +    const remotes = currentParticipants(room).filter(isRemoteParticipant)
 +    if (remotes.length === 0 || !rt.flybotSend) return
-+    const from = (room.admin && rt.botOf?.(room.admin) ? room.admin : (room.members ?? []).find(id => rt.botOf?.(id)))
++    const localAuthor = line.authorKind === 'bot' && !line.remote && rt.botOf?.(line.authorId ?? line.botId) ? (line.authorId ?? line.botId) : undefined
++    if (localAuthor !== undefined && !mayShareRoom(state, room, localAuthor)) return
++    const speakers = [room.admin, ...(room.members ?? [])].filter(id => id && rt.botOf?.(id) && mayShareRoom(state, room, id))
++    const from = speakers[0]
 +    if (!from) return
 +    const who = cleanName(line.who || 'member')
 +    const body = line.text ? fenceUntrusted(who, line.text) : `[${cleanName(line.kind || 'event')}]`
 +    for (const remote of remotes) {
 +      if (line.authorId === remote.id || line.authorId === remote.handle) continue
++      if (!publishedRemoteOf(state, remote.handle)) continue
 +      try {
 +        await rt.flybotSend({
 +          from,
@@ -1048,6 +1074,29 @@ index 0000000000000000000000000000000000000000..497735b5caeb0319640300f4b22967e2
 +        rt.warn?.('ds-bot: room line not sent to %s: %s', remote.handle, error)
 +      }
 +    }
++  }
++
++  // A Bot that no longer qualifies (unpublished, Chief replaced, owner removed) leaves every room
++  // that has friends' Bots or more than one owner, at once; without an id, every such Bot does.
++  rt.evictUnshared = async function evictUnshared(botId) {
++    let changed = false
++    for (const room of Object.values(state.rooms ?? {})) {
++      if (!Array.isArray(room.participants) || !(hasRemote(room) || isCrossOwnerRoom(room, state))) continue
++      for (const me of currentParticipants(room).filter(p => p.kind === 'bot' && !p.remote && (botId === undefined || p.id === botId))) {
++        if (mayShareRoom(state, room, me.id)) continue
++        await withRoomLock(async () => {
++          if (me.leftSeq !== undefined) return
++          const line = append(room, { kind: 'left', who: me.displayName, authorId: me.id, authorKind: 'bot', text: '' })
++          me.leftSeq = line.seq
++          me.leftAt = Date.now()
++          if (room.seen) delete room.seen[me.id]
++          rt.dropGroupSession?.(room, me.id)
++          syncMembers(room)
++          changed = true
++        })
++      }
++    }
++    if (changed) await rt.save()
 +  }
 +
 +  rt.ingestRemoteRoomLine = async function ingestRemoteRoomLine({ handle, text } = {}) {
@@ -1224,10 +1273,10 @@ index adc5416982fe43238970440a857d8fd6040f9b2a..5593b3d423c793bc638cbda59daedee2
    assert.deepEqual(names(mentionRows(roster, 'chief-2')), ['King', 'Writer'])
 diff --git a/test/remote-room.test.js b/test/remote-room.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..ddfef0ed777d2b9f71a0e39242e0eb70ef25636e
+index 0000000000000000000000000000000000000000..9242493be795f0fc6b697d39e2c77a3a520c9d62
 --- /dev/null
 +++ b/test/remote-room.test.js
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,504 @@
 +import assert from 'node:assert/strict'
 +import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 +import { tmpdir } from 'node:os'
@@ -1247,6 +1296,7 @@ index 0000000000000000000000000000000000000000..ddfef0ed777d2b9f71a0e39242e0eb70
 +  roomVisibleTo,
 +  viewerRole,
 +} from '../src/host/room-membership.js'
++import { install as installReach, reach } from '../src/host/reach.js'
 +import { remoteBotTitle, sharedRoomTitle } from '../src/shared/remote-label.js'
 +import { mentionRows } from '../src/client/at-menu.js'
 +import { indexRoster } from '../src/client/sources.js'
@@ -1279,6 +1329,7 @@ index 0000000000000000000000000000000000000000..ddfef0ed777d2b9f71a0e39242e0eb70
 +  installMemberAuth(rt)
 +  installAuthz(rt)
 +  installRooms(rt)
++  installReach(rt)
 +  t.after(async () => {
 +    await Promise.all(disposers.splice(0).map(cleanup => cleanup()))
 +    rmSync(dir, { recursive: true, force: true, maxRetries: 5 })
@@ -1592,12 +1643,150 @@ index 0000000000000000000000000000000000000000..ddfef0ed777d2b9f71a0e39242e0eb70
 +  const eve = { memberId: 'owner-9' }
 +  assert.equal(roomVisibleTo(rt.state, eve, 'war'), false)
 +})
++
++// ---- #51: a room with friends' Bots takes published local Bots only
++
++// The war room starts with both Chiefs; these tests want one owner and the friend's Bot.
++const soloWar = (rt) => {
++  const room = rt.state.rooms.war
++  room.participants = room.participants.filter(p => p.id !== 'chief-b')
++  room.members = room.members.filter(id => id !== 'chief-b')
++}
++
++const withRemote = async (rt, actorA) => {
++  soloWar(rt)
++  publish(rt)
++  await rt.addRoomParticipant('war', { kind: 'bot', remote: true, handle: '@coder.bob.home' }, actorA)
++}
++
++test('#51: an unpublished local Bot cannot be added to a room that has a friend\'s Bot', async (t) => {
++  const { rt } = host(t, TEAM)
++  await rt.load()
++  const { alice } = await signAliceAndBob(rt)
++  const actorA = await rt.authenticate(alice.sessionToken)
++  await withRemote(rt, actorA)
++  await assert.rejects(() => rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, actorA), /published Bot/)
++  assert.equal(rt.state.rooms.war.members.includes('spec-a'), false)
++  // The owner's choice lets the same Bot in.
++  await rt.setPublished('spec-a', true)
++  await rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, actorA)
++  assert.equal(rt.state.rooms.war.members.includes('spec-a'), true)
++})
++
++test('#51: a friend\'s Bot cannot be added to a room that holds an unpublished local Bot', async (t) => {
++  const { rt } = host(t, TEAM)
++  await rt.load()
++  const { alice } = await signAliceAndBob(rt)
++  const actorA = await rt.authenticate(alice.sessionToken)
++  soloWar(rt)
++  publish(rt)
++  await rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, actorA)
++  await assert.rejects(() => rt.addRoomParticipant('war', { kind: 'bot', remote: true, handle: '@coder.bob.home' }, actorA), /published Bot/)
++  assert.equal(rt.state.rooms.war.participants.some(p => p.remote), false)
++  await rt.setPublished('spec-a', true)
++  await rt.addRoomParticipant('war', { kind: 'bot', remote: true, handle: '@coder.bob.home' }, actorA)
++  assert.equal(rt.state.rooms.war.participants.some(p => p.remote), true)
++})
++
++test('#51: creating a room with a friend\'s Bot and an unpublished member is refused', async (t) => {
++  const { rt } = host(t, TEAM)
++  rt.createRoom = undefined
++  await rt.load()
++  const { alice } = await signAliceAndBob(rt)
++  const actorA = await rt.authenticate(alice.sessionToken)
++  publish(rt)
++  const room = { id: 'new', members: [], participants: [], createdAt: 1 }
++  const drafts = [
++    { kind: 'human', id: 'owner-1', role: 'admin' },
++    { kind: 'bot', id: 'spec-a' },
++    { kind: 'bot', remote: true, handle: '@coder.bob.home' },
++  ]
++  assert.throws(() => rt.applyParticipants(room, drafts, actorA), /published Bot/)
++  rt.state.bots['spec-a'].published = true
++  assert.doesNotThrow(() => rt.applyParticipants({ id: 'new', members: [], participants: [], createdAt: 1 }, drafts, actorA))
++})
++
++test('#51: unpublishing a Bot, or replacing its Chief, takes it out of rooms with friends at once', async (t) => {
++  const { rt } = host(t, TEAM)
++  await rt.load()
++  const { alice } = await signAliceAndBob(rt)
++  const actorA = await rt.authenticate(alice.sessionToken)
++  await withRemote(rt, actorA)
++  await rt.setPublished('spec-a', true)
++  await rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, actorA)
++  const room = rt.state.rooms.war
++  assert.deepEqual(room.members.filter(id => id.startsWith('spec') || id.startsWith('chief')).sort(), ['chief-a', 'spec-a'])
++  await rt.setPublished('spec-a', false)
++  assert.equal(room.members.includes('spec-a'), false)
++  assert.ok(room.log.some(line => line.kind === 'left' && line.authorId === 'spec-a'))
++  assert.ok(room.participants.find(p => p.id === 'spec-a').leftSeq !== undefined)
++  // The Chief default: turning the Chief off takes it out too, and the remote stays.
++  await rt.setPublished('chief-a', false)
++  assert.equal(room.members.includes('chief-a'), false)
++  assert.equal(room.participants.some(p => p.remote && p.leftSeq === undefined), true)
++})
++
++test('#51: unpublishing leaves private rooms (no friends, one owner) alone', async (t) => {
++  const { rt } = host(t, TEAM)
++  await rt.load()
++  await rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, undefined).catch(() => {})
++  const room = rt.state.rooms.war
++  room.participants.push({ kind: 'bot', id: 'spec-a', role: 'member', displayName: 'Writer A', joinedSeq: 0, joinedAt: 1 })
++  room.members.push('spec-a')
++  await rt.setPublished('spec-a', true)
++  await rt.setPublished('spec-a', false)
++  assert.equal(room.members.includes('spec-a'), true)
++})
++
++test('#51: fanout sends from a published Bot, skips lines of Bots that may not share, and skips friends no longer published', async (t) => {
++  const { rt, sent } = host(t, TEAM)
++  await rt.load()
++  const { alice } = await signAliceAndBob(rt)
++  const actorA = await rt.authenticate(alice.sessionToken)
++  await withRemote(rt, actorA)
++  const room = rt.state.rooms.war
++  // An unpublished specialist's line never leaves (it is not even a member now).
++  await rt.fanoutRoomLine(room, { seq: 5, who: 'Writer A', text: 'draft', authorKind: 'bot', authorId: 'spec-a' })
++  assert.equal(sent.length, 0)
++  await rt.fanoutRoomLine(room, { seq: 6, who: 'Alice', text: 'hello', authorKind: 'human', authorId: 'owner-1' })
++  assert.equal(sent.length, 1)
++  assert.equal(sent[0].from, 'chief-a')
++  // The admin Chief is no longer published: someone who is still published speaks, never it.
++  await rt.setPublished('chief-a', false)
++  await rt.fanoutRoomLine(room, { seq: 7, who: 'Alice', text: 'again', authorKind: 'human', authorId: 'owner-1' })
++  assert.ok(sent.slice(1).every(msg => msg.from !== 'chief-a'))
++  // The friend takes the Bot off their published list: nothing goes there.
++  const before = sent.length
++  publish(rt, [])
++  await rt.fanoutRoomLine(room, { seq: 8, who: 'Alice', text: 'anyone?', authorKind: 'human', authorId: 'owner-1' })
++  assert.equal(sent.length, before)
++})
++
++test('#51: a room code lets an unpublished Bot in, for that room only (internal option, never a request field)', async (t) => {
++  const { rt } = host(t, TEAM)
++  await rt.load()
++  const { alice } = await signAliceAndBob(rt)
++  const actorA = await rt.authenticate(alice.sessionToken)
++  await withRemote(rt, actorA)
++  await assert.rejects(() => rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a', viaCode: true }, actorA), /published Bot/)
++  await rt.addRoomParticipant('war', { kind: 'bot', id: 'spec-a' }, actorA, { viaCode: true })
++  const entry = rt.state.rooms.war.participants.find(p => p.id === 'spec-a')
++  assert.equal(entry.viaCode, true)
++  const remote = { kind: 'remote', handle: '@coder.bob.home' }
++  assert.equal(reach(rt.state, { from: 'spec-a', to: remote, roomId: 'war' }).action, 'allow')
++  assert.equal(reach(rt.state, { from: 'spec-a', to: remote, roomId: 'elsewhere' }).action, 'deny')
++  assert.equal(reach(rt.state, { from: remote, to: 'spec-a' }).action, 'deny')
++  assert.equal(reach(rt.state, { from: 'spec-a', to: remote }).action, 'deny')
++  // It stays while it is a member and needs no publication; an unpublish of others does not touch it.
++  await rt.setPublished('chief-a', false)
++  assert.equal(rt.state.rooms.war.members.includes('spec-a'), true)
++})
 diff --git a/test/room-membership.test.js b/test/room-membership.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..5232a42dacd48ddf69fe4a14fa5c95375934ba73
+index 0000000000000000000000000000000000000000..886f13b56d7b5606af8fd11ed123a0fda4bdd870
 --- /dev/null
 +++ b/test/room-membership.test.js
-@@ -0,0 +1,394 @@
+@@ -0,0 +1,418 @@
 +import assert from 'node:assert/strict'
 +import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 +import { tmpdir } from 'node:os'
@@ -1608,6 +1797,7 @@ index 0000000000000000000000000000000000000000..5232a42dacd48ddf69fe4a14fa5c9537
 +import { install as installStore } from '../src/host/store.js'
 +import { install as installMemberAuth } from '../src/host/member-auth.js'
 +import { install as installAuthz } from '../src/host/authz.js'
++import { install as installReach } from '../src/host/reach.js'
 +import { install as installRooms, currentParticipants, isCrossOwnerRoom, linesVisibleTo, roomVisibleTo } from '../src/host/room-membership.js'
 +// Room membership (#50): humans and Chiefs share a room with distinct authorship.
 +// Team mode stays disabled — these tests cover the membership surface only.
@@ -1638,6 +1828,7 @@ index 0000000000000000000000000000000000000000..5232a42dacd48ddf69fe4a14fa5c9537
 +  installMemberAuth(rt)
 +  installAuthz(rt)
 +  installRooms(rt)
++  installReach(rt)
 +  t.after(async () => {
 +    await Promise.all(disposers.splice(0).map(cleanup => cleanup()))
 +    rmSync(dir, { recursive: true, force: true, maxRetries: 5 })
@@ -1837,6 +2028,28 @@ index 0000000000000000000000000000000000000000..5232a42dacd48ddf69fe4a14fa5c9537
 +    /Specialists stay/,
 +  )
 +  assert.equal(isCrossOwnerRoom(rt.state.rooms.shared, rt.state), true)
++})
++
++test('#51: a published specialist may join a cross-owner room, and unpublishing takes it out at once', async (t) => {
++  const { rt } = host(t, TEAM)
++  await rt.load()
++  const { alice } = await signAliceAndBob(rt)
++  const actorA = await rt.authenticate(alice.sessionToken)
++  const create = { members: ['chief-a', 'spec-b'], participants: [{ kind: 'human', id: 'owner-1' }, { kind: 'human', id: 'owner-2' }, { kind: 'bot', id: 'chief-a' }, { kind: 'bot', id: 'spec-b' }] }
++  assert.equal(rt.authorize(actorA, 'create-room', create).ok, false)
++  await rt.setPublished('spec-b', true)
++  assert.equal(rt.authorize(actorA, 'create-room', create).ok, true)
++  await rt.addRoomParticipant('shared', { kind: 'bot', id: 'spec-b' }, actorA)
++  assert.equal(rt.state.rooms.shared.members.includes('spec-b'), true)
++  // One unpublished member in the room also keeps another specialist out.
++  await assert.rejects(() => rt.addRoomParticipant('shared', { kind: 'bot', id: 'spec-a' }, actorA), /Specialists stay/)
++  await rt.setPublished('spec-b', false)
++  assert.equal(rt.state.rooms.shared.members.includes('spec-b'), false)
++  assert.ok(rt.state.rooms.shared.log.some(line => line.kind === 'left' && line.authorId === 'spec-b'))
++  // A Chief replaced by its owner's choice leaves too; the room itself stays.
++  await rt.setPublished('chief-b', false)
++  assert.equal(rt.state.rooms.shared.members.includes('chief-b'), false)
++  assert.ok(rt.state.rooms.shared.participants.some(p => p.kind === 'human' && p.id === 'owner-2' && p.leftSeq === undefined))
 +})
 +
 +test('existing single-owner groups still display and accept posts', async (t) => {

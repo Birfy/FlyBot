@@ -46,7 +46,9 @@ FlyBot's plugin API surface on top of the patched core: host hooks, client slots
 2. Slots/registry must keep the client build green (`npm run build`).
 3. Types in `flybot.d.ts` stay in sync with hooks/slots.
 4. Plugins report a host-visible failure with `flybot.warn` (Settings → Feedback / `diagnostics.jsonl`). They must not depend on `ctx.logger`: DSH may export none, and `flybot.warn` delegates to `rt.warn`.
-5. `flybot.roomApprovals.setProvider` lets a plugin (social) attach pending outbound holds to a shared-room view. It does not enable team mode.
+5. Reach (#51): the core's owner policy (`reach.js`) is not a middleware. `hooks.js` runs it before the `bot.send` chain, on approval release and on every deliver that carries a sender or a remote origin; a plugin's `allow` or `bypass` never skips it, and plugins see its denial as `{ action: 'deny', by: 'owner-policy' }`. Plugins read the published state through `flybot.bot.isPublished(id)`, `BotView.published` and the `bot.published` event (absent on an older core: treat as unknown).
+6. `flybot.roomApprovals.setProvider` lets a plugin (social) attach pending outbound holds to a shared-room view. It does not enable team mode.
+7. `cleanRemote` is the record boundary for a friend's published Bot: `name`, `homeName` and `owner` strip `@` (so they cannot look like a mention of another Bot in `nameMentions` chips/previews) and control characters/newlines, then cap at 60 characters. Handles stay on the `handle` field. Those labels then flow into delivery `fromName` (still `cleanName`'d and the body fenced) and into `list_bots` friends lines via the remote-chat roster. Group room logs use local team names, not published peer labels.
 
 ## Tests
 

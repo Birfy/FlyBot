@@ -48,11 +48,15 @@ async function start() {
     sessionTitle: { rename: async () => {} },
     sessions: { flush: async () => {} },
   })
+  let route
+  const register = ctx.connection.fetch.register
+  ctx.connection.fetch.register = (options) => { if (options.path.endsWith('bot')) route = options; return register(options) }
   apply(ctx, { home })
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   const tool = (name, args, sessionId) => ctx.registeredTools.get(name).execute(args, { agent: { id: sessionId } })
   await tool('list_bots', {}, 'a')
   const stop = async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) }
-  return { ctx, fb: ctx.flybot, tool, stop }
+  return { ctx, fb: ctx.flybot, tool, call, stop }
 }
 
 test('tree plugin on the real host: Chief adopted as root, create_child_bot, scoped fields, send policy, dispose', async () => {
@@ -78,6 +82,34 @@ test('tree plugin on the real host: Chief adopted as root, create_child_bot, sco
     assert.equal(h.fb.bot.send.list().find(m => m.name === 'tree')?.priority, h.fb.bot.send.priority.ROUTING) // ROUTING band, before social's APPROVAL
     fork.dispose()
     assert.equal(h.fb.bot.send.list().some(m => m.name === 'tree'), false)
+  } finally {
+    await h.stop()
+  }
+})
+
+test('#51 on the real host: a friend reaches a published tree Bot directly, never an unpublished one, and nothing goes through the root', async () => {
+  const h = await start()
+  try {
+    const fork = h.ctx.plugin(tree, {})
+    await waitFor(() => h.fb.scope('flybot-tree').fields.get('b', 'parent') === 'a')
+    const friend = { kind: 'remote', handle: '@coder.bob.home', home: '@bob.home', name: 'Coder' }
+    const send = to => h.fb.bot.send({ from: friend, to, text: 'hello from a friend' })
+    assert.equal(h.fb.bot.get('a').published, true, 'the Chief is published by default')
+    assert.equal(h.fb.bot.get('b').published, false, 'an adopted tree Bot is not')
+    assert.equal((await send('a')).action, 'allow')
+    const denied = await send('b')
+    assert.equal(denied.action, 'deny')
+    assert.equal(denied.by, 'owner-policy')
+    assert.equal((await h.call('set-published', { id: 'b', published: true })).ok, true)
+    assert.equal(h.fb.bot.get('b').published, true)
+    const direct = await send('b')
+    assert.equal(direct.action, 'allow', 'reached directly, not redirected to its parent')
+    // A deep child created under the published Bot stays unpublished.
+    const work = JSON.parse(await h.tool('create_child_bot', { name: 'Work', role_description: 'work' }, 'b')).created.id
+    assert.equal((await send(work)).action, 'deny')
+    assert.equal((await h.call('set-published', { id: 'b', published: false })).ok, true)
+    assert.equal((await send('b')).action, 'deny')
+    fork.dispose()
   } finally {
     await h.stop()
   }

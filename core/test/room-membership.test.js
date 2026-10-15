@@ -8,6 +8,7 @@ import { fakeContext } from './fake-ctx.js'
 import { install as installStore } from '../src/host/store.js'
 import { install as installMemberAuth } from '../src/host/member-auth.js'
 import { install as installAuthz } from '../src/host/authz.js'
+import { install as installReach } from '../src/host/reach.js'
 import { install as installRooms, currentParticipants, isCrossOwnerRoom, linesVisibleTo, roomVisibleTo } from '../src/host/room-membership.js'
 // Room membership (#50): humans and Chiefs share a room with distinct authorship.
 // Team mode stays disabled — these tests cover the membership surface only.
@@ -38,6 +39,7 @@ function host(t, saved) {
   installMemberAuth(rt)
   installAuthz(rt)
   installRooms(rt)
+  installReach(rt)
   t.after(async () => {
     await Promise.all(disposers.splice(0).map(cleanup => cleanup()))
     rmSync(dir, { recursive: true, force: true, maxRetries: 5 })
@@ -237,6 +239,28 @@ test('a specialist cannot join a cross-owner room', async (t) => {
     /Specialists stay/,
   )
   assert.equal(isCrossOwnerRoom(rt.state.rooms.shared, rt.state), true)
+})
+
+test('#51: a published specialist may join a cross-owner room, and unpublishing takes it out at once', async (t) => {
+  const { rt } = host(t, TEAM)
+  await rt.load()
+  const { alice } = await signAliceAndBob(rt)
+  const actorA = await rt.authenticate(alice.sessionToken)
+  const create = { members: ['chief-a', 'spec-b'], participants: [{ kind: 'human', id: 'owner-1' }, { kind: 'human', id: 'owner-2' }, { kind: 'bot', id: 'chief-a' }, { kind: 'bot', id: 'spec-b' }] }
+  assert.equal(rt.authorize(actorA, 'create-room', create).ok, false)
+  await rt.setPublished('spec-b', true)
+  assert.equal(rt.authorize(actorA, 'create-room', create).ok, true)
+  await rt.addRoomParticipant('shared', { kind: 'bot', id: 'spec-b' }, actorA)
+  assert.equal(rt.state.rooms.shared.members.includes('spec-b'), true)
+  // One unpublished member in the room also keeps another specialist out.
+  await assert.rejects(() => rt.addRoomParticipant('shared', { kind: 'bot', id: 'spec-a' }, actorA), /Specialists stay/)
+  await rt.setPublished('spec-b', false)
+  assert.equal(rt.state.rooms.shared.members.includes('spec-b'), false)
+  assert.ok(rt.state.rooms.shared.log.some(line => line.kind === 'left' && line.authorId === 'spec-b'))
+  // A Chief replaced by its owner's choice leaves too; the room itself stays.
+  await rt.setPublished('chief-b', false)
+  assert.equal(rt.state.rooms.shared.members.includes('chief-b'), false)
+  assert.ok(rt.state.rooms.shared.participants.some(p => p.kind === 'human' && p.id === 'owner-2' && p.leftSeq === undefined))
 })
 
 test('existing single-owner groups still display and accept posts', async (t) => {
