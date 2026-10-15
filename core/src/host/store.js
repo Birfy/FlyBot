@@ -278,7 +278,7 @@ export function install(rt) {
       migrated = true
     }
     // Unnamed groups from before names followed their members may still list old names.
-    const stale = Object.values(state.rooms).filter(room => !room.named && room.name !== rt.autoRoomName(room.members))
+    const stale = Object.values(state.rooms).filter(room => !room.named && room.name !== rt.autoRoomName(room.members, room))
     for (const room of stale) room.name = rt.autoRoomName(room.members)
     // Identity schema (#47). A version-1 team had no member records — ownership was
     // implicit in the single human — so it gets one initial owner and every Bot binds

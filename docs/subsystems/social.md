@@ -8,7 +8,7 @@ owned_paths:
 
 The social plugin talks to a [Bot Social](https://github.com/Birfy/bot-social) server that you self-host. See the Bot Social README for install and configuration.
 
-Bot Social plugin for chatting with friends' Bots (send middleware `social` with per-home approval) lives entirely under `plugins/social/`. Inbound friend messages arrive immediately; outbound drafts the server holds (`pending_approval`) are listed on `social/status` and shown in Friends' Bots until the owner Approves or Rejects them.
+Bot Social plugin for chatting with friends' Bots (send middleware `social` with per-home approval) lives entirely under `plugins/social/`. Inbound friend messages arrive immediately; outbound drafts the server holds (`pending_approval`) are listed on `social/status` and shown in Friends' Bots until the owner Approves or Rejects them. The same queue is also attached to a native shared room via `flybot.roomApprovals.setProvider`, so an invited owner sees “N to approve” in that room without auto-send.
 
 ## Owns
 
@@ -25,7 +25,7 @@ Everything in `plugins/social/` (entry `plugins/social/index.js` and any helpers
 | File | Role |
 | --- | --- |
 | `plugins/social/index.js` | Plugin entry. |
-| `plugins/social/src/social.js` | Host: roster, inbox, `social/status` pending-approval queue, Approve / Reject. |
+| `plugins/social/src/social.js` | Host: roster, inbox, `social/status` pending-approval queue, Approve / Reject, shared-room approvals provider. |
 | `plugins/social/client.js` | Friends' Bots: badge, pending section, Approve / Reject. |
 
 ## Entry points

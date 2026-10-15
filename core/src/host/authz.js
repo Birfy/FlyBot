@@ -5,8 +5,15 @@
 // behavior is untouched. This is not team mode: it is the access foundation the team
 // gates build on (docs/subsystems/team.md).
 //
+// Room membership (#50) adds one exception: a signed-in human may reach a room they
+// currently belong to (history, send, progress, participant changes they may make),
+// even when its Chiefs belong to more than one owner. Specialists and private 1:1
+// chats stay owner-scoped. Team mode stays disabled.
+//
 // Install order matters: right after member-auth, so rt.authzEnforced sees the same
 // state.authSessions the sign-in surface writes, and before any module it gates.
+
+import { currentParticipants, isDesignatedChief, roomVisibleTo } from './room-membership.js'
 
 // Endpoints a request without an actor may still reach. auth-invite keeps the
 // bootstrap rule in member-auth (first invite signs the installing human in).
@@ -34,7 +41,7 @@ const BOT_TARGETED = new Set([
 ])
 
 // Endpoints whose body names a room.
-const ROOM_TARGETED = new Set(['update-room', 'delete-room', 'room-progress', 'create-room'])
+const ROOM_TARGETED = new Set(['update-room', 'delete-room', 'room-progress', 'create-room', 'room-history', 'room-post'])
 
 // Endpoints whose body names a Session.
 const SESSION_TARGETED = new Set(['earlier', 'send', 'answer-question', 'dismiss-question', 'approval-answer', 'exchange'])
@@ -62,28 +69,58 @@ export function install(rt) {
     })
   }
 
+  // Shared rooms (#50): a current human participant may read and speak. Private
+  // owner rooms still match roomOwnedBy (legacy rooms with no participants).
+  const roomMemberOf = (actor, roomId) => roomVisibleTo(state, actor, roomId)
+
+  const listedHumans = (body) => {
+    const ids = new Set()
+    if (Array.isArray(body?.participants)) {
+      for (const p of body.participants) {
+        if (p?.kind === 'human' && typeof p.id === 'string') ids.add(p.id)
+      }
+    }
+    if (Array.isArray(body?.humans)) {
+      for (const id of body.humans) if (typeof id === 'string') ids.add(id)
+    }
+    return ids
+  }
+
+  const permittedSharedBot = (actor, botId, humans) => {
+    const bot = (state.bots || {})[botId]
+    if (!bot) return false
+    if (bot.ownerId === actor.memberId) return true
+    const owners = new Set(humans)
+    owners.add(actor.memberId)
+    return isDesignatedChief(state, botId) && owners.has(bot.ownerId)
+  }
+
   // A sessionId may be a Bot's own chat, an earlier part, or a room Session: resolve
   // it to its Bot or room and apply that owner's rule. Unresolvable is a deny.
   const sessionOwnedBy = (actor, sessionId) => {
     const id = String(sessionId ?? '')
     if (id === '') return false
+    if (state.rooms?.[id]) return roomMemberOf(actor, id) || roomOwnedBy(actor, id)
     const botId = rt.botOf?.(id)
     if (botId !== undefined && botId !== null && botId !== false) return botOwnedBy(actor, botId)
     const past = rt.pastOwners?.get(id)
     if (past) {
-      if (past.roomId !== undefined) return roomOwnedBy(actor, past.roomId)
+      if (past.roomId !== undefined) return roomMemberOf(actor, past.roomId) || roomOwnedBy(actor, past.roomId)
       if (past.botId !== undefined) return botOwnedBy(actor, past.botId)
       return false
     }
     for (const room of Object.values(state.rooms || {})) {
       const sessions = room.sessions ?? {}
-      if (Object.values(sessions).includes(id) || Object.values(room.segments ?? {}).some(list => (list ?? []).some(s => s?.sessionId === id))) return roomOwnedBy(actor, room.id)
+      if (Object.values(sessions).includes(id) || Object.values(room.segments ?? {}).some(list => (list ?? []).some(s => s?.sessionId === id))) {
+        return roomMemberOf(actor, room.id) || roomOwnedBy(actor, room.id)
+      }
     }
     return false
   }
 
   rt.botOwnedBy = botOwnedBy
   rt.roomOwnedBy = roomOwnedBy
+  rt.roomMemberOf = roomMemberOf
   rt.sessionOwnedBy = sessionOwnedBy
 
   rt.authorize = function authorize(actor, endpoint, body) {
@@ -122,8 +159,13 @@ export function install(rt) {
       }
       if (ep === 'usage') return body?.botId === undefined ? ALLOW : requireBot(body.botId)
       if (ep === 'set-main') return requireBot(body?.id)
+      if (ep === 'set-flags') {
+        const id = body?.id ?? body?.botId
+        if (botOwnedBy(actor, id) || roomOwnedBy(actor, id) || roomMemberOf(actor, id)) return ALLOW
+        return deny('bot/forbidden', 'You do not own that conversation')
+      }
       if (ep === 'stop-member-work') {
-        const roomOk = roomOwnedBy(actor, body?.roomId)
+        const roomOk = roomOwnedBy(actor, body?.roomId) || roomMemberOf(actor, body?.roomId)
         const botOk = botOwnedBy(actor, body?.botId)
         return roomOk || botOk ? ALLOW : deny('bot/forbidden', 'You do not own that Bot or room')
       }
@@ -133,13 +175,56 @@ export function install(rt) {
     if (ROOM_TARGETED.has(ep)) {
       if (ep === 'create-room') {
         const members = Array.isArray(body?.members) ? body.members : []
-        if (members.length === 0 || members.every(id => botOwnedBy(actor, id))) return ALLOW
+        const fromParticipants = Array.isArray(body?.participants)
+          ? body.participants.filter(p => p?.kind === 'bot' && !p.remote && !p.handle).map(p => p.id)
+          : []
+        const remotes = [
+          ...(Array.isArray(body?.participants) ? body.participants : []),
+        ].filter(p => p?.kind === 'bot' && (p.remote || p.handle)).map(p => p.handle || p.id)
+        if (remotes.some(handle => !rt.isPublishedRemote?.(handle))) {
+          return deny('bot/forbidden', 'Only a Chief or a Bot published to friends may join a shared room')
+        }
+        const bots = [...new Set([...members, ...fromParticipants])]
+        if (bots.length === 0 || bots.every(id => botOwnedBy(actor, id))) return ALLOW
+        const humans = listedHumans(body)
+        humans.add(actor.memberId)
+        if (bots.every(id => permittedSharedBot(actor, id, humans))) return ALLOW
         return deny('bot/forbidden', 'You do not own every Bot in that room')
       }
       if (ep === 'update-room') {
-        const ids = [body?.id, ...(Array.isArray(body?.members) ? body.members : []), ...(Array.isArray(body?.add) ? body.add : []), ...(Array.isArray(body?.remove) ? body.remove : [])].filter(id => id !== undefined)
-        if (ids.every(id => (id === body?.id ? roomOwnedBy(actor, id) : botOwnedBy(actor, id)))) return ALLOW
+        const roomId = body?.id
+        const addedRemotes = [
+          ...(Array.isArray(body?.addParticipants) ? body.addParticipants : []),
+        ].filter(p => p?.kind === 'bot' && (p.remote || p.handle)).map(p => p.handle || p.id)
+        if (addedRemotes.some(handle => !rt.isPublishedRemote?.(handle))) {
+          return deny('bot/forbidden', 'Only a Chief or a Bot published to friends may join a shared room')
+        }
+        if (roomOwnedBy(actor, roomId)) {
+          const ids = [...(Array.isArray(body?.members) ? body.members : []), ...(Array.isArray(body?.add) ? body.add : []), ...(Array.isArray(body?.remove) ? body.remove : [])]
+          if (ids.every(id => botOwnedBy(actor, id))) return ALLOW
+        }
+        if (roomMemberOf(actor, roomId)) {
+          const humans = listedHumans(body)
+          humans.add(actor.memberId)
+          for (const p of currentParticipants(state.rooms?.[roomId])) {
+            if (p.kind === 'human') humans.add(p.id)
+          }
+          const bots = [...(Array.isArray(body?.add) ? body.add : []), ...(Array.isArray(body?.members) ? body.members : [])]
+          if (bots.every(id => permittedSharedBot(actor, id, humans) || botOwnedBy(actor, id))) return ALLOW
+          if (bots.length === 0) return ALLOW
+        }
         return deny('bot/forbidden', 'You do not own that room or one of its Bots')
+      }
+      if (ep === 'room-history' || ep === 'room-progress' || ep === 'room-post') {
+        const id = body?.id ?? body?.roomId
+        return roomMemberOf(actor, id) || roomOwnedBy(actor, id) ? ALLOW : deny('bot/forbidden', 'You are not a member of that room')
+      }
+      if (ep === 'delete-room') {
+        const id = body?.id ?? body?.roomId
+        if (roomOwnedBy(actor, id)) return ALLOW
+        const room = state.rooms?.[id]
+        const me = currentParticipants(room).find(p => p.kind === 'human' && p.id === actor.memberId)
+        return me?.role === 'admin' ? ALLOW : deny('bot/forbidden', 'You do not own that room')
       }
       return requireRoom(body?.id ?? body?.roomId)
     }

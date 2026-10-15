@@ -2,10 +2,10 @@ FlyBot patch 0010-member-auth on Fei2411/DeepSeek-Bot@2b10c70 (ds-bot/). Generat
 
 diff --git a/src/host/member-auth.js b/src/host/member-auth.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..58352bbb8a9600bd2d0ba98ee837be84dd1613be
+index 0000000000000000000000000000000000000000..1fa95d1e9b59aa60a736c8c2314390e14d177f26
 --- /dev/null
 +++ b/src/host/member-auth.js
-@@ -0,0 +1,187 @@
+@@ -0,0 +1,189 @@
 +// Member auth foundation (#48): invitations, member sessions, and the whoami that the
 +// channel resolves from the x-flybot-member-session header. Members are human owners
 +// (store #47 identity schema: id, createdAt, designatedChiefId) — Bot `role` is a job
@@ -118,6 +118,8 @@ index 0000000000000000000000000000000000000000..58352bbb8a9600bd2d0ba98ee837be84
 +        memberId: member.id,
 +        createdAt: now,
 +        revokedAt: null,
++        // Session-scoped only: the member record stays the #47 identity shape.
++        ...(displayName ? { displayName } : {}),
 +      }
 +      invitation.redeemedAt = now
 +      invitation.redeemedByMemberId = member.id
@@ -133,7 +135,7 @@ index 0000000000000000000000000000000000000000..58352bbb8a9600bd2d0ba98ee837be84
 +    if (!session || session.revokedAt) return null
 +    const member = (rt.state.members || {})[session.memberId]
 +    if (!member) return null
-+    return { memberId: member.id, sessionId: session.id, displayName: displayNameOf(member) }
++    return { memberId: member.id, sessionId: session.id, displayName: displayNameOf(member, session.displayName) }
 +  }
 +
 +  rt.revokeSession = async function revokeSession(sessionToken) {
