@@ -27,12 +27,16 @@ const textOf = content => (Array.isArray(content) ? content.filter(block => bloc
  * messageId, text } is a message the user typed in the chat; { kind: 'none' } is anything
  * else (a kickoff, a one-off request without a durable message), which writes nothing.
  */
-const isContextSnapshot = source => source?.form === 'snapshot' || source?.kind === 'ds-bot-time-context' || source?.kind === 'time-context'
+// Messages the host appends as role:'user' that the user did not type: context snapshots (the
+// time context), the AGENTS.md baseline (form 'instructions') and notices (plan mode, tool
+// reminders). Matched by form, not by a whitelist of senders, so a new notice kind is skipped too.
+const CONTEXT_FORMS = new Set(['snapshot', 'instructions', 'notice'])
+const isContextSnapshot = source => CONTEXT_FORMS.has(source?.form) || source?.kind === 'agent-instructions' || source?.kind === 'ds-bot-time-context' || source?.kind === 'time-context'
 
 export function remoteTurn(messages) {
-  // Context snapshots the host appends as user messages (the time context, refreshed every
-  // few minutes) are not what the user typed: skip them, or the turn reads as 'none' and
-  // the user's message is silently dropped.
+  // Context the host appends as user messages (the time context, refreshed every few minutes;
+  // the AGENTS.md baseline on a chat's first turn; notices) is not what the user typed: skip it,
+  // or the turn reads as 'none' and the user's message is silently dropped (#66).
   const last = [...(messages ?? [])].reverse().find(message => message?.role === 'user' && !isContextSnapshot(message.source))
   if (last === undefined || typeof last.id !== 'string') return { kind: 'none' }
   const source = last.source

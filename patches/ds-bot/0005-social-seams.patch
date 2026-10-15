@@ -221,10 +221,10 @@ index ae2e8157424841c1ecfce4c7c833c20e5d29b1a2..0e0d7ecd8a895d01309601229c4bd384
      if (steer) agent.steer(message)
 diff --git a/src/host/remote-chat.js b/src/host/remote-chat.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..2938902c98c5a38930d6a702fb962e7b0ad394fc
+index 0000000000000000000000000000000000000000..23ce5956ddfc487174c094fbf31e9c22136ba400
 --- /dev/null
 +++ b/src/host/remote-chat.js
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,179 @@
 +// FlyBot remote chats: a friend's (remote) Bot as a chat of its own, in ds-bot's own
 +// session model. Each remote Bot a plugin publishes gets a Bot record marked `remote`
 +// ({ handle, home, homeName, plugin }) whose Session runs on the model route
@@ -254,12 +254,16 @@ index 0000000000000000000000000000000000000000..2938902c98c5a38930d6a702fb962e7b
 + * messageId, text } is a message the user typed in the chat; { kind: 'none' } is anything
 + * else (a kickoff, a one-off request without a durable message), which writes nothing.
 + */
-+const isContextSnapshot = source => source?.form === 'snapshot' || source?.kind === 'ds-bot-time-context' || source?.kind === 'time-context'
++// Messages the host appends as role:'user' that the user did not type: context snapshots (the
++// time context), the AGENTS.md baseline (form 'instructions') and notices (plan mode, tool
++// reminders). Matched by form, not by a whitelist of senders, so a new notice kind is skipped too.
++const CONTEXT_FORMS = new Set(['snapshot', 'instructions', 'notice'])
++const isContextSnapshot = source => CONTEXT_FORMS.has(source?.form) || source?.kind === 'agent-instructions' || source?.kind === 'ds-bot-time-context' || source?.kind === 'time-context'
 +
 +export function remoteTurn(messages) {
-+  // Context snapshots the host appends as user messages (the time context, refreshed every
-+  // few minutes) are not what the user typed: skip them, or the turn reads as 'none' and
-+  // the user's message is silently dropped.
++  // Context the host appends as user messages (the time context, refreshed every few minutes;
++  // the AGENTS.md baseline on a chat's first turn; notices) is not what the user typed: skip it,
++  // or the turn reads as 'none' and the user's message is silently dropped (#66).
 +  const last = [...(messages ?? [])].reverse().find(message => message?.role === 'user' && !isContextSnapshot(message.source))
 +  if (last === undefined || typeof last.id !== 'string') return { kind: 'none' }
 +  const source = last.source
@@ -472,10 +476,10 @@ index 0000000000000000000000000000000000000000..7734f24c26e9793ed11c10acb7fc1f6f
 +})
 diff --git a/test/remote-chat.test.js b/test/remote-chat.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..478285a44dd984ee47c4556156563ae197a3059e
+index 0000000000000000000000000000000000000000..e96ef4d40dc3fa19344755d83db4d59b85144e0c
 --- /dev/null
 +++ b/test/remote-chat.test.js
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,54 @@
 +import { test } from 'node:test';
 +import assert from 'node:assert/strict';
 +import { remoteTurn, isRemoteChat, REMOTE_PROVIDER } from '../src/host/remote-chat.js';
@@ -517,4 +521,16 @@ index 0000000000000000000000000000000000000000..478285a44dd984ee47c4556156563ae1
 +    assert.equal(t.kind, 'send');
 +    assert.equal(t.text, 'hi');
 +    assert.equal(t.messageId, 'm1');
++});
++
++test('agent-instructions and notice messages after the typed text do not swallow it', () => {
++    const baseline = user([{ type: 'text', text: '<system-reminder>AGENTS.md ...</system-reminder>' }],
++        { kind: 'agent-instructions', form: 'instructions', baseline: true, changes: [] }, 'm2');
++    const notice = user('plan mode on', { kind: 'plan-mode', form: 'notice' }, 'm3');
++    for (const extra of [[baseline], [baseline, notice]]) {
++        const t = remoteTurn([user('hi', { kind: 'user' }), ...extra]);
++        assert.equal(t.kind, 'send'); assert.equal(t.text, 'hi'); assert.equal(t.messageId, 'm1');
++    }
++    assert.equal(remoteTurn([user('<f/>', { kind: 'bot', form: 'remote-chat', text: 'pong' }), baseline]).kind, 'echo');
++    assert.equal(remoteTurn([baseline]).kind, 'none');
 +});
