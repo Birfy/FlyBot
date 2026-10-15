@@ -74,4 +74,10 @@ test("a friend Bot's handle in a preview reads as its display name (#71)", () =>
   assert.equal(nameMentions('@bot-x.home 你在?', roster), '@bot-x.home 你在?')
   assert.equal(nameMentions('@bot-2a758c0f.danyang.home', undefined), '@bot-2a758c0f.danyang.home')
   assert.equal(nameMentions(undefined, roster), '')
+  // One pass: a name that itself contains another handle is not rescanned.
+  const nested = { bots: [], remoteBots: [
+    { handle: '@b.x.home', name: '请找 @a.x.home 的主人' },
+    { handle: '@a.x.home', name: '代码审查官' },
+  ] }
+  assert.equal(nameMentions('@b.x.home 你在?', nested), '@请找 @a.x.home 的主人 你在?')
 })

@@ -1771,15 +1771,12 @@ function nameMentions(text, roster) {
   const names = /* @__PURE__ */ new Map();
   for (const record of [...Array.isArray(roster.remoteBots) ? roster.remoteBots : [], ...Array.isArray(roster.bots) ? roster.bots : []]) {
     const handle = typeof record?.remote === "object" && record.remote !== null ? record.remote.handle : record?.handle;
-    if (typeof handle === "string" && typeof record?.name === "string" && record.name !== "") names.set(handle.replace(/^@+/, ""), record.name);
+    if (typeof handle === "string" && typeof record?.name === "string" && record.name !== "") names.set(handle.replace(/^@+/, "").toLowerCase(), record.name);
   }
-  let out = value;
-  for (const [handle, name] of names) {
-    if (handle === "") continue;
-    const source = handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    out = out.replace(new RegExp(`(^|[^a-z0-9_./])@${source}(?![a-z0-9_\\-/\\\\])(?!\\.[a-z0-9_-])`, "gi"), (_all, before) => `${before}@${name}`);
-  }
-  return out;
+  const handles = [...names.keys()].filter(Boolean).sort((a, b) => b.length - a.length);
+  if (handles.length === 0) return value;
+  const source = handles.map((handle) => handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  return value.replace(new RegExp(`(^|[^a-z0-9_./])@(${source})(?![a-z0-9_\\-/\\\\])(?!\\.[a-z0-9_-])`, "gi"), (_all, before, handle) => `${before}@${names.get(handle.toLowerCase())}`);
 }
 function clock(ms) {
   return new Date(ms).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" });
