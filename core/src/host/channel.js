@@ -83,24 +83,9 @@ export function install(rt) {
     // Set while another dsh host holds the team (store.js): why this one cannot change it.
     readOnly: rt.readOnly() ?? null,
     })
-    if (!(rt.authzEnforced() && actor)) return full
-    const rooms = full.rooms.filter(r => rt.roomMemberOf?.(actor, r.id) || rt.roomOwnedBy(actor, r.id))
-    const sharedBots = new Set()
-    for (const room of rooms) {
-      for (const id of room.members ?? []) sharedBots.add(id)
-      for (const p of room.participants ?? []) if (p.kind === 'bot' && p.leftSeq === undefined) sharedBots.add(p.id)
-    }
-    return {
-      ...full,
-      bots: full.bots.filter(b => b.ownerId === actor.memberId || sharedBots.has(b.id)),
-      rooms,
-      self: { memberId: actor.memberId, displayName: actor.displayName },
-      agents: [],
-      questions: {},
-      exchangeTurns: {},
-      secrets: [],
-      secretRequests: {},
-    }
+    // authz.js narrows to the actor; per-session entries keep the actor's own, and
+    // deployment-wide surfaces follow the same single-member rule as the writes.
+    return rt.ownedView(full, actor)
   }
   // What changes without a new revision, sent with every state answer. `memoryNews`:
   // per Bot, its latest memory change; `memoryReviews`: memory reviews waiting or
@@ -115,21 +100,7 @@ export function install(rt) {
       connectors: rt.connectorsView(),
       capabilityStatuses: rt.capabilityStatusesView(),
     }
-    if (!(rt.authzEnforced() && actor)) return full
-    const mine = id => state.bots[id]?.ownerId === actor.memberId
-    const pick = obj => Object.fromEntries(Object.entries(obj ?? {}).filter(([id]) => mine(id)))
-    return {
-      activity: pick(full.activity),
-      work: {
-        bots: pick(full.work.bots),
-        rooms: Object.fromEntries(Object.entries(full.work.rooms ?? {}).filter(([id]) => rt.roomMemberOf?.(actor, id) || rt.roomOwnedBy(actor, id))),
-        approvals: full.work.approvals.filter(a => mine(a.botId)),
-      },
-      memoryNews: pick(full.memoryNews),
-      memoryReviews: 0,
-      connectors: [],
-      capabilityStatuses: pick(full.capabilityStatuses),
-    }
+    return rt.ownedLive(full, actor)
   }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
