@@ -29,6 +29,9 @@ const NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/i
 
 const clone = value => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)))
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+// Peer-controlled labels (display name, home, owner): strip @ so they cannot look
+// like a mention of another Bot, strip controls/newlines, keep a 60-char cap (#75).
+export const cleanPublishedName = (value) => String(value ?? '').replace(/@/g, '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
 // A remote address: { kind: 'remote', handle, home? } or a '@handle' string. Remote Bots
 // are never in bot.list(); their handle is '@<bot>.<home>' (home '@<home>') or a plain
 // per-bot identity.
@@ -537,7 +540,10 @@ export function install(rt) {
   }
   const cleanRemote = (plugin, bot) => {
     const remote = toRemote(bot.handle)
-    return { handle: remote.handle, home: bot.home ? toRemote(bot.home).handle : remote.home, name: String(bot.name ?? remote.handle).slice(0, 60), ...(bot.homeName ? { homeName: String(bot.homeName).slice(0, 60) } : {}), ...(bot.owner ? { owner: String(bot.owner).slice(0, 60) } : {}), plugin, remote: true }
+    const name = cleanPublishedName(bot.name) || cleanPublishedName(remote.handle) || 'a remote Bot'
+    const homeName = cleanPublishedName(bot.homeName)
+    const owner = cleanPublishedName(bot.owner)
+    return { handle: remote.handle, home: bot.home ? toRemote(bot.home).handle : remote.home, name, ...(homeName ? { homeName } : {}), ...(owner ? { owner } : {}), plugin, remote: true }
   }
   const remoteMembers = {
     // Replaces this plugin's list; saves only when it changed.

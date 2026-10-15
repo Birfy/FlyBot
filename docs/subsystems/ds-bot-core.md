@@ -69,6 +69,7 @@ Patched upstream `ds-bot` that ships as `core/`. Never edit `ds-bot/` by hand; c
 6. Host diagnostics never depend on `ctx.logger`: DSH may export no logger, and a test or plugin-local host may carry one without `warn`. `rt.warn` still writes stderr and the diagnostics log in that case (`src/host/diagnostics.js`). Plugins reach the same log through `flybot.warn` (#68); see [plugin-runtime](plugin-runtime.md).
 7. `remoteTurn` (`src/host/remote-chat.js`) finds what the user typed on a friend's remote chat by skipping host-appended `role:'user'` context: forms `snapshot`, `instructions` (the AGENTS.md baseline on a chat's first turn) and `notice`, and the time-context kinds. Match by form, not by a whitelist of senders, or the first message of a new chat is dropped (#66).
 8. A friend's remote Bot is stored and delivered by its handle (`@<bot>.<home>` — what the @ menu inserts and `sendUserMentions` matches). Where the user reads it — mention chips (`src/client/user-message.js`) and sidebar previews (`nameMentions` in `src/client/text.js`) — the client rewrites the handle to the display name taken from the local roster (`roster.bots[].remote`, `roster.remoteBots`), never from message text, so a remote-controlled name reaches the UI only through the sanitized roster records (#71; display names, #9).
+9. `0002-flybot-api-host` `cleanRemote` sanitizes those peer-controlled `name` / `homeName` / `owner` labels (strip `@` and controls/newlines, 60-char cap) before they are stored. Details in [plugin-runtime](plugin-runtime.md) (#75).
 
 ## Tests
 
