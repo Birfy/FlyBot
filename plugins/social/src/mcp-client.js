@@ -1,8 +1,95 @@
 // A minimal client for a Bot Social server's owner MCP endpoint (POST <server>/mcp,
 // stateless Streamable HTTP, JSON responses), authenticated by an owner connector token.
 // Only tools/call is used; see bot-social src/owner-mcp.ts for the tool set.
+// One client instance is reused for the plugin lifetime (seq ids, no initialize per call).
+// HTTPS to a remote Bot Social host pays ~2 s per fresh TCP+TLS, so every fetch shares
+// one keep-alive http(s).Agent (Node builtins; no extra package).
+
+import http from 'node:http'
+import https from 'node:https'
 
 const UNTRUSTED = /^[\s\S]*?\n([\s\S]*)\n[^\n]*$/
+const GRANT_CONCURRENCY = 4
+const KEEP_ALIVE_MS = 30_000
+
+function makeAgent(Agent) {
+  return new Agent({ keepAlive: true, maxSockets: 8, keepAliveMsecs: KEEP_ALIVE_MS })
+}
+
+let sharedHttps
+let sharedHttp
+
+export function socialHttpAgent() {
+  sharedHttps ??= makeAgent(https.Agent)
+  return sharedHttps
+}
+
+function agentFor(url) {
+  if (String(url).startsWith('http:')) {
+    sharedHttp ??= makeAgent(http.Agent)
+    return sharedHttp
+  }
+  return socialHttpAgent()
+}
+
+export function fetchOptions(init = {}) {
+  return { ...init, agent: init.agent ?? socialHttpAgent() }
+}
+
+export function socialFetch(url, init = {}) {
+  const parsed = new URL(String(url))
+  const lib = parsed.protocol === 'http:' ? http : https
+  const agent = init.agent ?? agentFor(url)
+  const method = String(init.method ?? 'GET').toUpperCase()
+  const headers = { ...(init.headers ?? {}) }
+  const signal = init.signal
+  return new Promise((resolve, reject) => {
+    const req = lib.request(parsed, { method, headers, agent }, (res) => {
+      const chunks = []
+      res.on('data', chunk => chunks.push(chunk))
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks)
+        const headerMap = new Headers()
+        for (const [key, value] of Object.entries(res.headers)) {
+          if (value === undefined) continue
+          headerMap.set(key, Array.isArray(value) ? value.join(', ') : String(value))
+        }
+        resolve(new Response(buf, { status: res.statusCode ?? 0, statusText: res.statusMessage ?? '', headers: headerMap }))
+      })
+    })
+    req.on('error', reject)
+    if (signal) {
+      const abort = () => {
+        req.destroy()
+        reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }))
+      }
+      if (signal.aborted) { abort(); return }
+      signal.addEventListener('abort', abort, { once: true })
+      req.on('close', () => signal.removeEventListener('abort', abort))
+    }
+    if (init.body) req.write(init.body)
+    req.end()
+  })
+}
+
+export async function mapPool(items, limit, fn) {
+  const list = [...items]
+  if (list.length === 0) return []
+  const cap = Math.max(1, Math.min(limit || GRANT_CONCURRENCY, list.length))
+  const out = new Array(list.length)
+  let next = 0
+  async function worker() {
+    for (;;) {
+      const at = next++
+      if (at >= list.length) return
+      out[at] = await fn(list[at], at)
+    }
+  }
+  await Promise.all(Array.from({ length: cap }, () => worker()))
+  return out
+}
+
+export { GRANT_CONCURRENCY }
 
 export class BotSocialError extends Error {
   constructor(message, code) {
@@ -13,13 +100,15 @@ export class BotSocialError extends Error {
 
 export const CALL_TIMEOUT_MS = 30_000
 
-export function createMcpClient({ server, token, fetch: fetchImpl = globalThis.fetch, timeoutMs = CALL_TIMEOUT_MS }) {
+export function createMcpClient({ server, token, fetch: fetchImpl = socialFetch, timeoutMs = CALL_TIMEOUT_MS }) {
   if (!server) throw new Error('flybot-social: server URL is required')
   if (!token) throw new Error('flybot-social: owner connector token is required')
   const url = `${server.replace(/\/+$/, '')}/mcp`
   let seq = 0
   async function callTool(name, args = {}) {
     // Every call has a deadline: a hung server is an error, never a stall.
+    // Stateless tools/call only: Bot Social's owner MCP does not need initialize, and
+    // this client is created once per plugin start (not per Friends' Bots refresh).
     const signal = AbortSignal.timeout(timeoutMs)
     let response
     let body
@@ -98,7 +187,7 @@ export function normalizeGrants(value) {
 // Owner MCP + REST grant/invite helpers. Named methods so social.js never builds
 // URLs or tool names inline; a later server can add list_grants / revoke_grant
 // without touching the plugin's grant bookkeeping.
-export function createSocialApi({ server, token, fetch: fetchImpl = globalThis.fetch, timeoutMs = CALL_TIMEOUT_MS, client } = {}) {
+export function createSocialApi({ server, token, fetch: fetchImpl = socialFetch, timeoutMs = CALL_TIMEOUT_MS, client } = {}) {
   const mcp = client ?? createMcpClient({ server, token, fetch: fetchImpl, timeoutMs })
   const base = String(server ?? '').replace(/\/+$/, '')
 

@@ -6,6 +6,8 @@
 // Peer text is untrusted: fence it before anything model-visible. Platform system copy
 // (joined / left / started) is sanitized the same way as a display name.
 
+import { socialFetch } from './mcp-client.js'
+
 export const FACE_JOIN_CODE = /^\d{6}$/
 export const FACE_MAX_MEMBERS = 8
 export const FACE_TTL_MS = 10 * 60 * 1000
@@ -338,7 +340,7 @@ const normHandle = (handle) => {
   return `@${raw.replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 120)}`
 }
 
-export function createFaceRoomApi({ server, token, fetch: fetchImpl = globalThis.fetch, timeoutMs = CALL_TIMEOUT_MS } = {}) {
+export function createFaceRoomApi({ server, token, fetch: fetchImpl = socialFetch, timeoutMs = CALL_TIMEOUT_MS } = {}) {
   if (!server) throw new Error('flybot-social: server URL is required')
   if (!token) throw new Error('flybot-social: owner connector token is required')
   const origin = String(server).replace(/\/+$/, '')

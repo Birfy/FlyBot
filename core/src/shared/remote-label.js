@@ -7,11 +7,51 @@ export function cleanPeerName(name, fallback = '') {
   return text || fallback
 }
 
+export function normRemoteHandle(handle) {
+  return `@${String(handle ?? '').trim().replace(/^@+/, '').toLowerCase()}`
+}
+
 function ownerFromHandle(handle) {
   const parts = String(handle ?? '').replace(/^@/, '').split('.')
   if (parts.length >= 3 && parts.at(-1) === 'home') return parts.at(-2)
   if (parts.length === 2 && parts[1] === 'home') return parts[0]
   return ''
+}
+
+export function isHomeLevelRemote(record) {
+  const handle = String(record?.handle ?? record?.remote?.handle ?? '')
+  const key = normRemoteHandle(handle)
+  const parts = key.replace(/^@/, '').split('.')
+  return parts.length === 2 && parts[1] === 'home'
+}
+
+export function isListedRemoteChat(bot) {
+  if (!bot) return false
+  if (bot.hidden) return false
+  const remote = bot.remote
+  if (!remote || typeof remote.handle !== 'string') return true
+  if (remote.gone || remote.hidden) return false
+  if (isHomeLevelRemote(remote)) return false
+  return true
+}
+
+export function listedChatBots(roster) {
+  return (roster?.bots ?? []).filter(isListedRemoteChat)
+}
+
+export function pickerBotLabel(bot) {
+  if (!bot) return ''
+  if (!bot.remote) return bot.name ?? ''
+  return remoteBotTitle({
+    displayName: bot.name,
+    name: bot.name,
+    ownerName: bot.remote.owner || bot.remote.homeName,
+    owner: bot.remote.owner,
+    homeName: bot.remote.homeName,
+    home: bot.remote.home,
+    handle: bot.remote.handle,
+    isChief: bot.remote.isChief,
+  })
 }
 
 export function ownerNameOf(record) {

@@ -9,9 +9,10 @@ import { apply as applyDsBot } from 'ds-bot'
 import { fakeContext } from './fake-ctx.js'
 import { apply as applySocial, inject, name } from '../index.js'
 import { approvalView, createSocial, draftText, homeHandleOf, onboard, registerUnavailable, startSocial, unavailableMessage } from '../src/social.js'
-import { createMcpClient, createSocialApi, untrustedText } from '../src/mcp-client.js'
+import { createMcpClient, createSocialApi, untrustedText, mapPool, socialHttpAgent, fetchOptions } from '../src/mcp-client.js'
 import {
   hideRemoteInSettings, forgetHiddenIfGone, filterHiddenHomes, presentRemoteHandles,
+  HIDE_GONE_FETCHES, isHomeLevelHandle, isHiddenRemote, clearHiddenRemote, homeOfHiddenHandle,
   approvalsForSession, chatApprovalTitle, WAITING_OWNER, WAITING_OTHERS, REJECT_NOTE,
 } from '../src/hidden-remotes.js'
 
@@ -491,7 +492,7 @@ test('client.js registers a sidebar section and @ rows into the FlyBot registry'
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
   const plugin = registered[0].factory(() => ({ createElement: () => null, useEffect() {}, useState: v => [v, () => {}] }))
   plugin.apply({})
-  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.composer.mention#social', 'flybot.bot.details#social-invite', 'flybot.room.overview#social-face', 'flybot.session.dock#social-approval'])
+  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.new-chat.action#social-face-group', 'flybot.composer.mention#social', 'flybot.bot.details#social-invite', 'flybot.room.overview#social-face', 'flybot.session.dock#social-approval'])
   // Transport errors are worded in English from their code, never the localized host text.
   assert.match(plugin.errorText(Object.assign(new Error('请求失败（HTTP 404）'), { code: 'HTTP_404' })), /^The FlyBot host did not answer \(HTTP 404\)/)
   assert.equal(plugin.errorText(Object.assign(new Error('x'), { code: 'bot/refused' })), 'x')
@@ -502,7 +503,7 @@ test('client.js registers a sidebar section and @ rows into the FlyBot registry'
   assert.equal(typeof sandbox.__flybot__.social.canInvite, 'function')
   assert.equal(sandbox.__flybot__.social.canInvite('a'), false)
   assert.equal(typeof sandbox.__flybot__.social.onChange, 'function') // status-change event, so callers need not poll
-  const rows = await entries[1][1].candidates('cod')
+  const rows = await entries.find(([slot]) => slot === 'flybot.composer.mention')[1].candidates('cod')
   assert.deepEqual(JSON.parse(JSON.stringify(rows)), [{ name: 'Coder · remote', description: '@coder.bob.home · @bob.home', section: 'Friends\' Bots', value: '@coder.bob.home ' }])
 })
 
@@ -1266,6 +1267,26 @@ function loadSocialClient(callImpl) {
   return { registered, entries, walk, pluginOf, h }
 }
 
+test('social HTTP keep-alive reuses one Agent', () => {
+  const agent = socialHttpAgent()
+  assert.equal(socialHttpAgent(), agent)
+  assert.equal(agent.keepAlive, true)
+  assert.equal(fetchOptions({ method: 'POST' }).agent, agent)
+  assert.equal(fetchOptions({ agent: 'x' }).agent, 'x')
+})
+
+test('mapPool runs work concurrently up to the cap', async () => {
+  let inflight = 0
+  let max = 0
+  await mapPool([1, 2, 3, 4], 2, async () => {
+    inflight += 1
+    max = Math.max(max, inflight)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    inflight -= 1
+  })
+  assert.equal(max, 2)
+})
+
 test('Friends\' Bots (#92): Face-to-face group is under + Add; the inline join form is gone', () => {
   const sidebar = (adding) => {
     const { entries, walk, pluginOf } = loadSocialClient(async () => ({ connected: true, bots: [{ id: 'a', name: 'Chief', isMain: true }], homes: [], rooms: [] }))
@@ -1284,6 +1305,67 @@ test('Friends\' Bots (#92): Face-to-face group is under + Add; the inline join f
   assert.ok(opened.nodes.some(n => n.type === 'button' && n.props['data-flybot'] === 'face-group-open' && n.children.includes('Face-to-face group')))
   assert.equal(opened.nodes.some(n => n.type === 'button' && n.children.includes('Join with a number')), false)
   assert.equal(opened.nodes.some(n => n.props['data-flybot'] === 'face-join'), false)
+
+  const loading = (() => {
+    const { entries, walk, pluginOf } = loadSocialClient(async () => ({ connected: true, bots: [], homes: [], rooms: [] }))
+    const plugin = pluginOf([null, '', true, true, {}, {}, '', [], new Set(), false, false])
+    plugin.apply({})
+    const entry = entries.find(([slot]) => slot === 'flybot.sidebar.section')
+    return walk(entry[1].component({}))
+  })()
+  assert.ok(loading.some(n => n.props['data-flybot'] === 'face-group-entry'), 'Face-to-face group must show while the roster is still loading')
+  assert.ok(loading.some(n => n.type === 'button' && n.children.includes('+ Add') || n.children.includes('Done')))
+  assert.equal(loading.some(n => n.type === 'div' && n.children.includes('Loading…')), false)
+})
+
+test('Friends\' Bots mount starts remote-bots, settings, and status in parallel', async () => {
+  const started = []
+  let resolved = 0
+  const { registered, entries, walk } = loadSocialClient(async (endpoint) => {
+    started.push(endpoint)
+    assert.equal(resolved, 0, `${endpoint} started after another Friends' Bots call finished`)
+    await new Promise(resolve => setTimeout(resolve, 25))
+    resolved += 1
+    if (endpoint === 'social/remote-bots') return { homes: [] }
+    if (endpoint === 'social/settings') return { autoAccept: {} }
+    if (endpoint === 'social/status') return { approvals: [], bots: [] }
+    if (endpoint === 'social/face-rooms') return { rooms: [] }
+    return {}
+  })
+  const hooks = []
+  let hookI = 0
+  const plugin = registered[0].factory(() => ({
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() }),
+    Fragment: 'F',
+    useEffect: fn => { fn?.() },
+    useState: (init) => {
+      const i = hookI++
+      if (hooks[i] === undefined) hooks[i] = typeof init === 'function' ? init() : init
+      return [hooks[i], (value) => { hooks[i] = typeof value === 'function' ? value(hooks[i]) : value }]
+    },
+    useRef: v => ({ current: v }),
+    useMemo: f => f(),
+  }))
+  plugin.apply({})
+  const entry = entries.find(([slot]) => slot === 'flybot.sidebar.section')
+  hookI = 0
+  walk(entry[1].component({}))
+  assert.ok(started.includes('social/remote-bots'))
+  assert.ok(started.includes('social/settings'))
+  assert.ok(started.includes('social/status'))
+  const trio = ['social/remote-bots', 'social/settings', 'social/status']
+  assert.deepEqual(started.filter(name => trio.includes(name)).slice(0, 3).sort(), trio.slice().sort())
+})
+
+test('the sidebar + menu gets a Face-to-face group action from social', () => {
+  const { entries, pluginOf } = loadSocialClient(async () => ({}))
+  pluginOf([]).apply({})
+  const row = entries.find(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-face-group')
+  assert.ok(row)
+  assert.equal(row[1].label, 'Face-to-face group')
+  assert.match(row[1].hint, /6-digit/)
+  assert.equal(row[1].order, 15)
+  assert.equal(typeof row[1].run, 'function')
 })
 
 test('face-to-face auto-send maps to PATCH /v1/me and swallows confirmation', async (t) => {
@@ -1720,16 +1802,35 @@ test('face-to-face join registration failures are friendly and leave no leftover
   assert.equal(scope.fields.get('b', 'member').handle, '@writer.danyang.home', 'an identity already in a room is kept when another join fails')
 })
 
-test('#90: hide helpers persist a handle and forget it only after it leaves the granted list', () => {
-  let settings = hideRemoteInSettings({ autoAccept: {} }, '@coder.bob.home', 10)
+test('#90: hide helpers persist a handle and forget it only after two successful home fetches', () => {
+  let settings = hideRemoteInSettings({ autoAccept: {} }, 'Coder.Bob.Home', 10)
   assert.equal(settings.hiddenRemotes['@coder.bob.home'].hiddenAt, 10)
-  const homes = [{ home: '@bob.home', bots: [{ handle: '@coder.bob.home' }, { handle: '@writer.bob.home' }] }]
+  assert.equal(isHiddenRemote(settings, '@CODER.bob.home'), true)
+  assert.equal(isHomeLevelHandle('@friend.home', '@friend.home'), true)
+  assert.equal(isHomeLevelHandle('@coder.bob.home', '@bob.home'), false)
+  assert.equal(isHomeLevelHandle('@bob.bot', '@bob.bot'), false)
+  const homes = [{ home: '@bob.home', bots: [{ handle: '@coder.bob.home' }, { handle: '@writer.bob.home' }, { handle: '@bob.home', name: 'Friend' }] }]
   assert.deepEqual(filterHiddenHomes(homes, settings)[0].bots.map(b => b.handle), ['@writer.bob.home'])
-  assert.deepEqual(presentRemoteHandles(homes), ['@coder.bob.home', '@writer.bob.home'])
+  assert.ok(presentRemoteHandles(homes).includes('@coder.bob.home'))
   const still = forgetHiddenIfGone(settings, ['@coder.bob.home', '@writer.bob.home'])
   assert.ok(still.hiddenRemotes['@coder.bob.home'])
-  const gone = forgetHiddenIfGone(settings, ['@writer.bob.home'])
+  const once = forgetHiddenIfGone(settings, ['@writer.bob.home'])
+  assert.ok(once.hiddenRemotes['@coder.bob.home'])
+  assert.equal(once.hiddenRemotes['@coder.bob.home'].absentFetches, 1)
+  const legacy = forgetHiddenIfGone(once, [], { source: 'legacy' })
+  assert.ok(legacy.hiddenRemotes['@coder.bob.home'])
+  const failed = forgetHiddenIfGone(once, [], { ok: false })
+  assert.ok(failed.hiddenRemotes['@coder.bob.home'])
+  const gone = forgetHiddenIfGone(once, ['@writer.bob.home'])
   assert.equal(gone.hiddenRemotes['@coder.bob.home'], undefined)
+  assert.equal(HIDE_GONE_FETCHES, 2)
+  assert.equal(homeOfHiddenHandle('@coder.bob.home'), '@bob.home')
+  const empty = forgetHiddenIfGone(once, [], { homes: [] })
+  assert.ok(empty.hiddenRemotes['@coder.bob.home'], 'an empty successful fetch is partial and must not forget')
+  const otherHome = forgetHiddenIfGone(once, ['@writer.eve.home'], { homes: [{ home: '@eve.home' }] })
+  assert.ok(otherHome.hiddenRemotes['@coder.bob.home'], 'a different home in the result is not evidence this Bot left')
+  const cleared = clearHiddenRemote(settings, '@CODER.bob.home')
+  assert.equal(cleared.hiddenRemotes['@coder.bob.home'], undefined)
   const reshared = filterHiddenHomes(homes, gone)
   assert.deepEqual(reshared[0].bots.map(b => b.handle), ['@coder.bob.home', '@writer.bob.home'])
 })
@@ -1771,6 +1872,15 @@ test('#90: hide a friend\'s Bot updates the list, leaves rooms, and does not unf
   })
   const saved = JSON.parse(readFileSync(settingsPath, 'utf8'))
   assert.ok(saved.hiddenRemotes['@coder.bob.home'])
+  const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  const published = Object.values(state.flybot?.remote ?? {}).flat()
+  assert.equal(published.some(bot => bot.handle === '@coder.bob.home'), false, 'hidden handles stay out of flybot.remote.publish')
+  assert.equal(published.some(bot => bot.handle === '@writer.bob.home'), true)
+  const hiddenChat = Object.values(state.bots ?? {}).find(bot => bot.remote?.handle === '@coder.bob.home')
+  if (hiddenChat) {
+    assert.equal(hiddenChat.hidden, true)
+    assert.equal(hiddenChat.remote.gone, true)
+  }
   const again = (await call('flybot/social/remote-bots', { fresh: true })).value
   assert.equal(again.homes[0].bots.some(b => b.handle === '@coder.bob.home'), false, 'still hidden after refresh')
 })
@@ -1856,6 +1966,58 @@ test('#90: hide-remote leaves independent rooms in parallel and does not wait fo
   await waitUntil(() => ctx.flybot.rooms.list().every(room => !(room.participants ?? []).some(p => p.handle === '@coder.bob.home' && p.leftSeq === undefined)))
 })
 
+test('a hidden Bot survives a failed fetch and a legacy list_friends refresh', async (t) => {
+  const { ctx, call, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const settingsPath = join(home, 'flybot-social-settings.json')
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0, settingsPath }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  assert.equal((await call('flybot/social/hide-remote', { handle: '@coder.bob.home' })).value.hidden, true)
+  assert.equal((await call('flybot/social/remote-bots', { fresh: true })).value.homes[0].bots.some(b => b.handle === '@coder.bob.home'), false)
+  assert.ok(JSON.parse(readFileSync(settingsPath, 'utf8')).hiddenRemotes['@coder.bob.home'])
+  const list = server.tools.list_remote_bots
+  server.tools.list_remote_bots = () => { throw new Error('Bot Social list_remote_bots: timeout') }
+  const afterFail = (await call('flybot/social/remote-bots', { fresh: true })).value
+  assert.equal(afterFail.homes[0].bots.some(b => b.handle === '@coder.bob.home'), false)
+  assert.ok(JSON.parse(readFileSync(settingsPath, 'utf8')).hiddenRemotes['@coder.bob.home'])
+  server.tools.list_remote_bots = list
+  const kept = JSON.parse(readFileSync(settingsPath, 'utf8'))
+  const afterLegacy = forgetHiddenIfGone(kept, [], { source: 'legacy' })
+  assert.ok(afterLegacy.hiddenRemotes['@coder.bob.home'], 'legacy list_friends must not forget a hide')
+})
+
+test('remote-bots does not wait for per-Bot grant listing', async (t) => {
+  const { ctx, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const base = createSocialApi({ server: 'https://s', token: 'owner-token', fetch: server.fetch })
+  let grantsDone = false
+  const api = {
+    ...base,
+    listGrants: async () => {
+      await new Promise(resolve => setTimeout(resolve, 80))
+      grantsDone = true
+      return []
+    },
+  }
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0 }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    api,
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  const listed = await social.remoteBots({ fresh: true })
+  assert.equal(grantsDone, false)
+  assert.equal(listed.homes[0].bots.some(b => b.handle === '@coder.bob.home'), true)
+})
+
 test('#90: a hidden Bot shows again only after the owner re-shares it', async (t) => {
   const { ctx, call, home, stop } = await team()
   t.after(stop)
@@ -1874,6 +2036,9 @@ test('#90: a hidden Bot shows again only after the owner re-shares it', async (t
   assert.equal((await call('flybot/social/remote-bots', { fresh: true })).value.homes[0].bots.some(b => b.handle === '@coder.bob.home'), false)
   // Owner revoked: the Bot leaves the granted list, so the hide is forgotten.
   list = [{ relationship_id: 'r1', home: { bot_id: 'h2', handle: '@bob.home', display_name: 'Bob' }, bots: [{ handle: '@writer.bob.home', display_name: 'Writer' }] }]
+  assert.equal((await call('flybot/social/remote-bots', { fresh: true })).value.homes[0].bots.some(b => b.handle === '@coder.bob.home'), false)
+  const midOnce = JSON.parse(readFileSync(settingsPath, 'utf8'))
+  assert.ok(midOnce.hiddenRemotes?.['@coder.bob.home'], 'one missing fetch must not forget the hide')
   assert.equal((await call('flybot/social/remote-bots', { fresh: true })).value.homes[0].bots.some(b => b.handle === '@coder.bob.home'), false)
   const mid = JSON.parse(readFileSync(settingsPath, 'utf8'))
   assert.equal(mid.hiddenRemotes?.['@coder.bob.home'], undefined)

@@ -13,16 +13,18 @@
 //   flybot.approvals        { id, order, component({ approval, decide, call }) }   custom card for a held send
 //   flybot.room.overview    { id, order, component({ room, roster, actions, call }) }  top of a group's overview
 //   flybot.session.dock     { id, order, component({ sessionId, roster, room, bot, actions, call }) }  above the composer
+//   flybot.new-chat.action  { id, order, label, hint?, visible?, run({ close, actions, roster }) }   a row in the sidebar '+' menu (next to Create group chat)
 //
 // Types: ds-bot/types/flybot.d.ts (FlyBotClientRegistry).
 import { Component, createElement as h, Fragment, useEffect, useState } from 'react'
 import { call as callHost } from './api.js'
+import { isListedRemoteChat } from '../shared/remote-label.js'
 import { registry as baseRegistry } from './flybot-registry.js'
 import { t } from './i18n.js'
 
 import { createClientApi as createClientApiWith } from './flybot-registry.js'
 
-export { SLOTS, createRegistry, mentionCandidates, botTree } from './flybot-registry.js'
+export { SLOTS, createRegistry, mentionCandidates, newChatActionRows, botTree } from './flybot-registry.js'
 
 // Calls a FlyBot endpoint on the host: "approvals", "decide", or a plugin's "social/...".
 export const call = (endpoint, payload) => callHost(`flybot/${endpoint}`, payload)
@@ -72,7 +74,7 @@ export function FlyBotSections({ roster, actions, renderBot }) {
   const shell = (actions.flybotSlotEntries?.('flybot.sidebar.section') ?? [])
     .map((entry, index) => ({ id: entry.id ?? `slot-${index}`, order: entry.order ?? 0, component: entry.component }))
   const entries = [...useSlot('flybot.sidebar.section'), ...shell].sort((a, b) => a.order - b.order)
-  const remoteChats = (roster.bots ?? []).filter(bot => bot.remote)
+  const remoteChats = (roster.bots ?? []).filter(bot => bot.remote && isListedRemoteChat(bot))
   return h(Fragment, null, entries.map(entry => h('div', { key: entry.id, className: 'bt-flybot-section', 'data-flybot': entry.id },
     h(Safe, { entry, props: { roster, actions, call, renderBot, remoteChats } }))))
 }

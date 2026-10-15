@@ -4,7 +4,7 @@
 // Both are sources of the shell's trigger menu; the shell's own file and session
 // rows stay beside them, because a source cannot be hidden for one Session.
 import { mentionCandidates, remoteMentionRows } from './flybot-registry.js'
-import { remoteBotTitle } from '../shared/remote-label.js'
+import { remoteBotTitle, listedChatBots } from '../shared/remote-label.js'
 import { t } from './i18n.js'
 import { currentPart, relativeShort } from './text.js'
 
@@ -35,7 +35,7 @@ export function mentionRows(roster, sessionId, query = '') {
         ...(here.room.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
           .map(p => ({ id: p.handle || p.id, name: remoteBotTitle(p), kind: 'bot', remote: p, handle: p.handle })),
       ]
-    : roster.bots.filter(bot => bot.id !== here.self.id)
+    : listedChatBots(roster).filter(bot => bot.id !== here.self.id)
   const needle = query.trim().toLowerCase()
   const rows = bots.filter(bot => bot.name.toLowerCase().includes(needle)).map(bot => ({ bot, text: `@${bot.name} ` }))
   const everyone = t('Everyone')

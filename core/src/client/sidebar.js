@@ -11,7 +11,7 @@ import { reducedMotion } from './activity-row.js'
 import { Shimmer, workPhrase } from './cells.js'
 import { springEasing, SPRING_SHAPE } from './motion.js'
 import { hostText, t } from './i18n.js'
-import { remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
+import { remoteBotTitle, sharedRoomTitle, isListedRemoteChat } from '../shared/remote-label.js'
 import { showsDshRow } from './dsh-offer.js'
 
 // -------------------------------------------------------------------------
@@ -57,7 +57,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const away = !running && groups.length > 0
   const state = botState(running || away, doing, alert)
   const awayLine = away ? workLine(roster.roomsById[groups[0].id]?.name ?? t('a group chat'), groups[0].tool, groups.length - 1) : null
-  if (bot.hidden && !active && !main) return null
+  if (!isListedRemoteChat(bot) && !active && !main) return null
   const onContextMenu = (event) => {
     event.preventDefault()
     actions.openMenu({ kind: 'bot', id, x: event.clientX, y: event.clientY })

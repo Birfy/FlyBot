@@ -59,10 +59,10 @@ index 9cdb56ac60dda8bb9f364eb0791908a867412210..6f275b131462facfa0e83d05128f1a88
  export function createRuntime(ctx, config = {}) {
 diff --git a/src/host/hooks.js b/src/host/hooks.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..79f6a1749c812b14ad4fbca138ed610ca04d31ab
+index 0000000000000000000000000000000000000000..5398a8b10566e13226a238298ea0cbb0bf055fdc
 --- /dev/null
 +++ b/src/host/hooks.js
-@@ -0,0 +1,795 @@
+@@ -0,0 +1,801 @@
 +// FlyBot hooks: the `flybot` service feature plugins (plugins/social, plugins/tree)
 +// build on. Installed after resume.js, so its gate around rt.deliver is the outermost
 +// wrapper: every Bot-to-Bot message, including message_bot, stop_bot, and replies,
@@ -77,6 +77,7 @@ index 0000000000000000000000000000000000000000..79f6a1749c812b14ad4fbca138ed610c
 +import { randomUUID } from 'node:crypto'
 +import { createUserMessage } from '@deepseek-ai/dsh-llm'
 +import { mentionSpans } from '../shared/mentions.js'
++import { isHomeLevelRemote } from '../shared/remote-label.js'
 +import { cleanName } from './delivery.js'
 +import { SOURCE_KIND } from './constants.js'
 +import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -196,7 +197,7 @@ index 0000000000000000000000000000000000000000..79f6a1749c812b14ad4fbca138ed610c
 +    granted: rt.hasAnyGrant?.(bot.id) === true,
 +    systemPrompt: bot.systemPrompt ?? '', fields: clone(bot.fields ?? {}),
 +  })
-+  const persist = () => { void rt.save().catch(error => warn('flybot: save failed: %s', error)) }
++  const persist = () => rt.save().catch(error => warn('flybot: save failed: %s', error))
 +
 +  async function create({ name, systemPrompt, fields, role, instructions, createdBy, plugin = SHARED } = {}) {
 +    checkName('plugin', plugin)
@@ -617,16 +618,21 @@ index 0000000000000000000000000000000000000000..79f6a1749c812b14ad4fbca138ed610c
 +    // Replaces this plugin's list; saves only when it changed.
 +    publish(plugin, list) {
 +      checkName('plugin', plugin)
-+      const next = (list ?? []).filter(bot => typeof bot?.handle === 'string').map(bot => cleanRemote(plugin, bot))
++      const next = (list ?? []).filter(bot => typeof bot?.handle === 'string' && !isHomeLevelRemote(bot)).map(bot => cleanRemote(plugin, bot))
 +      // A read-only host shows what the writer saved; it changes nothing.
 +      if (rt.readOnly() !== undefined) return
 +      const all = remoteStore()
-+      // Every granted remote Bot gets a chat of its own (remote-chat.js).
-+      void rt.remoteChats?.sync(plugin, next).catch(error => warn('flybot: remote chats not synced: %s', error))
-+      if (same(all[plugin] ?? [], next)) return
-+      if (next.length === 0) delete all[plugin]
-+      else all[plugin] = next
-+      persist()
++      // Every granted remote Bot gets a chat of its own (remote-chat.js). Hidden
++      // and home-level handles are not in `next`, so those sessions go gone/hidden.
++      const synced = rt.remoteChats?.sync(plugin, next)?.catch(error => warn('flybot: remote chats not synced: %s', error))
++      const jobs = []
++      if (synced && typeof synced.then === 'function') jobs.push(synced)
++      if (!same(all[plugin] ?? [], next)) {
++        if (next.length === 0) delete all[plugin]
++        else all[plugin] = next
++        jobs.push(Promise.resolve(persist()))
++      }
++      return jobs.length ? Promise.all(jobs) : synced
 +    },
 +    list: () => Object.values(state.flybot?.remote ?? {}).flat().map(clone),
 +    get: handle => remoteMembers.list().find(bot => bot.handle === toRemote(handle)?.handle),
@@ -1348,10 +1354,18 @@ index 580ce7abbe24a8c94587745e8d23932d04bfd448..068f538f697c1cd4933f6943bb15afd0
    })
  }
 diff --git a/src/host/tools.js b/src/host/tools.js
-index ffaf7827c143693ee624cb81dca7249bb4289fb1..a1ae014ee719e4d2310cfd67701d313979bfd358 100644
+index ffaf7827c143693ee624cb81dca7249bb4289fb1..f1703ae6e5aa6b1ca670a4a672e04c422e44111f 100644
 --- a/src/host/tools.js
 +++ b/src/host/tools.js
-@@ -27,16 +27,27 @@ export function install(rt) {
+@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
+ import { defineTool } from '@deepseek-ai/dsh-tools'
+ import { COLORS, EXTRA_COLORS, MAX_HOPS, MAX_UNREAD_REQUESTS, ROOM_BOT_ROUNDS, ROOM_MODES, SOURCE_KIND } from './constants.js'
+ import { unquote } from './text.js'
++import { isListedRemoteChat } from '../shared/remote-label.js'
+ 
+ export const output = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] }
+ export const GROUP_REF = { type: 'string', required: true, description: 'Exact group chat name from list_bots' }
+@@ -27,16 +28,27 @@ export function install(rt) {
    const roomLine = (room, self) => {
      const members = room.members.map(rt.botOf).filter(Boolean)
        .map(bot => `${bot.name}${bot.id === room.admin ? ' (admin)' : ''}${bot.id === self ? ' (you)' : ''}`)
@@ -1382,7 +1396,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..a1ae014ee719e4d2310cfd67701d3139
  
    ctx.tools.register(defineTool({
      name: 'list_bots',
-@@ -46,7 +57,7 @@ export function install(rt) {
+@@ -46,7 +58,7 @@ export function install(rt) {
      async execute(_args, exec) {
        await rt.load()
        const self = rt.selfOf(exec.agent?.id)
@@ -1391,11 +1405,11 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..a1ae014ee719e4d2310cfd67701d3139
          const model = bot.appliedModel ?? bot.model
          const tags = [bot.role, model ? `model ${model}` : '', bot.workDir ? `works in ${bot.workDir}` : '', rt.isMain(bot.id) ? 'Main Bot' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
          const job = bot.instructions ? ` — ${bot.instructions.split('\n')[0].slice(0, 120)}` : ''
-@@ -54,12 +65,14 @@ export function install(rt) {
+@@ -54,12 +66,14 @@ export function install(rt) {
        })
        if (lines.length === 0) return 'No Bots yet.'
        const rooms = visibleRooms(self)
-+      const friends = Object.values(state.bots).filter(bot => bot.remote?.handle && !bot.remote.gone).map(bot => `- ${bot.name} (${bot.remote.handle}${bot.remote.homeName ? `, ${bot.remote.homeName}'s home` : ''})`)
++      const friends = Object.values(state.bots).filter(bot => bot.remote?.handle && isListedRemoteChat(bot)).map(bot => `- ${bot.name} (${bot.remote.handle}${bot.remote.homeName ? `, ${bot.remote.homeName}'s home` : ''})`)
        return [
          'Bots:',
          ...lines,
@@ -1406,7 +1420,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..a1ae014ee719e4d2310cfd67701d3139
        ].join('\n')
      },
    }))
-@@ -86,7 +99,7 @@ export function install(rt) {
+@@ -86,7 +100,7 @@ export function install(rt) {
      name: 'message_bot',
      description: 'Send a message to another Bot on the team. If that Bot is working, it reads your message at its next step and can change course, then answers once that work is done; if it is idle, it starts on it right away. Its reply arrives later as a new message to you; with reply_to "user" it answers the user in its own chat instead.',
      parameters: {
@@ -1415,7 +1429,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..a1ae014ee719e4d2310cfd67701d3139
        message: { type: 'string', required: true, description: 'Self-contained message; the other Bot cannot see this conversation' },
        reply_to: {
          type: 'string',
-@@ -105,7 +118,17 @@ export function install(rt) {
+@@ -105,7 +119,17 @@ export function install(rt) {
        const sender = callerBot(exec)
        if (sender === undefined) return 'Only Bots on the team can use message_bot.'
        const target = rt.findBot(args.to)
@@ -1423,7 +1437,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..a1ae014ee719e4d2310cfd67701d3139
 +      // A friend's Bot (by name or @handle) is reached through FlyBot's send path, so the
 +      // friend's auto-accept setting decides whether it goes now or waits for the user.
 +      const wanted = String(args.to ?? '').trim().replace(/^@/, '').toLowerCase()
-+      const friend = target === undefined ? Object.values(state.bots).find(bot => bot.remote?.handle && !bot.remote.gone && (bot.name.toLowerCase() === wanted || bot.remote.handle.slice(1).toLowerCase() === wanted)) : undefined
++      const friend = target === undefined ? Object.values(state.bots).find(bot => bot.remote?.handle && isListedRemoteChat(bot) && (bot.name.toLowerCase() === wanted || bot.remote.handle.slice(1).toLowerCase() === wanted)) : undefined
 +      if (friend !== undefined && rt.flybotSend) {
 +        const result = await rt.flybotSend({ from: sender.id, to: friend.remote.handle, text: args.message, via: 'message_bot' })
 +        if (result?.action === 'deny') refuse(`Not sent to ${friend.name}: ${result.reason}`)
@@ -1434,7 +1448,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..a1ae014ee719e4d2310cfd67701d3139
        if (target.id === sender.id) return 'You cannot message yourself.'
        const turn = rt.live.get(exec.agent?.id)
        const hop = Math.max(turn?.info?.hop ?? 0, ...(turn?.joined ?? []).map(joined => joined.info?.hop ?? 0))
-@@ -118,7 +141,11 @@ export function install(rt) {
+@@ -118,7 +142,11 @@ export function install(rt) {
        const toUser = args.reply_to === 'user'
        const working = rt.live.get(chat)?.turn !== undefined
        const steer = args.when !== 'queue' && !toUser
@@ -1447,7 +1461,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..a1ae014ee719e4d2310cfd67701d3139
        const sent = toUser
          ? `Delivered to ${target.name}. It will answer the user in its own chat; nothing comes back to you, so point the user to ${target.name}'s chat instead of relaying.`
          : working && steer
-@@ -153,7 +180,7 @@ export function install(rt) {
+@@ -153,7 +181,7 @@ export function install(rt) {
        const sender = callerBot(exec)
        if (sender === undefined || !rt.isMain(sender.id)) refuse('Only a Main Bot can stop other Bots.')
        const target = rt.findBot(args.bot)
@@ -1456,7 +1470,7 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..a1ae014ee719e4d2310cfd67701d3139
        if (target.id === sender.id) refuse('You cannot stop yourself.')
        const { running } = activeSessions(target.id)
        if (running.length === 0) refuse(`${target.name} is not running right now, so there is nothing to stop. Use message_bot to reach it.`)
-@@ -257,7 +284,7 @@ export function install(rt) {
+@@ -257,7 +285,7 @@ export function install(rt) {
      }
      return { bots, unknown }
    }
