@@ -20,6 +20,7 @@ FlyBot's core is **pristine upstream ds-bot plus this ordered patch series** (#3
 | `0008-client-bundle` | The generated `client.js` (rebuild with `npm run build` in `core/`) |
 | `0009-identity-schema` | The state identity schema tests (team members, owner-bound Bots, #47) |
 | `0013-published-reach` | `src/host/reach.js`, the owner policy that decides which Bots other owners and friends can reach (per-Bot grants, #90; the `published` flag is gone), and its tests |
+| `0014-flybot-branding` | User-visible FlyBot chrome (About, settings, diagnostics paste notes, update/secrets/parts host copy) and `test/branding.test.js`. Header mark/name and i18n live in `0003` / `0001`. |
 
 `0006` is retired: its files (`plugins/social` and its tests) moved out of `core/` to the peer plugin `plugins/social` (#34 PR 2), so no patch carries them. The numbers are not reused.
 

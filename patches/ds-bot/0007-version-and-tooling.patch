@@ -480,7 +480,7 @@ index 0000000000000000000000000000000000000000..e756d65b6879c7e635695fb0f1501902
 +  assert.throws(() => hasDocsNotNeededTrailer(bad), /cannot diff against/);
 +});
 diff --git a/test/diagnostics.test.js b/test/diagnostics.test.js
-index 28dcf7bb970ecd3ae5dbb94b4445c1cc39cf50d2..a1cd27933429d8cd0c6992bbb13384c86b73f1f2 100644
+index 28dcf7bb970ecd3ae5dbb94b4445c1cc39cf50d2..4437ab3cc5747da1ef225b5a4f543ef6204eb486 100644
 --- a/test/diagnostics.test.js
 +++ b/test/diagnostics.test.js
 @@ -63,7 +63,7 @@ test('warnings are kept, cleaned, written to the log, and read back after a rest
@@ -488,7 +488,7 @@ index 28dcf7bb970ecd3ae5dbb94b4445c1cc39cf50d2..a1cd27933429d8cd0c6992bbb13384c8
  
    const report = await rt.diagnostics.report({ client: { surface: 'Web', language: 'zh-CN', userAgent: 'Test/1' }, clientErrors: [{ time: 1, text: 'state: HTTP 502' }] })
 -  assert.match(report.markdown, /\| DS Bot \| \d+\.\d+\.\d+ \|/)
-+  assert.match(report.markdown, /\| DS Bot \| \d+\.\d+\.\d+(?:-[\w.]+)? \|/)
++  assert.match(report.markdown, /\| FlyBot \| \d+\.\d+\.\d+(?:-[\w.]+)? \|/)
    assert.match(report.markdown, /\| Surface \| Web \|/)
    assert.match(report.markdown, /\| Models \| deepseek\/deepseek-chat \|/)
    assert.match(report.markdown, /WARN host \[EACCES\] state write failed/)

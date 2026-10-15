@@ -11,6 +11,7 @@ owned_paths:
   - core/test/room-membership.test.js
   - core/test/remote-room.test.js
   - core/test/reach-policy.test.js
+  - core/test/branding.test.js
   - ds-bot/
   - ds-bot.pin.json
   - patches/ds-bot/
@@ -31,6 +32,7 @@ Patched upstream `ds-bot` that ships as `core/`. Never edit `ds-bot/` by hand; c
 - `core/test/room-membership.test.js` — typed room participants, authorship and the membership-window history rule (#50).
 - `core/test/remote-room.test.js` — granted remote participants, per-viewer presentation and ungranted-Bot refusal; #90 room rules (a room with friends' Bots takes granted local Bots only, revoke evicts, fanout checks author and recipient, room-code Bots).
 - `core/test/reach-policy.test.js` — #90 reach policy: per-Bot grants (default deny, Chief included), the allow/deny matrix per direction, no bypass, hold release and flagged deliveries re-checked, setGrants and `bot.grants`.
+- `core/test/branding.test.js` — user-visible FlyBot chrome: header mark/name, About/settings strings, zh keys, tab title, favicon SVG (patch `0014-flybot-branding`).
 - Pin (`ds-bot.pin.json`) and ordered patches (`patches/ds-bot/`).
 
 ## Does not own
@@ -76,6 +78,7 @@ Patched upstream `ds-bot` that ships as `core/`. Never edit `ds-bot/` by hand; c
 11. A friend's Bot @-mentioned in a group never has its reply delivered back into that group (it lands in the friend's Bot's own chat), so the host posts one receipt line into the room per mention (`src/host/hooks.js` `mentionReceipt`, source role `mention`) and the client renders it as a muted event line (`src/client/cells.js`) (#80, #81). The role stays outside the room's round trigger (`groups.js` `opens`) and outside `RELAY_ROLES`, so the receipt opens no round and folds no turns.
 12. Slot `flybot.new-chat.action` (`0003-flybot-api-client`, types in `flybot.d.ts`) is a row on the sidebar **+** new-chat menu, next to Create group chat. Plugins register `{ id, order, label, hint?, visible?, run }`; the picker looks `label` / `hint` up with `t()` like the neighbouring rows. The social plugin's Face-to-face group row is the first consumer; see [plugin-runtime](plugin-runtime.md) and [social](social.md).
 13. A friend's Bot the owner hid, a remote chat marked `gone`/`hidden`, and a home-level handle (`@friend.home`, not `@bot.friend.home`) must not reappear in the sidebar, the **发给 / 和谁聊…** picker, `@` mentions, or `list_bots` friends lines (`isListedRemoteChat`). `flybot.remote.publish` skips those handles so remote-chat sync marks the persisted session gone/hidden instead of opening it again; history is kept. Handle comparison is case-insensitive (`normRemoteHandle`).
+14. User-visible chrome says **FlyBot** (header mark + name, About, settings title, update popups as **FlyBot core {version}**, diagnostics notes, zh copy). The mark is the existing FlyBot logo (`docs/images/logo.svg`, inlined as `FlyBotMark`). The npm package remains `ds-bot`; `update.js` still reads `package.json` `name` / `repository` for the check and for GitHub links. Plugin id, localStorage keys, and `console.warn('[ds-bot]')` stay upstream. Patch `0014-flybot-branding` plus the existing client/i18n topics.
 
 ## Tests
 

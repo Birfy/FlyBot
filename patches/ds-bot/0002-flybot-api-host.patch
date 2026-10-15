@@ -865,9 +865,18 @@ index 0000000000000000000000000000000000000000..5398a8b10566e13226a238298ea0cbb0
 +  Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSend: send, flybotIsRead: isReadEndpoint, flybotHideTools: hidePluginTools })
 +}
 diff --git a/src/host/roster.js b/src/host/roster.js
-index 2c95d08090930cb59c4cc47170685ceae63355b8..3892fe5faba00ba574eb954aa7afe745c49dd82e 100644
+index 2c95d08090930cb59c4cc47170685ceae63355b8..7e72dff97540a122bcb76f877072f873003548f1 100644
 --- a/src/host/roster.js
 +++ b/src/host/roster.js
+@@ -15,7 +15,7 @@ export function install(rt) {
+     if (state.workspaceId && ctx.workspaceRegistry.get(state.workspaceId)) return state.workspaceId
+     const path = config.workspace ?? join(home, 'workspace')
+     await mkdir(path, { recursive: true })
+-    const workspace = await ctx.workspaceRegistry.resolveByPath(path) ?? await ctx.workspaceRegistry.create(path, 'DS Bot')
++    const workspace = await ctx.workspaceRegistry.resolveByPath(path) ?? await ctx.workspaceRegistry.create(path, 'FlyBot')
+     state.workspaceId = workspace.id
+     await rt.save()
+     return workspace.id
 @@ -58,16 +58,24 @@ export function install(rt) {
  
    // `pickModel` leaves the model to the user: the chat opens on a model card, and the
@@ -1081,7 +1090,7 @@ index 2c95d08090930cb59c4cc47170685ceae63355b8..3892fe5faba00ba574eb954aa7afe745
      // Same as deleteRoom: stopActivity removes the Session's armed scheduled tasks.
      // Past parts are archived too: a part move can leave tasks on the old Session,
 diff --git a/src/host/store.js b/src/host/store.js
-index 580ce7abbe24a8c94587745e8d23932d04bfd448..068f538f697c1cd4933f6943bb15afd051d267f9 100644
+index 580ce7abbe24a8c94587745e8d23932d04bfd448..9b16bd50cec300832d963fac0c8578e4d01562d7 100644
 --- a/src/host/store.js
 +++ b/src/host/store.js
 @@ -1,18 +1,27 @@
@@ -1115,7 +1124,14 @@ index 580ce7abbe24a8c94587745e8d23932d04bfd448..068f538f697c1cd4933f6943bb15afd0
    let loaded = null
    let writing = Promise.resolve()
    const { warn } = rt
-@@ -56,6 +65,82 @@ export function install(rt) {
+@@ -50,12 +59,88 @@ export function install(rt) {
+     }
+   }
+   const readOnly = () => {
+-    if (stuck !== undefined) return `The Bot team file ${statePath} could not be read (${stuck}). DS Bot does not change it; fix or move the file and reload.`
++    if (stuck !== undefined) return `The Bot team file ${statePath} could not be read (${stuck}). FlyBot does not change it; fix or move the file and reload.`
+     if (holder === undefined) return undefined
+     const where = holder.pid ? `pid ${holder.pid}${holder.host ? ` on ${holder.host}` : ''}` : 'unknown process'
      return `The Bot team in ${home} is open in another dsh (Web or Desktop, ${where}). This window shows the team but cannot change it; close the other one and reload.`
    }
  
@@ -1198,7 +1214,7 @@ index 580ce7abbe24a8c94587745e8d23932d04bfd448..068f538f697c1cd4933f6943bb15afd0
    const readFileState = async () => {
      let contents
      try {
-@@ -87,6 +172,28 @@ export function install(rt) {
+@@ -87,10 +172,32 @@ export function install(rt) {
        return undefined
      }
      if (parsed?.version === 1) {
@@ -1214,9 +1230,10 @@ index 580ce7abbe24a8c94587745e8d23932d04bfd448..068f538f697c1cd4933f6943bb15afd0
 +        warn('ds-bot: unreadable state %s: %s', statePath, backupProblem)
 +        return undefined
 +      }
-+      stuck = undefined
-+      return parsed
-+    }
+       stuck = undefined
+       return parsed
+     }
+-    stuck = 'saved by a newer DS Bot; update DS Bot'
 +    if (parsed?.version === STATE_VERSION) {
 +      const problem = ownershipProblem(parsed)
 +      if (problem !== undefined) {
@@ -1224,9 +1241,13 @@ index 580ce7abbe24a8c94587745e8d23932d04bfd448..068f538f697c1cd4933f6943bb15afd0
 +        warn('ds-bot: state %s was refused: %s', statePath, problem)
 +        return undefined
 +      }
-       stuck = undefined
-       return parsed
-     }
++      stuck = undefined
++      return parsed
++    }
++    stuck = 'saved by a newer FlyBot; update FlyBot'
+     return undefined
+   }
+ 
 @@ -112,6 +219,11 @@ export function install(rt) {
        migrated = true
      }
@@ -1313,7 +1334,7 @@ index 580ce7abbe24a8c94587745e8d23932d04bfd448..068f538f697c1cd4933f6943bb15afd0
 +  const initialOwnerId = () => {
 +    ensureOwner()
 +    const ids = Object.keys(state.members)
-+    if (ids.length !== 1) throw new Error(`The Bot team file lists ${ids.length} members; DS Bot runs one owner per team`)
++    if (ids.length !== 1) throw new Error(`The Bot team file lists ${ids.length} members; FlyBot runs one owner per team`)
 +    return ids[0]
 +  }
 +
@@ -1354,7 +1375,7 @@ index 580ce7abbe24a8c94587745e8d23932d04bfd448..068f538f697c1cd4933f6943bb15afd0
    })
  }
 diff --git a/src/host/tools.js b/src/host/tools.js
-index ffaf7827c143693ee624cb81dca7249bb4289fb1..f1703ae6e5aa6b1ca670a4a672e04c422e44111f 100644
+index ffaf7827c143693ee624cb81dca7249bb4289fb1..e0ee8567d0a3dca7e4a15c988032c5d60d78e587 100644
 --- a/src/host/tools.js
 +++ b/src/host/tools.js
 @@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
@@ -1479,6 +1500,24 @@ index ffaf7827c143693ee624cb81dca7249bb4289fb1..f1703ae6e5aa6b1ca670a4a672e04c42
    const groupNames = self => visibleRooms(self).map(room => `"${room.name}"`).join(', ') || 'none'
    const pickRoom = (ref, self) => {
      const matches = rt.findRooms(ref).filter(room => visibleRooms(self).includes(room))
+@@ -545,7 +573,7 @@ export function install(rt) {
+       try {
+         const item = await rt.capabilitySave(args, { botId: self })
+         const approval = item.kind === 'mcp' && item.transport === 'stdio' && !item.approved
+-          ? ' The user must allow this MCP server in DS Bot settings before it can work.'
++          ? ' The user must allow this MCP server in FlyBot settings before it can work.'
+           : ''
+         return `Saved ${item.name}. Bots with it attached use the change from their next message.${approval}`
+       } catch (error) { return error.message }
+@@ -587,7 +615,7 @@ export function install(rt) {
+             : attached ? [attached] : []
+           const approvals = members
+             .filter(item => item.kind === 'mcp' && item.transport === 'stdio' && item.approved !== true)
+-            .map(item => ` The user must allow ${item.name} in DS Bot settings before it can work.`)
++            .map(item => ` The user must allow ${item.name} in FlyBot settings before it can work.`)
+             .join('')
+           return `${verb} ${args.name} ${args.bot ? `to ${result.bot}` : 'to yourself'}. Changes apply from ${result.bot}'s next message.${endpoint === 'attach' ? approvals : ''}`
+         } catch (error) { return error.message }
 diff --git a/test/api-route.test.js b/test/api-route.test.js
 new file mode 100644
 index 0000000000000000000000000000000000000000..3630f94051aa87c62938e866d01b097be8103f25
