@@ -49,7 +49,7 @@ People in the same place (or on a call) put their Bots in one room by each typin
 
 1. Open **Friends' Bots** in the sidebar.
 2. Click **Join with a number**. Type six digits. If you have more than one Bot, pick which one to bring (default: the first). Click **Join**.
-3. You join at once — there is no preview. FlyBot opens the room. Everyone already in it shows as `<Bot> · <owner>'s Bot` (your Chief: `<owner>'s Chief`). Unpublished Bots are labeled “not published, available to this room only”.
+3. You join at once — there is no preview. FlyBot opens the room. Everyone already in it shows as `<Bot> · <owner>'s Bot` (your Chief: `<owner>'s Chief`). The join form says whether the Bot you bring is published; unpublished Bots are labeled “not published, available to this room only”. **Published to friends** (Bot settings, next to **Invite to this Bot**) is the owner's switch for that; it calls core `set-published` (#51).
 4. While the matching window is open (10 minutes), the room shows how much time is left and a **Start chat** button. Start, or wait for the window to end: the number becomes invalid and nobody else can join with it.
 5. **Leave** removes your Bot in one click. Anyone can leave; if the last member leaves, the room closes and the number is free again.
 

@@ -1291,3 +1291,109 @@ test('Friends\' Bots (#83): auto-send toggle in the room header and pending-appr
   assert.deepEqual(decided, [['apr-face-1', 'approve']])
 })
 
+test('Bot settings: Published to friends always shows and calls set-published', async () => {
+  const registered = []
+  const publishedCalls = []
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = {
+    slots: { register: () => () => {} },
+    call: async (endpoint, payload) => {
+      publishedCalls.push([endpoint, payload])
+      if (endpoint === 'set-published' && payload.id === 'fail') {
+        throw Object.assign(new Error('published must be true, false or null'), { code: 'bot/invalid' })
+      }
+      return { bots: [{ id: payload.id, published: payload.published }] }
+    },
+  }
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const walk = (node, all = []) => {
+    if (!node || typeof node !== 'object') return all
+    if (typeof node.type === 'function') return walk(node.type(node.props), all)
+    all.push(node)
+    for (const child of node.children ?? []) walk(child, all)
+    return all
+  }
+  const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+  assert.equal(plugin.PublishedToFriends({ bot: {} }), null)
+  const chief = walk(plugin.PublishedToFriends({ bot: { id: 'a', name: 'Chief', published: true } }))
+  assert.ok(chief.some(n => n.props['data-flybot'] === 'published-to-friends'))
+  assert.equal(chief.find(n => n.type === 'input' && n.props.type === 'checkbox').props.checked, true)
+  const tree = plugin.PublishedToFriends({ bot: { id: 'b', name: 'Writer', published: false } })
+  const nodes = walk(tree)
+  assert.ok(nodes.some(n => n.type === 'label' && n.children.includes('Published to friends')))
+  assert.ok(nodes.some(n => typeof n.children?.[0] === 'string' && /unpublished Bots stay private/.test(n.children[0])))
+  const box = nodes.find(n => n.type === 'input' && n.props.type === 'checkbox')
+  assert.equal(box.props.checked, false)
+  await box.props.onChange({ target: { checked: true } })
+  assert.equal(publishedCalls[0][0], 'set-published')
+  assert.equal(publishedCalls[0][1].id, 'b')
+  assert.equal(publishedCalls[0][1].published, true)
+
+  const store = []
+  let cursor = 0
+  const failing = registered[0].factory(() => ({
+    createElement: h, Fragment: 'F', useEffect() {},
+    useState: v => {
+      const i = cursor++
+      if (store[i] === undefined) store[i] = v
+      return [store[i], n => { store[i] = typeof n === 'function' ? n(store[i]) : n }]
+    },
+    useRef: v => ({ current: v }), useMemo: f => f(),
+  }))
+  const first = walk(failing.PublishedToFriends({ bot: { id: 'fail', name: 'Writer', published: true } }))
+  assert.ok(first.some(n => n.props['data-flybot'] === 'published-to-friends'))
+  await first.find(n => n.type === 'input' && n.props.type === 'checkbox').props.onChange({ target: { checked: false } })
+  cursor = 0
+  const after = walk(failing.PublishedToFriends({ bot: { id: 'fail', name: 'Writer', published: true } }))
+  assert.ok(after.some(n => n.props['data-flybot'] === 'published-to-friends'))
+  assert.ok(after.some(n => n.props['data-tone'] === 'error'))
+})
+
+test('Join with a number names whether the brought Bot is published', () => {
+  const registered = []
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = { slots: { register: () => () => {} }, call: async () => ({}) }
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const walk = (node, all = []) => {
+    if (!node || typeof node !== 'object') return all
+    if (typeof node.type === 'function') return walk(node.type(node.props), all)
+    all.push(node)
+    for (const child of node.children ?? []) walk(child, all)
+    return all
+  }
+  const render = (initial) => {
+    let i = 0
+    const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+    return walk(plugin.JoinWithNumber({}))
+  }
+  const unpublished = render(['', [{ id: 'a', name: 'Writer', published: false }], 'a', false, null, true])
+  const hint = unpublished.find(n => n.props['data-flybot'] === 'face-join-published')
+  assert.ok(hint)
+  assert.match(hint.children.join(''), /not published, available to this room only/)
+  const published = render(['', [{ id: 'a', name: 'Chief', published: true }], 'a', false, null, true])
+  assert.match(published.find(n => n.props['data-flybot'] === 'face-join-published').children.join(''), /Published to friends/)
+})
+
+test('face-to-face join uses core isPublished (Chief published, others not)', async (t) => {
+  const { ctx, call, stop } = await team({ writerPublished: false })
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const status = (await call('flybot/social/status', {})).value
+  assert.equal(status.bots.find(b => b.id === 'a').published, true)
+  assert.equal(status.bots.find(b => b.id === 'b').published, false)
+  const listed = (await call('flybot/social/face-join', { code: '123456', botId: 'a' })).value
+  assert.equal(listed.joinedAs.botId, 'a')
+  assert.equal((await call('set-published', { id: 'b', published: true })).ok, true)
+  assert.equal((await call('flybot/social/status', {})).value.bots.find(b => b.id === 'b').published, true)
+})
+

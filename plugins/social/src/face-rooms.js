@@ -145,10 +145,10 @@ function confirmationCode(value) {
   return ''
 }
 
-// ISSUE #51: when the published flag / reach() seam lands in core, supply it here
-// instead of this default. FlyBot members are unpublished unless later marked.
-export function publishedForJoin() {
-  return false
+// #51: the owner's published bit (`flybot.bot.isPublished` / `BotView.published`).
+export function publishedForJoin(bot, isPublished) {
+  if (typeof isPublished === 'function') return isPublished(typeof bot === 'string' ? bot : bot?.id) === true
+  return bot?.published === true
 }
 
 export function faceMemberLabel(member) {

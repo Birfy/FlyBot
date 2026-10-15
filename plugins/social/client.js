@@ -233,6 +233,7 @@ window.__ModuleLoader__.load({
           setStatus({ tone: 'error', text: errorText(e) })
         } finally { setBusy(false) }
       }
+      const chosen = bots.find(bot => bot.id === joiner) ?? bots[0]
       return h('div', { className: 'bt-social-face-join', 'data-flybot': 'face-join' },
         h('button', { type: 'button', className: 'fs-icon', style: { margin: '2px 4px', width: 'auto' }, 'aria-expanded': open, onClick: () => setOpen(value => !value) }, open ? 'Close number' : 'Join with a number'),
         open ? h('form', { onSubmit: join, className: 'fs-card' },
@@ -248,6 +249,8 @@ window.__ModuleLoader__.load({
             h('select', { className: 'fs-input', value: joiner, 'aria-label': 'Which of your Bots joins', onChange: e => setJoiner(e.target.value) },
               bots.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name))),
             ' (default: first)') : null,
+          chosen ? h('div', { className: 'fs-hint', 'data-flybot': 'face-join-published' },
+            chosen.published === true ? 'Published to friends.' : 'not published, available to this room only') : null,
           status ? h('div', { className: 'fs-status', role: 'status', 'data-tone': status.tone }, status.text) : null) : null)
     }
 
@@ -533,6 +536,47 @@ window.__ModuleLoader__.load({
       return Boolean(status.value?.connected && status.value.bots.some(bot => bot.id === botId))
     }
 
+    // #51: `set-published` { id | botId, published: true|false|null }. BotView.published
+    // is always a boolean (Chief true by default).
+    const PUBLISHED_NOTE = 'Friends can message this Bot and add it to rooms; unpublished Bots stay private.'
+    function PublishedToFriends({ bot }) {
+      const [on, setOn] = useState(bot?.published === true)
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState('')
+      useEffect(() => { setOn(bot?.published === true); setError('') }, [bot?.id, bot?.published])
+      if (!bot?.id) return null
+      const toggle = async (next) => {
+        setBusy(true)
+        setError('')
+        try {
+          const view = await call('set-published', { id: bot.id, published: next })
+          const updated = (view?.bots ?? []).find(item => item.id === bot.id)
+          setOn(typeof updated?.published === 'boolean' ? updated.published : next)
+        } catch (e) {
+          setError(errorText(e))
+        } finally { setBusy(false) }
+      }
+      return h('div', { className: 'fs fs-card', 'data-flybot': 'published-to-friends' },
+        h('label', { className: 'fs-auto fs-face-auto', title: PUBLISHED_NOTE },
+          h('input', {
+            type: 'checkbox',
+            checked: on === true,
+            disabled: busy,
+            'aria-label': 'Published to friends',
+            onChange: e => toggle(e.target.checked),
+          }),
+          'Published to friends'),
+        h('div', { className: 'fs-hint fs-face-note' }, PUBLISHED_NOTE),
+        error ? h('div', { className: 'fs-status', 'data-tone': 'error', role: 'status' }, error) : null)
+    }
+
+    function BotSocialDetails({ bot }) {
+      useStyles()
+      return h('div', { 'data-flybot': 'bot-social-details' },
+        h(PublishedToFriends, { bot }),
+        h(InviteToBot, { bot }))
+    }
+
     // In a Bot's settings: invite a friend to this Bot.
     function InviteToBot({ bot }) {
       useStyles()
@@ -575,6 +619,8 @@ window.__ModuleLoader__.load({
       errorText,
       canInvite,
       InviteToBot,
+      PublishedToFriends,
+      BotSocialDetails,
       PendingApprovals,
       JoinWithNumber,
       FaceRoomOverview,
@@ -592,7 +638,7 @@ window.__ModuleLoader__.load({
           offs = [
             slots().register('flybot.sidebar.section', { id: 'social', order: 100, component: FriendsBots }),
             slots().register('flybot.composer.mention', { id: 'social', order: 100, candidates: friendRows }),
-            slots().register('flybot.bot.details', { id: 'social-invite', order: 100, component: InviteToBot }),
+            slots().register('flybot.bot.details', { id: 'social-invite', order: 100, component: BotSocialDetails }),
             slots().register('flybot.room.overview', { id: 'social-face', order: 50, component: FaceRoomOverview }),
           ]
           // For other plugins (the tree's per-node "Copy invite link"): ctx.flybot.social.canInvite(botId)

@@ -740,7 +740,11 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     return {
       connected: Boolean(home),
       home: home ? norm(home.handle) : undefined,
-      bots: home ? flybot.bot.list().map(bot => ({ id: bot.id, name: bot.name, isMain: bot.isMain === true, published: published(bot.id), handle: activeMember(bot.id)?.handle ? norm(activeMember(bot.id).handle) : undefined })) : [],
+      bots: home ? flybot.bot.list().map(bot => ({
+        id: bot.id, name: bot.name, isMain: bot.isMain === true,
+        published: published(bot.id),
+        handle: activeMember(bot.id)?.handle ? norm(activeMember(bot.id).handle) : undefined,
+      })) : [],
       pendingApprovals: approvals.length,
       approvals,
       autoApproveFaceRooms: await faceAutoApprove().catch(() => false),
@@ -920,8 +924,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       isMain: bot.isMain === true,
       handle: member?.handle ? norm(member.handle) : undefined,
       botId: member?.bot_id,
-      // ISSUE #51: publishedForJoin is the seam for the published flag / reach() policy.
-      published: publishedForJoin(bot),
+      published: publishedForJoin(bot, flybot.bot.isPublished),
     }
   })
   const bringable = () => localFaceBots().filter(bot => bot.handle)

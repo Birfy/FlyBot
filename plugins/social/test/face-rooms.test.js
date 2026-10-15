@@ -119,8 +119,13 @@ test('event rendering: join, leave, start, and inbox names', () => {
   assert.deepEqual(seen, ['fev_j'])
 })
 
-test('FlyBot members default to unpublished until #51 supplies a flag', () => {
+test('publishedForJoin reads flybot.bot.isPublished, then BotView.published', () => {
   assert.equal(publishedForJoin(), false)
+  assert.equal(publishedForJoin({ id: 'writer' }), false)
+  assert.equal(publishedForJoin({ id: 'a', published: true }), true)
+  assert.equal(publishedForJoin({ id: 'a' }, id => id === 'a'), true)
+  assert.equal(publishedForJoin({ id: 'b' }, id => id === 'a'), false)
+  assert.equal(publishedForJoin({ published: false }, () => true), true)
 })
 
 function faceServer() {
