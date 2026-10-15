@@ -58,7 +58,7 @@ export function install(rt) {
 
   // `pickModel` leaves the model to the user: the chat opens on a model card, and the
   // greeting waits until a model is chosen. So does a Bot made when no model is served.
-  async function createBot({ name: botName, role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, systemPrompt, fields, remote }) {
+  async function createBot({ name: botName, role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, systemPrompt, fields, remote, ownerId: explicitOwnerId }) {
     const cleanName = String(botName ?? '').trim().slice(0, 40)
     // A friend's Bot (remote-chat.js) keeps its own name: it is not a team member, so
     // team names never clash with it and it gets no greeting.
@@ -75,7 +75,7 @@ export function install(rt) {
     const dir = workDir === undefined || workDir === null ? undefined : await rt.cleanWorkDir(workDir)
     // Every Bot binds to the team's one owner (#47), resolved before the Session exists
     // so a failure here leaves nothing to clean up.
-    const ownerId = rt.initialOwnerId()
+    const ownerId = explicitOwnerId ?? rt.initialOwnerId()
     const id = await createSession(cleanName, { dir })
     try {
       state.bots[id] = {

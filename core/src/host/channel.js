@@ -28,7 +28,8 @@ export function install(rt) {
   // Models come from DSH, not state.json, so a provider added in Harness settings
   // changes the view without a new revision.
   const modelsKey = () => `${rt.cachedCatalog().map(entry => entry.reasoning ? `${entry.ref}:${JSON.stringify(entry.reasoning)}` : entry.ref).join(',')}|${rt.cachedDefault() ?? ''}`
-  const view = () => ({
+  const view = actor => {
+    const full = ({
     revision: state.revision,
     workspaceId: state.workspaceId ?? null,
     // `mainBotId` is the first Main Bot, which the sidebar shows as its tile.
@@ -68,19 +69,48 @@ export function install(rt) {
     memory: rt.memoryEnabled !== false,
     // Set while another dsh host holds the team (store.js): why this one cannot change it.
     readOnly: rt.readOnly() ?? null,
-  })
+    })
+    if (!(rt.authzEnforced() && actor)) return full
+    return {
+      ...full,
+      bots: full.bots.filter(b => b.ownerId === actor.memberId),
+      rooms: full.rooms.filter(r => rt.roomOwnedBy(actor, r.id)),
+      agents: [],
+      questions: {},
+      exchangeTurns: {},
+      secrets: [],
+      secretRequests: {},
+    }
+  }
   // What changes without a new revision, sent with every state answer. `memoryNews`:
   // per Bot, its latest memory change; `memoryReviews`: memory reviews waiting or
   // running; `work`: per Bot, the turn it runs and its tool; per group, the members whose
   // turn there runs; and the approvals waiting.
-  const live = () => ({
-    activity: rt.activityView(),
-    work: { bots: rt.workView(), rooms: rt.roomWorkView(), approvals: rt.approvalsView() },
-    memoryNews: rt.memoryNews(),
-    memoryReviews: rt.memoryReviews(),
-    connectors: rt.connectorsView(),
-    capabilityStatuses: rt.capabilityStatusesView(),
-  })
+  const live = actor => {
+    const full = {
+      activity: rt.activityView(),
+      work: { bots: rt.workView(), rooms: rt.roomWorkView(), approvals: rt.approvalsView() },
+      memoryNews: rt.memoryNews(),
+      memoryReviews: rt.memoryReviews(),
+      connectors: rt.connectorsView(),
+      capabilityStatuses: rt.capabilityStatusesView(),
+    }
+    if (!(rt.authzEnforced() && actor)) return full
+    const mine = id => state.bots[id]?.ownerId === actor.memberId
+    const pick = obj => Object.fromEntries(Object.entries(obj ?? {}).filter(([id]) => mine(id)))
+    return {
+      activity: pick(full.activity),
+      work: {
+        bots: pick(full.work.bots),
+        rooms: Object.fromEntries(Object.entries(full.work.rooms ?? {}).filter(([id]) => rt.roomOwnedBy(actor, id))),
+        approvals: full.work.approvals.filter(a => mine(a.botId)),
+      },
+      memoryNews: pick(full.memoryNews),
+      memoryReviews: 0,
+      connectors: [],
+      capabilityStatuses: pick(full.capabilityStatuses),
+    }
+  }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
   // auth-whoami is a read of the already-resolved actor; invite/redeem/revoke/remove-member write.
@@ -114,14 +144,16 @@ export function install(rt) {
       // Actor is resolved once from the member session token; body.actorId / payload.actorId
       // grant nothing and are ignored (#48).
       const actor = sessionToken ? await rt.authenticate(sessionToken) : null
+      const gate = rt.authorize(actor, endpoint, body)
+      if (!gate.ok) return fail(gate.message, gate.code)
       switch (endpoint) {
         case 'state':
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
           if (readOnly === undefined) await rt.bootstrap()
           await rt.catalog()
           await rt.loadSecrets()
-          if (body.since === state.revision && (body.models === undefined || body.models === modelsKey())) return ok({ revision: state.revision, unchanged: true, ...live() })
-          return ok({ ...view(), ...live() })
+          if (body.since === state.revision && (body.models === undefined || body.models === modelsKey())) return ok({ revision: state.revision, unchanged: true, ...live(actor) })
+          return ok({ ...view(actor), ...live(actor) })
         case 'models':
           await rt.catalog({ fresh: true })
           return ok({ modelsKey: modelsKey() })
@@ -149,7 +181,7 @@ export function install(rt) {
           return ok([...rt.roomProgress.entries()].filter(([, entry]) => entry.roomId === body.roomId).map(([callId, entry]) => ({ callId, replies: entry.replies, speaking: entry.speaking ?? null })))
         case 'create-bot': {
           await rt.bootstrap()
-          const bot = await rt.createBot({ name: body.name, role: body.role, color: body.color, instructions: body.instructions, brief: body.brief, avatar: body.avatar, model: body.model, effort: body.effort, workDir: body.workDir })
+          const bot = await rt.createBot({ name: body.name, role: body.role, color: body.color, instructions: body.instructions, brief: body.brief, avatar: body.avatar, model: body.model, effort: body.effort, workDir: body.workDir, ownerId: rt.authzEnforced() ? actor.memberId : undefined })
           return ok(bot)
         }
         case 'update-bot':
