@@ -19,6 +19,7 @@ FlyBot agent work uses a small, visible loop. Adapt the *habits* below; do not c
 5. **LESSONS before code.** Skim LESSONS and code-standards before editing. When a class of bug repeats, date a lesson (`Seen N×`); after **≥3 days** promote the durable rule into `docs/code-standards.md` / CONTRIBUTING.
 6. **Tiny loops.** Fail-without-change tests; fix the class; list what you ran and what you **not run** at the tip SHA. Merge only a reviewed tip (see code-standards).
 7. **Review skill.** Use [`.claude/skills/review-pr/SKILL.md`](.claude/skills/review-pr/SKILL.md) for the Verifier report shape (PASS / FAIL / INC).
+8. **Fix loop skill.** [`.claude/skills/fix-issue/SKILL.md`](.claude/skills/fix-issue/SKILL.md) walks one issue end to end: facts → worktree → red test → gates → PR → independent review (review-pr) → merge on green, with the repo’s environment gotchas (worktree harness, screenshots, patches topics).
 
 ## What this project is
 
