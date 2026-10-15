@@ -517,10 +517,10 @@ index 0000000000000000000000000000000000000000..891720798468b9b4618d5797ec830fe9
 +}
 diff --git a/src/client/flybot-slots.js b/src/client/flybot-slots.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..8a7c962f0b2c68807659e4ae5400ff16c7e135a4
+index 0000000000000000000000000000000000000000..70534b5acf2717cbb57c90267e18667b1c90bbb8
 --- /dev/null
 +++ b/src/client/flybot-slots.js
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,178 @@
 +// -------------------------------------------------------------------------
 +// FlyBot frontend slots. Feature plugins' client bundles register into one shared
 +// registry at globalThis.__flybot__ (created by whichever bundle loads first), and
@@ -538,11 +538,15 @@ index 0000000000000000000000000000000000000000..8a7c962f0b2c68807659e4ae5400ff16
 +//   flybot.session.dock     { id, order, component({ sessionId, roster, room, bot, actions, call }) }  above the composer
 +//   flybot.new-chat.action  { id, order, label, hint?, visible?, run({ close, actions, roster }) }   a row in the sidebar '+' menu (next to Create group chat)
 +//
++// The same registry object also carries the host Bot look so a plugin can draw a Bot
++// exactly as the sidebar does: __flybot__.BotAvatar / BotMark / lookOf (set in registry()).
++//
 +// Types: ds-bot/types/flybot.d.ts (FlyBotClientRegistry).
 +import { Component, createElement as h, Fragment, useEffect, useState } from 'react'
 +import { call as callHost } from './api.js'
 +import { isListedRemoteChat } from '../shared/remote-label.js'
 +import { registry as baseRegistry } from './flybot-registry.js'
++import { BotAvatar, BotMark, lookOf } from './mark.js'
 +import { t } from './i18n.js'
 +
 +import { createClientApi as createClientApiWith } from './flybot-registry.js'
@@ -555,6 +559,11 @@ index 0000000000000000000000000000000000000000..8a7c962f0b2c68807659e4ae5400ff16
 +export function registry() {
 +  const slots = baseRegistry()
 +  globalThis.__flybot__.call ??= call
++  // Classic-script plugins cannot import mark.js; they render the same Bot look
++  // the sidebar / session list / chat header use via these host components.
++  globalThis.__flybot__.BotMark ??= BotMark
++  globalThis.__flybot__.BotAvatar ??= BotAvatar
++  globalThis.__flybot__.lookOf ??= lookOf
 +  return slots
 +}
 +
