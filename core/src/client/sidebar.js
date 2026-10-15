@@ -3,7 +3,7 @@ import { Component, createElement as h, Fragment, useEffect, useLayoutEffect, us
 import { createPortal } from 'react-dom'
 import { FishLogo } from '@deepseek-ai/dsh-client-ui-primitives'
 import { isMainOf } from './sources.js'
-import { currentPart, previewOf, relativeShort } from './text.js'
+import { currentPart, nameMentions, previewOf, relativeShort } from './text.js'
 import { PlusIcon, SearchIcon, GaugeIcon, PlugIcon, ClockIcon, GearIcon, PinMarkIcon, ConnectorIcon, SwitchIcon, CloudDownloadIcon } from './icons.js'
 import { MAIN_LOOK } from './characters.js'
 import { botState, BotMark, BotAvatar, RoomAvatar } from './mark.js'
@@ -41,7 +41,7 @@ const workLine = (lead, tool, more) => h(Shimmer, null, `${lead} · ${workPhrase
 function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked, asRow = false }) {
   const id = bot.id
   const part = currentPart(bot)
-  const preview = useSessions(list => previewOf(list, part, roster.exchangeTurns[part]))
+  const preview = useSessions(list => nameMentions(previewOf(list, part, roster.exchangeTurns[part]), roster))
   const running = useSessionStatus(map => map.get(part)?.running === true)
   const active = useSessionRetainInfo(part, info => (info?.retainedBy?.mainView ?? 0) > 0)
   const unread = useSessionStatus(map => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== undefined) || (marked && !active)
@@ -93,8 +93,8 @@ function RemoteMark({ remote }) {
 
 function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, wide, marked }) {
   const id = room.id
-  const fallback = useSessions(list => previewOf(list, id))
-  const preview = room.preview?.replace(/\s+/g, ' ').trim() || fallback
+  const fallback = useSessions(list => nameMentions(previewOf(list, id), roster))
+  const preview = nameMentions(room.preview?.replace(/\s+/g, ' ').trim(), roster) || fallback
   const active = useSessionRetainInfo(id, info => (info?.retainedBy?.mainView ?? 0) > 0)
   const unread = useSessionStatus(map => map.get(id)?.completionUnread === true) || (marked && !active)
   useMarkedUnread(id, active, marked, actions)

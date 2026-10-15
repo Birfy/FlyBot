@@ -83,6 +83,21 @@ test('the user bubble keeps the text around a mention, and a group only calls it
   assert.equal(canDrawUserMessages(), false)
 })
 
+test("a friend's Bot answers its handle too, and the chip reads its display name (#71)", () => {
+  const remote = { id: 'f', name: '代码审查官', remote: { handle: '@bot-2a758c0f.danyang.home', home: '@danyang.home' } }
+  const members = mentionableBots({ bots: [remote], byId: { f: remote }, roomsById: { r: { members: ['f'] } } }, 'r')
+  // The @ menu inserts "@<handle>" and the host delivers on it, so the bubble chips it
+  // like a name mention, under the display name from the roster.
+  const parts = userTextParts('@bot-2a758c0f.danyang.home 你是?', members)
+  assert.deepEqual(plain(parts.filter(part => part.bot).map(part => part.bot.id)), ['f'])
+  assert.equal(parts[0].bot.mentionLabel, '代码审查官')
+  assert.deepEqual(plain(parts[1]), { text: ' 你是?' })
+  // The display-name form still matches the Bot itself, and an address before @ stays text.
+  const named = userTextParts('@代码审查官 你是谁', members)
+  assert.deepEqual(plain(named.filter(part => part.bot).map(part => [part.bot.id, part.label])), [['f', '代码审查官']])
+  assert.deepEqual(plain(userTextParts('mail f@bot-2a758c0f.danyang.home', members).filter(part => part.bot)), [])
+})
+
 test('a Bot name is something "@" can call without a second reading', () => {
   assert.equal(nameProblem('新 Bot'), undefined)
   assert.equal(nameProblem('  '), 'A Bot needs a name')
