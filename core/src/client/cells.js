@@ -4,7 +4,7 @@ import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { inkText } from './inks.js'
 import { currentPart, linkMentions, mentionTarget, dayLabel, contentText, stripHeader, stripTrace, isHiddenTurn, isRelayContext, relaysBefore, relayPart, commRunOf, toolName, toolArgs, reminderPrompts } from './text.js'
 import { SmileIcon, ReplyIcon, DotsIcon, CheckIcon, DownloadIcon, CopyIcon, MemoryIcon } from './icons.js'
-import { colorOf, toolState, BotMark, RoomAvatar } from './mark.js'
+import { colorOf, remoteSeed, toolState, BotMark, RoomAvatar } from './mark.js'
 import { AnsweredCell, SettledQuestion, PendingQuestion } from './questions.js'
 import { SecretToolCell } from './secret-card.js'
 import { dateLocale, t } from './i18n.js'
@@ -199,8 +199,9 @@ export function remoteSpeaker(source, roster) {
     handle,
     isChief: member?.isChief ?? chat?.remote?.isChief,
   })
-  // The sidebar's Bot record when there is one; else a stable look derived from the handle.
-  const bot = chat ?? { id: `remote:${handle}`, name, color: member?.color, shape: member?.shape }
+  // The sidebar's Bot record when there is one; else a synthetic one whose id seeds the
+  // same handle-derived look the record would get (characters.js remoteSeed).
+  const bot = chat ?? { id: remoteSeed(handle), name, color: member?.color, shape: member?.shape }
   return { bot, member, name, handle, chatId: chat ? currentPart(chat) : undefined }
 }
 
