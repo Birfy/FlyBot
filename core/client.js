@@ -63,6 +63,11 @@ var ZH = {
   Duplicate: "复制一份",
   Hidden: "已隐藏",
   Admin: "管理员",
+  Human: "人",
+  Chief: "Chief",
+  "Add person": "添加成员",
+  "Sending as {name}": "以 {name} 的身份发送",
+  "Messages in this room are attributed to you": "这个房间里的消息会记在你的名下",
   Add: "添加",
   Close: "关闭",
   Copy: "复制",
@@ -942,6 +947,18 @@ var HOST_ZH = {
   "Unknown Bot": "找不到这个 Bot",
   "Unknown conversation": "找不到这个对话",
   "A group chat needs at least two Bots": "群聊至少要两个 Bot",
+  "You are not a member of that room": "你不是这个房间的成员",
+  "Only a room admin can add participants": "只有房间管理员可以添加成员",
+  "Only a room admin can remove participants": "只有房间管理员可以移除成员",
+  "Specialists stay in their owner's private rooms; a cross-owner room takes each side's Chief": "专员只待在其主人的私有房间里；跨主人房间只接受各方的 Chief",
+  "Only a designated Chief of a room member may join a shared room": "只有房间成员的指定 Chief 可以加入共享房间",
+  "Participant kind must be human or bot": "成员类型只能是 human 或 bot",
+  "A participant needs an id": "成员需要 id",
+  "Room role must be admin or member": "房间角色只能是 admin 或 member",
+  "That participant is already in the room": "这个成员已经在房间里",
+  "Unknown team member": "找不到这个团队成员",
+  "That participant is not in the room": "这个成员不在房间里",
+  "Each participant needs a kind (human or bot) and an id": "每个成员都需要类型（human 或 bot）和 id",
   "The admin must be a member of the group": "管理员必须是群成员",
   "Unknown group chat": "找不到这个群聊",
   "Hand the admin role to another member instead of leaving the group without one": "请把管理员交给其他成员，不要让群聊没有管理员",
@@ -1078,10 +1095,16 @@ var REFUSALS = /* @__PURE__ */ new Set(["bot/refused", "bot/invalid", "bot/read-
 var call = async (endpoint, payload, signal) => {
   let response;
   try {
+    const headers = { "content-type": "application/json" };
+    try {
+      const token = localStorage.getItem("flybot-member-session");
+      if (token) headers["x-flybot-member-session"] = token;
+    } catch {
+    }
     response = await fetch(ROUTE, {
       method: "POST",
       credentials: "same-origin",
-      headers: { "content-type": "application/json" },
+      headers,
       body: JSON.stringify({ endpoint, payload: payload ?? null }),
       signal
     });
@@ -1564,7 +1587,7 @@ function createSource(initial) {
     }
   };
 }
-var EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], agents: [], exchangeTurns: {}, questions: {}, secrets: [], capabilities: [], capabilityStatuses: {}, secretRequests: {}, models: [], defaultModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false };
+var EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], humans: [], self: null, agents: [], exchangeTurns: {}, questions: {}, secrets: [], capabilities: [], capabilityStatuses: {}, secretRequests: {}, models: [], defaultModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false };
 var isMainOf = (roster, id) => id !== void 0 && (roster.mainBotIds ?? []).includes(id);
 function indexRoster(value) {
   const byId = {};
@@ -4772,11 +4795,17 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
     replies.map((reply, index) => {
       const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? "gray" };
       if (reply.kind === "user") {
-        return (0, import_react7.createElement)("div", { key: `user-${index}`, className: "bt-urow" }, (0, import_react7.createElement)(
+        const who = reply.name || reply.authorId;
+        return (0, import_react7.createElement)(
           "div",
-          { className: "bt-ububble" },
-          (0, import_react7.createElement)(import_dsh_client_ui_primitives.MarkdownText, { text: reply.text, labels: mdLabels(), variant: "compact" })
-        ));
+          { key: `user-${index}`, className: "bt-urow", "data-author": reply.authorId, "data-author-name": who },
+          who ? (0, import_react7.createElement)("span", { className: "bt-uauthor" }, who) : null,
+          (0, import_react7.createElement)(
+            "div",
+            { className: "bt-ububble" },
+            (0, import_react7.createElement)(import_dsh_client_ui_primitives.MarkdownText, { text: reply.text, labels: mdLabels(), variant: "compact" })
+          )
+        );
       }
       if (reply.kind === "failed") {
         return (0, import_react7.createElement)(
@@ -6187,6 +6216,18 @@ function useDictation(onText) {
   const stop = () => recognition.current?.stop();
   return { listening, note, start, stop };
 }
+function ComposerIdentity({ sessionId, useRoster }) {
+  const roster = useRoster((value) => value);
+  const room2 = roster.roomsById?.[sessionId];
+  const self = roster.self;
+  const humans = (room2?.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0);
+  if (!self || !room2 || humans.length < 2) return null;
+  return (0, import_react11.createElement)(
+    "span",
+    { className: "bt-composer-as", title: t("Messages in this room are attributed to you") },
+    t("Sending as {name}", { name: self.displayName || self.memberId })
+  );
+}
 function ComposerVoice({ sessionId, inputActions, actions, useUi }) {
   const dictation = useDictation((text, final) => {
     if (final && inputActions) inputActions.insertText(text, inputActions.captureInsertion());
@@ -6335,7 +6376,10 @@ var conversationOf = (roster, sessionId) => {
 function mentionRows(roster, sessionId, query = "") {
   const here = conversationOf(roster, sessionId);
   if (here === null) return null;
-  const bots = here.room ? here.room.members.map((id) => roster.byId[id]).filter(Boolean) : roster.bots.filter((bot) => bot.id !== here.self.id);
+  const bots = here.room ? [
+    ...here.room.members.map((id) => roster.byId[id]).filter(Boolean),
+    ...(here.room.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0).map((p) => ({ id: p.id, name: p.displayName || p.id, kind: "human", role: p.role }))
+  ] : roster.bots.filter((bot) => bot.id !== here.self.id);
   const needle = query.trim().toLowerCase();
   const rows = bots.filter((bot) => bot.name.toLowerCase().includes(needle)).map((bot) => ({ bot, text: `@${bot.name} ` }));
   const everyone = t("Everyone");
@@ -9384,8 +9428,16 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
     const timer = setTimeout(() => setConfirming(false), 4e3);
     return () => clearTimeout(timer);
   }, [confirming]);
+  const humans = (room2.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0);
   const members = room2.members.map((id) => roster.byId[id]).filter(Boolean);
-  const outside = roster.bots.filter((bot) => !room2.members.includes(bot.id));
+  const shared2 = humans.length > 1;
+  const chiefs = new Set((roster.humans ?? []).map((person) => person.designatedChiefId).filter(Boolean));
+  const outside = roster.bots.filter((bot) => {
+    if (room2.members.includes(bot.id)) return false;
+    if (shared2) return chiefs.has(bot.id);
+    return true;
+  });
+  const outsidePeople = (roster.humans ?? []).filter((person) => !humans.some((p) => p.id === person.id));
   const admin = roster.byId[room2.admin];
   const mode = shownMode(room2, roster);
   const modeHint = ROOM_MODES.find(([id]) => id === mode)?.[2] ?? "";
@@ -9462,7 +9514,19 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
     ),
     (0, import_react24.createElement)(
       Card,
-      { title: t("Members · {count}", { count: members.length }) },
+      { title: t("Members · {count}", { count: members.length + humans.length }) },
+      humans.map((person) => (0, import_react24.createElement)(
+        "div",
+        { key: person.id, className: "bt-set-row bt-bs-row bt-gs-member" },
+        (0, import_react24.createElement)(
+          "span",
+          { className: "bt-gs-who" },
+          (0, import_react24.createElement)("span", { className: "bt-row-title" }, person.displayName || person.id),
+          (0, import_react24.createElement)("span", { className: "bt-tag" }, t("Human")),
+          person.role === "admin" ? (0, import_react24.createElement)("span", { className: "bt-tag" }, t("Admin")) : null
+        ),
+        humans.length + members.length > 2 && person.id !== roster.self?.memberId ? (0, import_react24.createElement)("button", { type: "button", className: "bt-x", "aria-label": t("Remove {name} from the group", { name: person.displayName || person.id }), title: t("Remove from group"), onClick: () => update({ removeParticipants: [{ kind: "human", id: person.id }] }) }, "×") : null
+      )),
       members.map((member) => {
         const leads = room2.admin === member.id;
         return (0, import_react24.createElement)(
@@ -9473,13 +9537,23 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
             { type: "button", className: "bt-gs-who", title: t("Open {name}'s chat", { name: member.name }), onClick: () => openBot(member.id) },
             (0, import_react24.createElement)(BotAvatar, { bot: member, size: 26, main: isMainOf(roster, member.id), admin: leads, live: false }),
             (0, import_react24.createElement)("span", { className: "bt-row-title" }, member.name),
-            leads ? (0, import_react24.createElement)("span", { className: "bt-tag" }, t("Admin")) : null
+            leads ? (0, import_react24.createElement)("span", { className: "bt-tag" }, t("Admin")) : null,
+            (roster.humans ?? []).some((person) => person.designatedChiefId === member.id) ? (0, import_react24.createElement)("span", { className: "bt-tag" }, t("Chief")) : null
           ),
           leads ? (0, import_react24.createElement)("button", { type: "button", className: "bt-mini", title: t("Leave the group without an admin"), onClick: () => update({ admin: null }) }, t("Unset")) : (0, import_react24.createElement)("button", { type: "button", className: "bt-mini", onClick: () => update({ admin: member.id }) }, t("Make admin")),
           members.length > 2 ? (0, import_react24.createElement)("button", { type: "button", className: "bt-x", "aria-label": t("Remove {name} from the group", { name: member.name }), title: t("Remove from group"), onClick: () => update({ remove: [member.id] }) }, "×") : null
         );
       }),
       adding ? [
+        ...outsidePeople.map((person) => (0, import_react24.createElement)(
+          "button",
+          { key: person.id, type: "button", className: "bt-set-row bt-bs-row bt-gs-pick", onClick: () => {
+            setAdding(false);
+            void update({ addParticipants: [{ kind: "human", id: person.id, displayName: person.displayName }] });
+          } },
+          (0, import_react24.createElement)("span", { className: "bt-set-copy" }, (0, import_react24.createElement)("span", { className: "bt-bs-label" }, person.displayName || person.id)),
+          (0, import_react24.createElement)("span", { className: "bt-set-hint" }, t("Add person"))
+        )),
         ...outside.map((bot) => (0, import_react24.createElement)(
           "button",
           { key: bot.id, type: "button", className: "bt-set-row bt-bs-row bt-gs-pick", onClick: () => {
@@ -9491,7 +9565,7 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
           (0, import_react24.createElement)("span", { className: "bt-set-hint" }, t("Add"))
         )),
         (0, import_react24.createElement)("button", { key: "cancel", type: "button", className: "bt-set-row bt-bs-row bt-gs-add", onClick: () => setAdding(false) }, t("Cancel"))
-      ] : outside.length > 0 ? (0, import_react24.createElement)("button", { type: "button", className: "bt-set-row bt-bs-row bt-gs-add", onClick: () => setAdding(true) }, (0, import_react24.createElement)(PlusIcon), t("Add member")) : null,
+      ] : outside.length + outsidePeople.length > 0 ? (0, import_react24.createElement)("button", { type: "button", className: "bt-set-row bt-bs-row bt-gs-add", onClick: () => setAdding(true) }, (0, import_react24.createElement)(PlusIcon), t("Add member")) : null,
       (0, import_react24.createElement)("div", { className: "bt-set-row bt-gs-note" }, (0, import_react24.createElement)(
         "span",
         { className: "bt-set-hint" },
@@ -11844,6 +11918,7 @@ function About({ text, title = "About" }) {
   );
 }
 function GroupOverview({ room: room2, roster, actions, usage, useWork, openSettings }) {
+  const humans = (room2.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0);
   const members = room2.members.map((id) => roster.byId[id]).filter(Boolean);
   const { entries: entries2, now } = useMemberWork(room2, useWork);
   return [
@@ -11851,26 +11926,39 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
     (0, import_react32.createElement)(
       "div",
       { key: "members" },
-      (0, import_react32.createElement)("div", { className: "bt-section-title" }, t("Members · {count}", { count: members.length })),
-      (0, import_react32.createElement)("div", { className: "bt-members", role: "list" }, members.map((member) => {
-        const entry = entries2.find((item) => item.id === member.id);
-        return (0, import_react32.createElement)(
+      (0, import_react32.createElement)("div", { className: "bt-section-title" }, t("Members · {count}", { count: members.length + humans.length })),
+      (0, import_react32.createElement)("div", { className: "bt-members", role: "list" }, [
+        ...humans.map((person) => (0, import_react32.createElement)(
           "div",
-          { key: member.id, role: "listitem" },
+          { key: person.id, role: "listitem" },
           (0, import_react32.createElement)(
             "div",
             { className: "bt-member" },
+            (0, import_react32.createElement)("span", { className: "bt-member-name" }, (0, import_react32.createElement)("span", null, person.displayName || person.id)),
+            (0, import_react32.createElement)("span", { className: "bt-chip" }, t("Human")),
+            person.role === "admin" ? (0, import_react32.createElement)("span", { className: "bt-chip bt-chip-admin" }, t("Admin")) : null
+          )
+        )),
+        ...members.map((member) => {
+          const entry = entries2.find((item) => item.id === member.id);
+          return (0, import_react32.createElement)(
+            "div",
+            { key: member.id, role: "listitem" },
             (0, import_react32.createElement)(
-              "button",
-              { type: "button", className: "bt-member-name", title: t("Open {name}'s chat", { name: member.name }), onClick: () => actions.openSession(member.id) },
-              (0, import_react32.createElement)(BotAvatar, { bot: member, size: 26, main: isMainOf(roster, member.id), admin: room2.admin === member.id, live: false }),
-              (0, import_react32.createElement)("span", null, member.name)
+              "div",
+              { className: "bt-member" },
+              (0, import_react32.createElement)(
+                "button",
+                { type: "button", className: "bt-member-name", title: t("Open {name}'s chat", { name: member.name }), onClick: () => actions.openSession(member.id) },
+                (0, import_react32.createElement)(BotAvatar, { bot: member, size: 26, main: isMainOf(roster, member.id), admin: room2.admin === member.id, live: false }),
+                (0, import_react32.createElement)("span", null, member.name)
+              ),
+              room2.admin === member.id ? (0, import_react32.createElement)("span", { className: "bt-chip bt-chip-admin" }, t("Admin")) : null
             ),
-            room2.admin === member.id ? (0, import_react32.createElement)("span", { className: "bt-chip bt-chip-admin" }, t("Admin")) : null
-          ),
-          entry ? (0, import_react32.createElement)(MemberWork, { entry, bot: member, room: room2, roster, actions, now }) : null
-        );
-      }))
+            entry ? (0, import_react32.createElement)(MemberWork, { entry, bot: member, room: room2, roster, actions, now }) : null
+          );
+        })
+      ])
     ),
     (0, import_react32.createElement)(
       "div",
@@ -13573,7 +13661,20 @@ function contentParts(content) {
 function mentionableBots(roster, sessionId) {
   const room2 = roster.roomsById[sessionId];
   const bots = room2 ? room2.members.map((id) => roster.byId[id]).filter(Boolean) : roster.byId[sessionId] ? roster.bots : [];
-  return bots.concat(bots.filter((bot) => typeof bot?.remote?.handle === "string").map((bot) => ({ ...bot, name: bot.remote.handle.replace(/^@+/, ""), mentionLabel: bot.name })));
+  const humans = (room2?.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0).map((p) => ({ id: p.id, name: p.displayName || p.id, kind: "human", role: p.role }));
+  return bots.concat(humans, bots.filter((bot) => typeof bot?.remote?.handle === "string").map((bot) => ({ ...bot, name: bot.remote.handle.replace(/^@+/, ""), mentionLabel: bot.name })));
+}
+function messageAuthor(data, roster) {
+  const source = data?.source ?? {};
+  const authorId = source.authorId;
+  if (!authorId) return null;
+  const name = source.authorName || source.authorId;
+  return {
+    authorId,
+    authorKind: source.authorKind || "human",
+    name,
+    mine: roster?.self?.memberId === authorId
+  };
 }
 function userTextParts(text, bots, referenceLabels = []) {
   const parts = [];
@@ -13629,12 +13730,23 @@ function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageIma
   const referenceLabels = data.referenceLabels ?? [];
   const references = openFile && openSkill ? { openFile, openSkill } : void 0;
   const steering = node.kind === "steering";
+  const author = messageAuthor(data, roster);
+  const room2 = roster.roomsById?.[sessionId];
+  const multiHuman = (room2?.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0).length > 1;
+  const incoming = author && !author.mine;
   return (0, import_react35.createElement)(
     "div",
-    { className: "bt-umsg", "data-steering": steering || void 0 },
+    {
+      className: incoming ? "bt-umsg bt-umsg-other" : "bt-umsg",
+      "data-steering": steering || void 0,
+      "data-author": author?.authorId,
+      "data-author-kind": author?.authorKind,
+      "data-author-name": author?.name
+    },
     (0, import_react35.createElement)(
       "div",
       { className: "bt-ustack" },
+      author && (incoming || multiHuman) ? (0, import_react35.createElement)("span", { className: "bt-uauthor" }, author.name) : null,
       attachments.length > 0 ? (0, import_react35.createElement)(Attachments, { attachments, renderMessageImages }) : null,
       text !== "" || rest.length > 0 ? (0, import_react35.createElement)(
         "div",
@@ -13649,6 +13761,10 @@ function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageIma
 }
 var USER_MESSAGE_CSS = `
 .bt-umsg{display:flex;flex-direction:row-reverse;align-items:center;justify-content:flex-start;gap:4px}
+.bt-umsg-other{flex-direction:row}
+.bt-umsg-other .bt-ustack{align-items:flex-start}
+.bt-uauthor{font-size:12px;line-height:16px;color:var(--bt-ink-3);font-weight:600}
+.bt-composer-as{font-size:12px;line-height:16px;color:var(--bt-ink-3);padding:0 8px;align-self:center;white-space:nowrap}
 .bt-ustack{min-width:0;max-width:min(calc(var(--dsh-chat-content-width,748px) * .702),82%);display:flex;flex-direction:column;align-items:flex-end;gap:8px}
 .bt-ubody{max-width:100%;box-sizing:border-box;background:var(--bt-user);color:var(--bt-user-ink);border-radius:18px;padding:7px 12px;font-size:var(--dsh-content-font-size,14px);line-height:calc(var(--dsh-content-font-size,14px) + 8px);white-space:pre-wrap;word-break:break-word}
 .bt-ubody a{color:inherit}
@@ -14530,6 +14646,7 @@ function apply(ctx) {
     shadow("conversation.composer.dock", { id: "activity", order: 0, priority: -10 }, Nothing),
     shadow("conversation.composer.dock", { id: "usage", order: 1, priority: -10 }, Nothing),
     shadow("conversation.input.left", { id: "bot-plus", order: -100, inject: face }, ComposerPlus),
+    shadow("conversation.input.left", { id: "bot-as", order: -90, inject: face }, ComposerIdentity),
     shadow("conversation.input.right", { id: "bot-voice", order: 100, inject: face }, ComposerVoice),
     shadow("conversation.composer", {
       priority: -10,

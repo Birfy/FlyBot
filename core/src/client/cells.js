@@ -641,7 +641,10 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
     replies.map((reply, index) => {
       const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? 'gray' }
       if (reply.kind === 'user') {
-        return h('div', { key: `user-${index}`, className: 'bt-urow' }, h('div', { className: 'bt-ububble' },
+        const who = reply.name || reply.authorId
+        return h('div', { key: `user-${index}`, className: 'bt-urow', 'data-author': reply.authorId, 'data-author-name': who },
+          who ? h('span', { className: 'bt-uauthor' }, who) : null,
+          h('div', { className: 'bt-ububble' },
           h(MarkdownText, { text: reply.text, labels: mdLabels(), variant: 'compact' })))
       }
       if (reply.kind === 'failed') {

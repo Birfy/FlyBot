@@ -114,6 +114,7 @@ function About({ text, title = 'About' }) {
 // A group's overview: what members read, who is in it, and who answers. Changes are
 // made in its settings.
 function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) {
+  const humans = (room.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
   const members = room.members.map(id => roster.byId[id]).filter(Boolean)
   const { entries, now } = useMemberWork(room, useWork)
   return [
@@ -121,8 +122,14 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) 
       ? h(About, { key: 'notice', title: 'Notice', text: room.notice })
       : h('button', { key: 'notice', type: 'button', className: 'bt-more', onClick: openSettings }, t('Add a notice in group settings')),
     h('div', { key: 'members' },
-      h('div', { className: 'bt-section-title' }, t('Members · {count}', { count: members.length })),
-      h('div', { className: 'bt-members', role: 'list' }, members.map((member) => {
+      h('div', { className: 'bt-section-title' }, t('Members · {count}', { count: members.length + humans.length })),
+      h('div', { className: 'bt-members', role: 'list' }, [
+        ...humans.map(person => h('div', { key: person.id, role: 'listitem' },
+          h('div', { className: 'bt-member' },
+            h('span', { className: 'bt-member-name' }, h('span', null, person.displayName || person.id)),
+            h('span', { className: 'bt-chip' }, t('Human')),
+            person.role === 'admin' ? h('span', { className: 'bt-chip bt-chip-admin' }, t('Admin')) : null))),
+        ...members.map((member) => {
         const entry = entries.find(item => item.id === member.id)
         return h('div', { key: member.id, role: 'listitem' },
           h('div', { className: 'bt-member' },
@@ -131,7 +138,7 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) 
               h('span', null, member.name)),
             room.admin === member.id ? h('span', { className: 'bt-chip bt-chip-admin' }, t('Admin')) : null),
           entry ? h(MemberWork, { entry, bot: member, room, roster, actions, now }) : null)
-      }))),
+      })])),
     h('div', { key: 'mode' }, h('div', { className: 'bt-section-title' }, t('Who answers')),
       h('div', { className: 'bt-kv' }, h('span', null, t(ROOM_MODES.find(([id]) => id === shownMode(room, roster))?.[1] ?? 'Everyone')))),
     usage ? h('div', { key: 'usage' }, h('div', { className: 'bt-section-title' }, t('Usage')),

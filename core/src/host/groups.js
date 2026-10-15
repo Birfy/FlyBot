@@ -292,8 +292,8 @@ export function install(rt) {
     const before = round.slots.length
     const members = room.members.map(rt.botOf).filter(Boolean)
     for (const line of lines) {
-      appendRoom(room, { who: 'User', text: line.text })
-      round.replies.push({ kind: 'user', text: line.text, time: Date.now() })
+        appendRoom(room, rt.authoredRoomLine?.(room, { who: line.authorName || 'User', text: line.text, authorId: line.authorId, authorKind: line.authorKind || 'human' }) ?? { who: 'User', text: line.text })
+      round.replies.push({ kind: 'user', text: line.text, time: Date.now(), authorId: line.authorId, authorKind: line.authorKind, name: line.authorName })
       const { all, found } = mentionsIn(line.text, members)
       const note = all || found.length > 0 ? 'the user mentioned you' : 'new message from the user'
       callMembers(round, turns, index - 1, openingSpeakers(room, { text: line.text }), note, ROOM_ADMIN_TURNS_EACH)
@@ -367,7 +367,7 @@ export function install(rt) {
         continue
       }
       slot.status = 'posted'
-      appendRoom(room, { who: member.name, botId: member.id, text: reply })
+      appendRoom(room, rt.authoredRoomLine?.(room, { who: member.name, botId: member.id, authorId: member.id, authorKind: 'bot', text: reply }) ?? { who: member.name, botId: member.id, text: reply })
       round.replies.push({ botId: member.id, name: member.name, color: member.color, text: reply, time: Date.now() })
       void rt.save().catch(() => {})
       // Only the admin's "@all" calls everyone, so a member cannot set off a storm.
@@ -404,9 +404,12 @@ export function install(rt) {
       for (const post of posts.filter(item => !item.kickoff && !event(item))) {
         // Image readings go into the log only; `@` names are picked from what the user typed.
         const text = post.images === undefined ? post.text : [post.text, ...await rt.imagesForGroup(post.images, room.id)].filter(Boolean).join('\n')
-        appendRoom(room, post.botId
-          ? { who: rt.botOf(post.botId)?.name ?? post.name ?? 'Bot', botId: post.botId, text }
-          : { who: 'User', text })
+        appendRoom(room, rt.authoredRoomLine?.(room, post.botId
+          ? { who: rt.botOf(post.botId)?.name ?? post.name ?? 'Bot', botId: post.botId, authorId: post.botId, authorKind: 'bot', text }
+          : { who: post.authorName || 'User', text, authorId: post.authorId, authorKind: post.authorKind || 'human' })
+          ?? (post.botId
+            ? { who: rt.botOf(post.botId)?.name ?? post.name ?? 'Bot', botId: post.botId, text }
+            : { who: 'User', text }))
       }
       if (posts.some(post => !post.botId && !post.kickoff)) {
         room.botRounds = 0
@@ -539,7 +542,9 @@ export function install(rt) {
       const { room, error } = rt.pickRoom(args.group, self)
       if (error) return error
       ensureRoomLog(room)
-      const lines = room.log.slice(-ROOM_READ_MAX)
+      const botPart = rt.participantsOf?.(room)?.find(p => p.kind === 'bot' && p.id === self)
+      const from = botPart?.joinedSeq ?? 0
+      const lines = room.log.filter(line => (line.seq ?? 0) >= from).slice(-ROOM_READ_MAX)
       return lines.length === 0 ? `"${room.name}" has no messages yet.` : `Latest in "${room.name}" (oldest first):\n${transcript(lines)}`
     },
   }))

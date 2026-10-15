@@ -27,7 +27,11 @@ export function mentionRows(roster, sessionId, query = '') {
   const here = conversationOf(roster, sessionId)
   if (here === null) return null
   const bots = here.room
-    ? here.room.members.map(id => roster.byId[id]).filter(Boolean)
+    ? [
+        ...here.room.members.map(id => roster.byId[id]).filter(Boolean),
+        ...(here.room.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
+          .map(p => ({ id: p.id, name: p.displayName || p.id, kind: 'human', role: p.role })),
+      ]
     : roster.bots.filter(bot => bot.id !== here.self.id)
   const needle = query.trim().toLowerCase()
   const rows = bots.filter(bot => bot.name.toLowerCase().includes(needle)).map(bot => ({ bot, text: `@${bot.name} ` }))

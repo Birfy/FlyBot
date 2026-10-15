@@ -35,8 +35,17 @@ export function install(rt) {
     ].filter(Boolean)
     return `- "${room.name}" — ${parts.join('; ')}`
   }
-  // Main Bots see every group; other Bots see the groups they are in.
-  const visibleRooms = self => Object.values(state.rooms).filter(room => rt.isMain(self) || room.members.includes(self))
+  // Main Bots see every group in their owner's scope; other Bots see the groups
+  // they are in. A Main Bot of one owner does not see another owner's private rooms.
+  const visibleRooms = (self) => Object.values(state.rooms).filter((room) => {
+    if (room.members.includes(self)) return true
+    if (!rt.isMain(self)) return false
+    if (!rt.authzEnforced?.()) return true
+    const bot = rt.botOf(self)
+    if (!bot?.ownerId) return true
+    if (rt.isCrossOwnerRoom?.(room) && !room.members.includes(self)) return false
+    return rt.roomOwnedBy?.({ memberId: bot.ownerId }, room.id) !== false
+  })
 
   ctx.tools.register(defineTool({
     name: 'list_bots',

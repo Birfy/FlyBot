@@ -35,8 +35,23 @@ export function mentionableBots(roster, sessionId) {
   const room = roster.roomsById[sessionId]
   const bots = room ? room.members.map(id => roster.byId[id]).filter(Boolean)
     : roster.byId[sessionId] ? roster.bots : []
-  return bots.concat(bots.filter(bot => typeof bot?.remote?.handle === 'string')
+  const humans = (room?.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
+    .map(p => ({ id: p.id, name: p.displayName || p.id, kind: 'human', role: p.role }))
+  return bots.concat(humans, bots.filter(bot => typeof bot?.remote?.handle === 'string')
     .map(bot => ({ ...bot, name: bot.remote.handle.replace(/^@+/, ''), mentionLabel: bot.name })))
+}
+
+export function messageAuthor(data, roster) {
+  const source = data?.source ?? {}
+  const authorId = source.authorId
+  if (!authorId) return null
+  const name = source.authorName || source.authorId
+  return {
+    authorId,
+    authorKind: source.authorKind || 'human',
+    name,
+    mine: roster?.self?.memberId === authorId,
+  }
 }
 
 // Runs of plain text and Bot mentions, in order.
@@ -92,8 +107,19 @@ export function UserMessageCell({ node, sessionId, useRoster, actions, renderMes
   const referenceLabels = data.referenceLabels ?? []
   const references = openFile && openSkill ? { openFile, openSkill } : undefined
   const steering = node.kind === 'steering'
-  return h('div', { className: 'bt-umsg', 'data-steering': steering || undefined },
+  const author = messageAuthor(data, roster)
+  const room = roster.roomsById?.[sessionId]
+  const multiHuman = (room?.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined).length > 1
+  const incoming = author && !author.mine
+  return h('div', {
+    className: incoming ? 'bt-umsg bt-umsg-other' : 'bt-umsg',
+    'data-steering': steering || undefined,
+    'data-author': author?.authorId,
+    'data-author-kind': author?.authorKind,
+    'data-author-name': author?.name,
+  },
     h('div', { className: 'bt-ustack' },
+      author && (incoming || multiHuman) ? h('span', { className: 'bt-uauthor' }, author.name) : null,
       attachments.length > 0 ? h(Attachments, { attachments, renderMessageImages }) : null,
       text !== '' || rest.length > 0 ? h('div', { className: 'bt-ubody', title: clock(data.time) },
         h(UserText, { text, bots: mentionableBots(roster, sessionId), referenceLabels, skillNames: data.skillNames ?? [], references, actions }),
@@ -104,6 +130,10 @@ export function UserMessageCell({ node, sessionId, useRoster, actions, renderMes
 
 export const USER_MESSAGE_CSS = `
 .bt-umsg{display:flex;flex-direction:row-reverse;align-items:center;justify-content:flex-start;gap:4px}
+.bt-umsg-other{flex-direction:row}
+.bt-umsg-other .bt-ustack{align-items:flex-start}
+.bt-uauthor{font-size:12px;line-height:16px;color:var(--bt-ink-3);font-weight:600}
+.bt-composer-as{font-size:12px;line-height:16px;color:var(--bt-ink-3);padding:0 8px;align-self:center;white-space:nowrap}
 .bt-ustack{min-width:0;max-width:min(calc(var(--dsh-chat-content-width,748px) * .702),82%);display:flex;flex-direction:column;align-items:flex-end;gap:8px}
 .bt-ubody{max-width:100%;box-sizing:border-box;background:var(--bt-user);color:var(--bt-user-ink);border-radius:18px;padding:7px 12px;font-size:var(--dsh-content-font-size,14px);line-height:calc(var(--dsh-content-font-size,14px) + 8px);white-space:pre-wrap;word-break:break-word}
 .bt-ubody a{color:inherit}
