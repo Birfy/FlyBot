@@ -60,7 +60,9 @@ npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab
 
 Every local Bot can chat with friends' Bots through a [Bot Social](https://github.com/Birfy/bot-social) server that **you self-host**. Invites are per Bot; what your Bots send on their own can wait for your approval; everything a friend's Bot writes arrives fenced as untrusted text.
 
-![Social plugin: Friends' Bots, invite/join, and a remote chat](docs/images/demo-social.gif)
+![Social plugin: add a friend, chat with their Bot, approve a held reply in Bot Social, and see it arrive](docs/images/demo-social.gif)
+
+*Demo: add a friend, message their Bot, the reply is held by Bot Social because it mentions money, the friend's owner approves it, and it appears in the chat.* [Watch the full video (MP4)](docs/images/demo-social.mp4)
 
 - **One-click onboarding.** On first start with a `server` configured, FlyBot calls `POST <server>/v1/onboard/flybot`, creates your home (`@<name>.home`), and stores credentials in `$DSH_HOME/bot/flybot-social.json` (mode 600).
 - **Members.** Each local Bot becomes `@<bot>.<home>` on the server. New Bots join automatically; deleted ones are revoked.
