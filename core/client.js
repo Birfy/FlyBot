@@ -965,7 +965,8 @@ var HOST_ZH = {
   "Only a room admin can remove participants": "只有房间管理员可以移除成员",
   "Specialists stay in their owner's private rooms; a cross-owner room takes each side's Chief": "专员只待在其主人的私有房间里；跨主人房间只接受各方的 Chief",
   "Only a designated Chief of a room member may join a shared room": "只有房间成员的指定 Chief 可以加入共享房间",
-  "Only a Chief or a Bot published to friends may join a shared room": "只有 Chief 或主人已向好友公开的 Bot 可以加入共享房间",
+  "Only a Bot granted to you may join a shared room": "只有已授权给你的 Bot 可以加入共享房间",
+  "Only a Chief or a Bot published to friends may join a shared room": "只有已授权给你的 Bot 可以加入共享房间",
   "Participant kind must be human or bot": "成员类型只能是 human 或 bot",
   "A participant needs an id": "成员需要 id",
   "Room role must be admin or member": "房间角色只能是 admin 或 member",
@@ -1147,7 +1148,7 @@ var call = async (endpoint, payload, signal) => {
 };
 
 // src/client/flybot-registry.js
-var SLOTS = ["flybot.sidebar.section", "flybot.sidebar.structure", "flybot.composer.mention", "flybot.bot.details", "flybot.approvals", "flybot.room.overview"];
+var SLOTS = ["flybot.sidebar.section", "flybot.sidebar.structure", "flybot.composer.mention", "flybot.bot.details", "flybot.approvals", "flybot.room.overview", "flybot.session.dock"];
 function createRegistry() {
   const entries2 = new Map(SLOTS.map((name) => [name, []]));
   const listeners2 = /* @__PURE__ */ new Set();
@@ -1358,6 +1359,18 @@ function FlyBotSections({ roster, actions, renderBot }) {
     "div",
     { key: entry.id, className: "bt-flybot-section", "data-flybot": entry.id },
     (0, import_react.createElement)(Safe, { entry, props: { roster, actions, call: call2, renderBot, remoteChats } })
+  )));
+}
+function FlyBotSessionDock({ sessionId, useRoster, actions }) {
+  const entries2 = useSlot("flybot.session.dock");
+  const roster = typeof useRoster === "function" ? useRoster((value) => value) : void 0;
+  if (entries2.length === 0) return null;
+  const room2 = roster?.roomsById?.[sessionId];
+  const bot = room2 ? void 0 : roster?.byId?.[sessionId];
+  return (0, import_react.createElement)(import_react.Fragment, null, entries2.map((entry) => (0, import_react.createElement)(
+    "div",
+    { key: entry.id, className: "bt-flybot-session-dock", "data-flybot": entry.id },
+    (0, import_react.createElement)(Safe, { entry, props: { sessionId, roster, room: room2, bot, actions, call: call2 } })
   )));
 }
 function FlyBotRoomOverview({ room: room2, roster, actions }) {
@@ -14882,7 +14895,8 @@ function apply(ctx) {
     shadow("conversation.input.dock", { id: "bot-members", order: -120, inject: face }, MemberDock),
     shadow("conversation.input.dock", { id: "bot-model", order: -110, inject: face }, ModelChoiceDock),
     shadow("conversation.input.dock", { id: "bot-question", order: -100, inject: face }, QuestionDock),
-    shadow("conversation.input.dock", { id: "bot-secret", order: -90, inject: face }, SecretDock)
+    shadow("conversation.input.dock", { id: "bot-secret", order: -90, inject: face }, SecretDock),
+    shadow("conversation.input.dock", { id: "flybot-session", order: -80, inject: face }, FlyBotSessionDock)
   ];
   ctx.effect(() => {
     const style = installStyles(RETURN_CSS, "return");

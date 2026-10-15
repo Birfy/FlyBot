@@ -302,13 +302,13 @@ index 48b001892b5646e43b0aa01c8b98ce31d9def699..2fc397c61326b38cf7110b9704757c80
 +
 diff --git a/src/client/flybot-registry.js b/src/client/flybot-registry.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..d51c4f2a08d7d24b301f59337bb9d870f2941e66
+index 0000000000000000000000000000000000000000..f00f0478502aebf01e4498aaf25607fa2420173a
 --- /dev/null
 +++ b/src/client/flybot-registry.js
 @@ -0,0 +1,188 @@
 +// The FlyBot slot registry, free of React so the "@" menu and tests can use it.
 +// See flybot-slots.js for what each slot carries.
-+export const SLOTS = ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals', 'flybot.room.overview']
++export const SLOTS = ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals', 'flybot.room.overview', 'flybot.session.dock']
 +
 +export function createRegistry() {
 +  const entries = new Map(SLOTS.map(name => [name, []]))
@@ -496,10 +496,10 @@ index 0000000000000000000000000000000000000000..d51c4f2a08d7d24b301f59337bb9d870
 +}
 diff --git a/src/client/flybot-slots.js b/src/client/flybot-slots.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..1e6d1db9f4f8ac08b34dbffe5cd402dce2d80242
+index 0000000000000000000000000000000000000000..9cbda2bed9db12c9d5768c5afb8acb3c829d25e9
 --- /dev/null
 +++ b/src/client/flybot-slots.js
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,167 @@
 +// -------------------------------------------------------------------------
 +// FlyBot frontend slots. Feature plugins' client bundles register into one shared
 +// registry at globalThis.__flybot__ (created by whichever bundle loads first), and
@@ -514,6 +514,7 @@ index 0000000000000000000000000000000000000000..1e6d1db9f4f8ac08b34dbffe5cd402dc
 +//   flybot.bot.details      { id, order, component({ bot, roster, call }) }        in a Bot's settings
 +//   flybot.approvals        { id, order, component({ approval, decide, call }) }   custom card for a held send
 +//   flybot.room.overview    { id, order, component({ room, roster, actions, call }) }  top of a group's overview
++//   flybot.session.dock     { id, order, component({ sessionId, roster, room, bot, actions, call }) }  above the composer
 +//
 +// Types: ds-bot/types/flybot.d.ts (FlyBotClientRegistry).
 +import { Component, createElement as h, Fragment, useEffect, useState } from 'react'
@@ -576,6 +577,16 @@ index 0000000000000000000000000000000000000000..1e6d1db9f4f8ac08b34dbffe5cd402dc
 +  const remoteChats = (roster.bots ?? []).filter(bot => bot.remote)
 +  return h(Fragment, null, entries.map(entry => h('div', { key: entry.id, className: 'bt-flybot-section', 'data-flybot': entry.id },
 +    h(Safe, { entry, props: { roster, actions, call, renderBot, remoteChats } }))))
++}
++
++export function FlyBotSessionDock({ sessionId, useRoster, actions }) {
++  const entries = useSlot('flybot.session.dock')
++  const roster = typeof useRoster === 'function' ? useRoster(value => value) : undefined
++  if (entries.length === 0) return null
++  const room = roster?.roomsById?.[sessionId]
++  const bot = room ? undefined : roster?.byId?.[sessionId]
++  return h(Fragment, null, entries.map(entry => h('div', { key: entry.id, className: 'bt-flybot-session-dock', 'data-flybot': entry.id },
++    h(Safe, { entry, props: { sessionId, roster, room, bot, actions, call } }))))
 +}
 +
 +export function FlyBotRoomOverview({ room, roster, actions }) {
@@ -669,11 +680,11 @@ index 6941c1ae708305f6c39c6529d9d065947fc99b84..b119bbe2f3478cc25c41d67c9af9fa4f
  // A notebook with a ribbon: what a Bot remembers.
  export const MemoryIcon = lineIcon(['M5.5 3.5h8A1.5 1.5 0 0 1 15 5v10a1.5 1.5 0 0 1-1.5 1.5h-8z', 'M5.5 3.5v13', 'M8.5 7.5h3.5M8.5 10.5h2.5', 'M12 3.5v4l1-.8 1 .8'])
 diff --git a/src/client/index.js b/src/client/index.js
-index 203345b25d20a3635d2d9b157ef29bd2aaa46766..eccf98ce7ce84db9e9c2ee715680d7373eef7d16 100644
+index 203345b25d20a3635d2d9b157ef29bd2aaa46766..ebc856e5e3ac9a79a025b7d35aac17d4113c2530 100644
 --- a/src/client/index.js
 +++ b/src/client/index.js
 @@ -1,3 +1,4 @@
-+import { FLYBOT_CSS, FlyBotApprovals, createClientApi as createFlyBotClient } from './flybot-slots.js'
++import { FLYBOT_CSS, FlyBotApprovals, FlyBotSessionDock, createClientApi as createFlyBotClient } from './flybot-slots.js'
  import { call } from './api.js'
  import { isHex, inkText, paintCss } from './inks.js'
  import { DEFAULT_MASK, SHAPES, markupCache, maskOf } from './characters.js'
@@ -742,6 +753,14 @@ index 203345b25d20a3635d2d9b157ef29bd2aaa46766..eccf98ce7ce84db9e9c2ee715680d737
      shadow('conversation.input.right', { id: 'bot-voice', order: 100, inject: face }, ComposerVoice),
      shadow('conversation.composer', {
        priority: -10,
+@@ -808,6 +823,7 @@ export function apply(ctx) {
+     shadow('conversation.input.dock', { id: 'bot-model', order: -110, inject: face }, ModelChoiceDock),
+     shadow('conversation.input.dock', { id: 'bot-question', order: -100, inject: face }, QuestionDock),
+     shadow('conversation.input.dock', { id: 'bot-secret', order: -90, inject: face }, SecretDock),
++    shadow('conversation.input.dock', { id: 'flybot-session', order: -80, inject: face }, FlyBotSessionDock),
+   ]
+   // The return button belongs to neither group: it renders only in Agent mode.
+   ctx.effect(() => {
 diff --git a/src/client/sidebar.js b/src/client/sidebar.js
 index 2b3ea08fa8dc74de8166c07c3b4f704d6c120f10..72cb933ad151f00edb29e89bbad120fa1ede5070 100644
 --- a/src/client/sidebar.js
@@ -1157,7 +1176,7 @@ index 0000000000000000000000000000000000000000..649ca3f372a8b38d5ea9703b367f3596
 +})
 diff --git a/test/flybot-client.test.js b/test/flybot-client.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..16ea16a13fa96b731a4139cfe83a3d9f25fdbe35
+index 0000000000000000000000000000000000000000..d20eb9d085c499511f6dd45da606bd089e292531
 --- /dev/null
 +++ b/test/flybot-client.test.js
 @@ -0,0 +1,122 @@
@@ -1178,7 +1197,7 @@ index 0000000000000000000000000000000000000000..16ea16a13fa96b731a4139cfe83a3d9f
 +  // The replaced entry stays: disposing the old one does not remove its successor.
 +  assert.deepEqual(slots.entries('flybot.sidebar.section').map(e => e.id), ['b', 'a'])
 +  assert.throws(() => slots.register('nope', { id: 'x' }), /unknown slot/)
-+  assert.deepEqual(SLOTS, ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals', 'flybot.room.overview'])
++  assert.deepEqual(SLOTS, ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals', 'flybot.room.overview', 'flybot.session.dock'])
 +})
 +
 +test('mention candidates come from every plugin and one failing source is skipped', async () => {

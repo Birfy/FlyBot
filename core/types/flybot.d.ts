@@ -31,8 +31,8 @@ export interface BotView {
   name: string
   role?: string
   isMain: boolean
-  /** Reachable from other owners and friends (the owner's choice; the Chief by default). Others' unpublished Bots cannot be messaged. */
-  published: boolean
+  /** True when this Bot has at least one person-grant (Invite to this Bot was accepted). */
+  granted: boolean
   createdBy: BotId | null
   /** Text prompt.js appends to this Bot's system prompt (bot.setSystemPrompt). */
   systemPrompt: string
@@ -62,8 +62,8 @@ export interface FlyBotEvents {
   /** A new local Bot (UI, create_bot, or a plugin's bot.create); payload is its record. */
   'bot.created': BotView
   'bot.removed': BotRemoved
-  /** A Bot's effective published state flipped (set by its owner, or the Chief changed); payload is its record. */
-  'bot.published': BotView
+  /** This Bot's grant list changed; payload is its record. */
+  'bot.grants': BotView
 }
 export type On = <K extends keyof FlyBotEvents>(event: K, listener: (payload: FlyBotEvents[K]) => void, options?: { all?: boolean }) => () => void
 
@@ -197,8 +197,10 @@ export interface FlyBot {
     find(name: string): BotView | undefined
     /** True for a remote address ({ kind: 'remote' } or '@handle'); local ids are never remote. */
     isRemote(ref: unknown): boolean
-    /** Whether the Bot is published (reachable from outside its owner). false for remote or unknown ids. */
-    isPublished(id: BotId): boolean
+    /** True when this Bot has a grant matching `peer` (or any person-grant when omitted). */
+    hasGrant(id: BotId, peer?: BotRef, roomId?: string): boolean
+    /** True when this Bot has at least one person-grant. */
+    hasAnyGrant(id: BotId): boolean
     /** The Bot a Session (own chat, group, or earlier part) belongs to. */
     of(sessionId: string): BotView | undefined
     /** Returns the new Bot's id. */
@@ -214,9 +216,15 @@ export interface FlyBot {
     }
   }
   transports: { add(kind: string, transport: Transport): () => void }
+  /** Outgoing grants for a local Bot (one Bot → one grantee; optional room scope). */
+  grants: {
+    of(botId: BotId): Array<{ id: string; grantee: string; name?: string; relationshipId?: string; roomId?: string }>
+    has(botId: BotId, peer?: BotRef, roomId?: string): boolean
+    set(botId: BotId, list: Array<{ id?: string; grantee: string; name?: string; relationshipId?: string; roomId?: string }>): Promise<unknown>
+  }
   /** Friends' remote Bots shown as chat members (remote badge, "@handle" mentions). Not team Bots. */
   remote: {
-    /** Replaces this plugin's published list. */
+    /** Replaces this plugin's granted-remote list. */
     publish(list: Array<{ handle: string; name?: string; home?: string; homeName?: string; owner?: string }>): void
     list(): RemoteMember[]
     get(handle: string): RemoteMember | undefined
@@ -227,6 +235,16 @@ export interface FlyBot {
   }
   /** Face-to-face rooms (#83): host a Bot Social matching room as a normal native room. */
   rooms: {
+    /** Every hosted room (native, shared, face-to-face). Used to hide a friend's Bot from groups. */
+    list(): Array<{
+      id: string
+      name?: string
+      origin?: string
+      face?: { roomId?: string }
+      members?: string[]
+      participants?: Array<{ kind?: string; id?: string; handle?: string; remote?: boolean; leftSeq?: number }>
+    }>
+    removeParticipant(roomId: string, ref: { kind?: string; id?: string; handle?: string; remote?: boolean }): Promise<unknown>
     upsertFace(spec: {
       roomId: string
       name?: string
@@ -234,7 +252,7 @@ export interface FlyBot {
       expiresAt?: string | null
       startedAt?: string | null
       eventCursor?: number
-      members?: Array<{ handle?: string; displayName?: string; ownerName?: string; published?: boolean; id?: string }>
+      members?: Array<{ handle?: string; displayName?: string; ownerName?: string; roomOnly?: boolean; published?: boolean; id?: string }>
       localBots?: Array<{ id: string; handle?: string; name?: string }>
       localId?: string
     }): Promise<{ id: string; face?: { roomId?: string } } | undefined>
@@ -300,6 +318,8 @@ export type FlyBotCall = (endpoint: string, payload?: unknown) => Promise<any>
  *   one middleware (`policy`).
  * - `flybot.room.overview`: a block at the top of a group's overview (Leave / Start for a
  *   face-to-face room).
+ * - `flybot.session.dock`: a card above the composer in a Bot or group chat (held Bot
+ *   Social replies waiting for approval).
  */
 export interface FlyBotSlots {
   'flybot.sidebar.section': { id: string; order?: number; component(props: SidebarSectionProps): any }
@@ -315,6 +335,7 @@ export interface FlyBotSlots {
   /** policy: only approvals held by this middleware name; omit for all. */
   'flybot.approvals': { id: string; order?: number; policy?: string; component(props: ApprovalCardProps): any }
   'flybot.room.overview': { id: string; order?: number; component(props: { room: any; roster: any; actions: any; call: FlyBotCall }): any }
+  'flybot.session.dock': { id: string; order?: number; component(props: { sessionId?: string; roster?: any; room?: any; bot?: any; actions?: any; call: FlyBotCall }): any }
 }
 
 /** Browser ctx.flybot (client plugins inject 'flybot'). */

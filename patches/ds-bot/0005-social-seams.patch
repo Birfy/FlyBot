@@ -44,7 +44,7 @@ index d357ca2f4f952f4e34aac5b99fa9fad2d5bc3351..16a6a43f644225aa3b830c363ff3943f
  // -------------------------------------------------------------------------
  // Bot mark: the Bot's character (or its uploaded photo), looked up by lookOf.
 diff --git a/src/host/channel.js b/src/host/channel.js
-index 40d43de581abae0bcc9a8fd485816117e48e8bea..2ef9ddeaae63b3c7a12806fc82ba75371345767c 100644
+index 40d43de581abae0bcc9a8fd485816117e48e8bea..e13ea702a6ff79f65ca9c38fb533ceb5562001c1 100644
 --- a/src/host/channel.js
 +++ b/src/host/channel.js
 @@ -28,7 +28,8 @@ export function install(rt) {
@@ -57,13 +57,12 @@ index 40d43de581abae0bcc9a8fd485816117e48e8bea..2ef9ddeaae63b3c7a12806fc82ba7537
      revision: state.revision,
      workspaceId: state.workspaceId ?? null,
      // `mainBotId` is the first Main Bot, which the sidebar shows as its tile.
-@@ -37,16 +38,31 @@ export function install(rt) {
+@@ -37,16 +38,30 @@ export function install(rt) {
      // `sessionId` is the Bot's current own-chat part; `parts` its earlier ones.
      // `waiting`: the Bot holds its greeting until the user picks its model.
      bots: Object.values(state.bots).map(({ segments, kickoff, ...bot }) => ({
 -      ...bot, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
-+      // `published`: whether other owners and friends can reach it (#51), the effective value.
-+      ...bot, published: rt.isPublished?.(bot.id) === true, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
++      ...bot, granted: rt.hasAnyGrant?.(bot.id) === true, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
      })),
      // `parts`: the members' hidden group Sessions and their earlier segments, for usage.
      rooms: Object.values(state.rooms).map(({ log, seen, botRounds, lateRounds, sessions, segments, ...room }) => {
@@ -91,7 +90,7 @@ index 40d43de581abae0bcc9a8fd485816117e48e8bea..2ef9ddeaae63b3c7a12806fc82ba7537
      // The team's DSH Agent (at most one): plain dsh Sessions, not Bots.
      agents: Object.values(state.agents),
      // Key names and who may use them; values never leave the host.
-@@ -54,7 +70,8 @@ export function install(rt) {
+@@ -54,7 +69,8 @@ export function install(rt) {
      capabilities: rt.capabilityLibraryView(),
      secretRequests: state.secretRequests ?? {},
      colors: [...COLORS, ...EXTRA_COLORS],
@@ -101,7 +100,7 @@ index 40d43de581abae0bcc9a8fd485816117e48e8bea..2ef9ddeaae63b3c7a12806fc82ba7537
      defaultModel: rt.cachedDefault() ?? null,
      permissions: rt.permissionCatalog?.() ?? null,
      modelsKey: modelsKey(),
-@@ -65,22 +82,30 @@ export function install(rt) {
+@@ -65,22 +81,30 @@ export function install(rt) {
      memory: rt.memoryEnabled !== false,
      // Set while another dsh host holds the team (store.js): why this one cannot change it.
      readOnly: rt.readOnly() ?? null,
@@ -142,7 +141,7 @@ index 40d43de581abae0bcc9a8fd485816117e48e8bea..2ef9ddeaae63b3c7a12806fc82ba7537
  
    function setPrefs(body) {
      if (body.theme !== undefined) {
-@@ -100,20 +125,26 @@ export function install(rt) {
+@@ -100,20 +124,26 @@ export function install(rt) {
      return rt.save()
    }
  
@@ -173,7 +172,7 @@ index 40d43de581abae0bcc9a8fd485816117e48e8bea..2ef9ddeaae63b3c7a12806fc82ba7537
          case 'models':
            await rt.catalog({ fresh: true })
            return ok({ modelsKey: modelsKey() })
-@@ -141,7 +172,7 @@ export function install(rt) {
+@@ -141,7 +171,7 @@ export function install(rt) {
            return ok([...rt.roomProgress.entries()].filter(([, entry]) => entry.roomId === body.roomId).map(([callId, entry]) => ({ callId, replies: entry.replies, speaking: entry.speaking ?? null })))
          case 'create-bot': {
            await rt.bootstrap()
@@ -182,15 +181,8 @@ index 40d43de581abae0bcc9a8fd485816117e48e8bea..2ef9ddeaae63b3c7a12806fc82ba7537
            return ok(bot)
          }
          case 'update-bot':
-@@ -158,9 +189,19 @@ export function install(rt) {
-             replace: typeof body.replace === 'string' ? body.replace : undefined,
-           })
+@@ -160,7 +190,12 @@ export function install(rt) {
            return ok(view())
-+        case 'set-published':
-+          // The owner's choice (#51): true, false, or null for the default (the Chief only).
-+          await rt.load()
-+          await rt.setPublished(String(body.id ?? body.botId ?? ''), body.published === undefined ? true : body.published)
-+          return ok(view(actor))
          case 'create-room': {
            await rt.load()
 -          const room = await rt.createRoom({ members: Array.isArray(body.members) ? body.members : [], name: body.name, ...(typeof body.admin === 'string' ? { admin: body.admin } : {}) })
@@ -203,7 +195,7 @@ index 40d43de581abae0bcc9a8fd485816117e48e8bea..2ef9ddeaae63b3c7a12806fc82ba7537
            if (body.greet === true) await rt.greetRoom(room.id).catch(error => rt.warn('ds-bot: greeting in %s failed: %s', room.name, error))
            return ok(room)
          }
-@@ -175,8 +216,24 @@ export function install(rt) {
+@@ -175,8 +210,24 @@ export function install(rt) {
              add: Array.isArray(body.add) ? body.add : undefined,
              remove: Array.isArray(body.remove) ? body.remove : undefined,
              workDir: body.workDir,
@@ -230,7 +222,7 @@ index 40d43de581abae0bcc9a8fd485816117e48e8bea..2ef9ddeaae63b3c7a12806fc82ba7537
          }
          case 'folders':
          case 'folder-pick':
-@@ -281,6 +338,18 @@ export function install(rt) {
+@@ -281,6 +332,18 @@ export function install(rt) {
            // A Bot id or an earlier part of its own chat means the current part.
            const past = rt.pastOwners.get(body.sessionId)
            const sessionId = rt.botOf(body.sessionId) ? rt.chatOf(body.sessionId) : past && past.roomId === undefined ? rt.chatOf(past.botId) : body.sessionId
@@ -249,7 +241,7 @@ index 40d43de581abae0bcc9a8fd485816117e48e8bea..2ef9ddeaae63b3c7a12806fc82ba7537
            await rt.ensureCapabilities(sessionId)
            await ctx.sessionController.prompt({
              requestId: randomUUID(),
-@@ -319,7 +388,37 @@ export function install(rt) {
+@@ -319,7 +382,37 @@ export function install(rt) {
          case 'diagnostics-clear':
            await rt.diagnostics.clear()
            return ok(true)
@@ -287,7 +279,7 @@ index 40d43de581abae0bcc9a8fd485816117e48e8bea..2ef9ddeaae63b3c7a12806fc82ba7537
            return fail(`Unknown endpoint ${endpoint}`, 'bot/not-found')
        }
      } catch (error) {
-@@ -331,20 +430,52 @@ export function install(rt) {
+@@ -331,20 +424,52 @@ export function install(rt) {
    }
  
    // An exact Fetch route on the shared /api channel; the browser authenticates with its session cookie.

@@ -5,11 +5,12 @@
 //   POST /v1/onboard/flybot on first start; the returned connector token is kept in
 //   the credentials file (never in state.json).
 // - Every local Bot is a member identity @<bot>.<home>, keys custodied by the server.
-//   Published Bots are registered on start and on 'bot.created' / 'bot.published'.
-//   Unpublished Bots get a room-only identity at face-to-face join, revoked when they
-//   leave their last face room (or the room closes). Revoked on 'bot.removed'.
+//   A Bot is registered when it is invited, when it joins an invite, or at face-to-face
+//   join (room-only). There is no global "published" flag: access is a per-Bot GRANT
+//   (Invite to this Bot → accept). Default deny, Chief included. Revoked on 'bot.removed'.
+//   A face-to-face room-only identity is revoked when the Bot leaves its last face room.
 // - Friendship is Bot-to-Bot: an invite names one local Bot and the friend joins as one of
-//   theirs; each side sees and reaches only the Bots the friendship covers (the server's
+//   theirs; each side sees and reaches only the Bots granted to them (the server's
 //   list_remote_bots, with `via` naming the local Bots allowed to talk), shown in the roster (grouped by
 //   home, never in bot.list()).
 // - Middleware 'social': remote targets must belong to a friend home; then approval:
@@ -29,7 +30,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, wri
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
-import { createMcpClient, untrustedText } from './mcp-client.js'
+import { createSocialApi, untrustedText } from './mcp-client.js'
 import {
   createFaceRoomApi,
   isJoinCode,
@@ -38,9 +39,17 @@ import {
   renderFaceEvent,
   rememberEvent,
   FaceRoomError,
-  publishedForJoin,
+  roomOnlyForJoin,
   faceMemberLabel,
 } from './face-rooms.js'
+import {
+  hideRemoteInSettings,
+  forgetHiddenIfGone,
+  filterHiddenHomes,
+  presentRemoteHandles,
+  WAITING_OTHERS,
+  REJECT_NOTE,
+} from './hidden-remotes.js'
 
 export const NS = 'social'
 const REMOTE_TTL_MS = 30_000
@@ -174,6 +183,8 @@ export const SOCIAL_UI_ENDPOINTS = [
   'social/attachment',
   'social/face-join', 'social/face-rooms', 'social/face-leave', 'social/face-start', 'social/face-send',
   'social/face-auto',
+  'social/hide-remote',
+  'social/access', 'social/revoke-grant',
 ]
 
 export function registerUnavailable(service, reason) {
@@ -195,9 +206,15 @@ export const writeCredentials = (path, value) => {
   try { chmodSync(path, 0o600) } catch {}
 }
 
-export function createSocial(service, config = {}, { client: given, home: givenHome, now = Date.now, setInterval: every = globalThis.setInterval, clearInterval: clear = globalThis.clearInterval, faceApi: givenFace } = {}) {
+export function createSocial(service, config = {}, { client: given, api: givenApi, home: givenHome, now = Date.now, setInterval: every = globalThis.setInterval, clearInterval: clear = globalThis.clearInterval, faceApi: givenFace } = {}) {
   const flybot = service.scope(NS)
-  const client = given ?? createMcpClient({ server: config.server, token: config.token ?? process.env.FLYBOT_SOCIAL_TOKEN, fetch: config.fetch })
+  const api = givenApi ?? createSocialApi({
+    server: config.server,
+    token: config.token ?? process.env.FLYBOT_SOCIAL_TOKEN,
+    fetch: config.fetch,
+    client: given,
+  })
+  const client = api
   const token = config.token ?? process.env.FLYBOT_SOCIAL_TOKEN
   const faceApi = givenFace ?? (config.server && token ? createFaceRoomApi({ server: config.server, token, fetch: config.fetch }) : undefined)
   const home = givenHome ?? config.home
@@ -313,8 +330,9 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   // (default on for every friendship). via[handle]: the local Bot whose Bot Social
   // identity carries the user's own chat with that friend's Bot.
   const settingsPath = config.settingsPath ?? (config.credentialsPath ? join(dirname(config.credentialsPath), 'flybot-social-settings.json') : undefined)
-  let settings = { autoAccept: {}, via: {} }
-  try { if (settingsPath) settings = { autoAccept: {}, via: {}, ...JSON.parse(readFileSync(settingsPath, 'utf8')) } } catch { /* none yet */ }
+  let settings = { autoAccept: {}, via: {}, hiddenRemotes: {} }
+  try { if (settingsPath) settings = { autoAccept: {}, via: {}, hiddenRemotes: {}, ...JSON.parse(readFileSync(settingsPath, 'utf8')) } } catch { /* none yet */ }
+  settings.hiddenRemotes ??= {}
   const saveSettings = () => { if (settingsPath) { try { writeCredentials(settingsPath, settings) } catch (error) { warn('settings not saved', error) } } }
   // Unset: on (config.autoAccept: false makes it opt-in instead).
   // Config keys may be written with or without '@' and in any case.
@@ -323,25 +341,30 @@ export function createSocial(service, config = {}, { client: given, home: givenH
 
   // ------------------------------------------------------------ members
   const memberOf = botId => flybot.fields.get(botId, 'member')
-  // A Bot gets an outside identity only if its owner published it (#51): only published Bots
-  // are registered at start, polled and sign friend sends. A core without bot.isPublished has
-  // no such rule. An unpublished Bot may still get a *room-only* identity at face-to-face join
-  // (`forFace`); that identity is not polled, does not sign friend sends or invites, and is
-  // revoked when the Bot is no longer in any face room (Bot Social `remove_home_member`).
-  const published = botId => flybot.bot.isPublished?.(botId) !== false
-  // The identity a published Bot signs and polls with; an unpublished Bot has none to use
-  // (an identity it already holds is kept on the server, unused, so republishing needs no new handle).
-  const activeMember = botId => (published(botId) ? memberOf(botId) : undefined)
-  const unpublishedMessage = bot => `${bot.name} is not published: publish it before it can be invited, friend other Bots or be reached`
-  const isRoomOnlyMember = botId => Boolean(memberOf(botId)?.roomOnly) && !published(botId)
+  // A Bot gets an outside identity when it is invited, when it joins an invite, when it
+  // already has a grant, or at face-to-face join (`forFace`, room-only). There is no
+  // published flag. A room-only identity is not polled, does not sign friend sends, and
+  // is revoked when the Bot is in no face room (Bot Social `remove_home_member`).
+  const hasPersonGrant = botId => flybot.bot.hasAnyGrant?.(botId) === true
+  const activeMember = botId => {
+    const member = memberOf(botId)
+    return member && !member.roomOnly ? member : undefined
+  }
+  const isRoomOnlyMember = botId => Boolean(memberOf(botId)?.roomOnly) && !hasPersonGrant(botId)
   // One registration per Bot at a time; a taken handle retries with the Bot's id suffix;
   // a Bot removed while it was registering has its new identity revoked.
   const registering = new Map()
-  function register(bot, { forFace = false } = {}) {
-    if (!bot || (!forFace && !published(bot.id))) return Promise.resolve(undefined)
-    if (!home || memberOf(bot.id) || flybot.readOnly?.()) return Promise.resolve(memberOf(bot.id))
+  function register(bot, { forFace = false, forInvite = false } = {}) {
+    if (!bot) return Promise.resolve(undefined)
+    const existing = memberOf(bot.id)
+    if (existing) {
+      if (forInvite && existing.roomOnly) flybot.fields.set(bot.id, 'member', { bot_id: existing.bot_id, handle: existing.handle })
+      return Promise.resolve(memberOf(bot.id))
+    }
+    if (!forFace && !forInvite && !hasPersonGrant(bot.id)) return Promise.resolve(undefined)
+    if (!home || flybot.readOnly?.()) return Promise.resolve(undefined)
     if (!registering.has(bot.id)) {
-      registering.set(bot.id, registerOnce(bot).finally(() => registering.delete(bot.id)))
+      registering.set(bot.id, registerOnce(bot, { forFace: forFace && !forInvite && !hasPersonGrant(bot.id) }).finally(() => registering.delete(bot.id)))
     }
     return registering.get(bot.id)
   }
@@ -350,7 +373,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   // whose names slug the same (any non-ASCII name once became 'bot') must not share it:
   // an invite for one would befriend the other.
   const heldByOther = (botId, memberBotId) => flybot.bot.list().some(other => other.id !== botId && memberOf(other.id)?.bot_id === memberBotId)
-  async function registerOnce(bot) {
+  async function registerOnce(bot, { forFace = false } = {}) {
     const suffixed = `${slug(bot.name, bot.id)}-${sha256(String(bot.id)).slice(0, 6)}`
     let member
     try {
@@ -367,43 +390,49 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       await client.callTool('remove_home_member', { home: home.id, member: member.bot_id }).catch(error => warn('revoke failed', error))
       return undefined
     }
-    // Room-only: unpublished at the moment of registration. A later publish reuses the handle
-    // and drops the flag so leave no longer revokes it.
+    // Room-only: face-to-face join of a Bot that has no person-grant. A later grant
+    // reuses the handle and drops the flag so leave no longer revokes it.
     flybot.fields.set(bot.id, 'member', {
       bot_id: member.bot_id,
       handle: member.handle,
-      ...(published(bot.id) ? {} : { roomOnly: true }),
+      ...(forFace ? { roomOnly: true } : {}),
     })
     return memberOf(bot.id)
   }
-  // Every Bot at startup, once ds-bot's team is loaded (saved Bots fire no bot.created).
+  // Existing identities and granted Bots at startup, once ds-bot's team is loaded.
   async function registerAll() {
     await flybot.ready?.()
     // Repair Bots saved with a shared identity: the first keeps it, the others re-register.
     const owners = new Map()
+    const repaired = new Set()
     for (const bot of flybot.bot.list()) {
       const id = memberOf(bot.id)?.bot_id
       if (!id) continue
       if (owners.has(id)) {
         warn(`${bot.name} shared ${owners.get(id).name}'s Bot Social identity; registering its own`)
         flybot.fields.set(bot.id, 'member', undefined)
+        repaired.add(bot.id)
       } else owners.set(id, bot)
     }
-    for (const bot of flybot.bot.list().filter(item => published(item.id))) {
-      try { await register(bot) } catch (error) {
+    for (const bot of flybot.bot.list()) {
+      const member = memberOf(bot.id)
+      if (!member && !hasPersonGrant(bot.id) && !repaired.has(bot.id)) continue
+      try { await register(bot, { forInvite: !member?.roomOnly && (Boolean(member) || hasPersonGrant(bot.id) || repaired.has(bot.id)) }) } catch (error) {
         if (/401|403|token|unauthori[sz]ed/i.test(String(error?.message ?? error))) throw error
         warn(`${bot.name} not registered`, error)
       }
     }
+    await syncOutgoingGrants().catch(error => warn('grants not synced', error))
   }
-  disposers.push(flybot.on('bot.created', bot => { void register(bot).catch(error => warn('register failed', error)) }))
-  // Publishing gives the Bot its identity; unpublishing only stops it being used. A room-only
-  // identity from a face-to-face join is kept and unmarked so leave does not revoke it.
-  disposers.push(flybot.on?.('bot.published', bot => {
-    if (!bot.published) return
+  disposers.push(flybot.on('bot.created', bot => {
+    if (hasPersonGrant(bot.id)) void register(bot, { forInvite: true }).catch(error => warn('register failed', error))
+  }))
+  // A new person-grant promotes a room-only identity so leave does not revoke it.
+  disposers.push(flybot.on?.('bot.grants', bot => {
+    if (!bot.granted) return
     const member = memberOf(bot.id)
     if (member?.roomOnly) flybot.fields.set(bot.id, 'member', { bot_id: member.bot_id, handle: member.handle })
-    void register(bot).catch(error => warn('register failed', error))
+    void register(bot, { forInvite: true }).catch(error => warn('register failed', error))
   }) ?? (() => {}))
   disposers.push(flybot.on('bot.removed', ({ bot }) => {
     const member = bot?.fields?.[NS]?.member
@@ -441,14 +470,115 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     }
     fetchedAt = now()
     if (home) void syncServerAutoApprove((result?.homes ?? []))
+    await syncOutgoingGrants().catch(error => warn('grants not synced', error))
+    // A Bot that left the granted list was revoked: forget the hide so a later re-grant shows.
+    const next = forgetHiddenIfGone(settings, presentRemoteHandles(remote.homes))
+    if (next !== settings) { settings = next; saveSettings() }
+    remote = { homes: filterHiddenHomes(remote.homes, settings) }
     // Friends' Bots become chat members (remote badge) through the FlyBot registry.
     flybot.remote?.publish(remote.homes.flatMap(entry => entry.bots.map(bot => ({ handle: bot.handle, name: bot.name, home: entry.home, homeName: entry.name, owner: entry.owner }))))
     return remote
   }
   const remoteBot = async handle => (await remoteBots()).homes.flatMap(entry => entry.bots).find(bot => bot.handle === norm(handle))
   const friendEntry = async friendHome => (await remoteBots()).homes.find(entry => entry.home === norm(friendHome))
+  // Hide a friend's Bot on this install only: persist, leave every room it is in, do not unfriend.
+  // It stays hidden across refresh while it remains granted. If the owner revokes the grant, the
+  // hide is forgotten; an explicit re-grant (it appears on list_remote_bots again) shows it.
+  async function leaveRoomsWith(handle) {
+    const key = norm(handle)
+    const left = []
+    for (const [faceId, meta] of Object.entries(settings.faceRooms ?? {})) {
+      const room = flybot.rooms?.ofFace?.(faceId)
+      const members = room?.participants ?? []
+      const has = members.some(p => p.leftSeq === undefined && p.handle && norm(p.handle) === key)
+      if (!has || !meta?.localRoomId) continue
+      try {
+        await leaveFaceRoom({ roomId: meta.localRoomId, faceRoomId: faceId })
+        left.push({ id: meta.localRoomId, origin: 'face-to-face', faceRoomId: faceId })
+      } catch (error) { warn('leave face room after hide failed', error) }
+    }
+    if (typeof flybot.rooms?.list !== 'function') return left
+    for (const room of flybot.rooms.list()) {
+      if (room.origin === 'face-to-face') continue
+      const hit = (room.participants ?? []).find(p => p.leftSeq === undefined && p.remote && p.handle && norm(p.handle) === key)
+      if (!hit) continue
+      try {
+        await flybot.rooms.removeParticipant(room.id, { kind: 'bot', id: hit.handle || hit.id, remote: true })
+        left.push({ id: room.id, origin: room.origin || 'group' })
+      } catch (error) { warn('remove hidden Bot from room failed', error) }
+    }
+    return left
+  }
+  async function hideRemote(handle) {
+    const key = norm(handle)
+    if (!key || key === '@') throw new Error('which Bot?')
+    settings = hideRemoteInSettings(settings, key, now())
+    saveSettings()
+    const leftRooms = await leaveRoomsWith(key)
+    fetchedAt = 0
+    const roster = await remoteBots({ fresh: true })
+    return { handle: key, hidden: true, leftRooms, homes: roster.homes }
+  }
   // Whether this local Bot is one the friendship with that friend home covers.
   const covered = (entry, botId) => !entry?.via?.length || entry.via.includes(norm(memberOf(botId)?.handle ?? ''))
+
+  function roomsUsing(botId, grantee) {
+    if (typeof flybot.rooms?.list !== 'function') return []
+    const key = grantee ? norm(grantee) : ''
+    const home = key ? homeOfPeer(key) : ''
+    const rooms = []
+    for (const room of flybot.rooms.list()) {
+      const live = (room.participants ?? []).filter(p => p.leftSeq === undefined)
+      const localIn = (room.members ?? []).includes(botId) || live.some(p => p.kind === 'bot' && !p.remote && p.id === botId)
+      if (!localIn) continue
+      const hit = !key || live.some(p => {
+        if (p.kind === 'human' && String(p.id) === String(grantee)) return true
+        if (p.handle && (norm(p.handle) === key || homeOfPeer(p.handle) === key || homeOfPeer(p.handle) === home)) return true
+        if (p.ownerHome && (norm(p.ownerHome) === key || norm(p.ownerHome) === home)) return true
+        return false
+      })
+      if (hit) rooms.push({ id: room.id, name: room.name, origin: room.origin || (room.face ? 'face-to-face' : 'group') })
+    }
+    return rooms
+  }
+
+  async function syncOutgoingGrants() {
+    if (typeof flybot.grants?.set !== 'function') return
+    for (const bot of flybot.bot.list()) {
+      const member = memberOf(bot.id)
+      if (!member || member.roomOnly) continue
+      try {
+        const listed = await api.listGrants({ botId: member.bot_id })
+        const roomScoped = (flybot.grants.of?.(bot.id) ?? []).filter(grant => grant.roomId)
+        const people = listed.filter(grant => !grant.roomId).map(grant => ({
+          id: grant.id || grant.relationshipId || `${bot.id}:${grant.grantee}`,
+          grantee: grant.grantee,
+          ...(grant.name ? { name: grant.name } : {}),
+          ...(grant.relationshipId ? { relationshipId: grant.relationshipId } : {}),
+        }))
+        await flybot.grants.set(bot.id, [...people, ...roomScoped])
+      } catch (error) {
+        warn(`${bot.name} grants not synced`, error)
+      }
+    }
+  }
+
+  async function setRoomGrant(botId, room, { faceRoomId, name } = {}) {
+    if (!botId || !room?.id || typeof flybot.grants?.set !== 'function') return
+    const current = (flybot.grants.of?.(botId) ?? []).filter(grant => grant.roomId !== String(room.id))
+    await flybot.grants.set(botId, [...current, {
+      id: `room:${room.id}`,
+      grantee: faceRoomId ? `room:${faceRoomId}` : `room:${room.id}`,
+      name: name || room.name || 'Face-to-face room',
+      roomId: String(room.id),
+    }])
+  }
+
+  async function dropRoomGrant(botId, roomId) {
+    if (!botId || !roomId || typeof flybot.grants?.set !== 'function') return
+    const next = (flybot.grants.of?.(botId) ?? []).filter(grant => grant.roomId !== String(roomId))
+    await flybot.grants.set(botId, next)
+  }
 
   // ------------------------------------------------------------ approval policy
   const approvalFor = (fromBotId, friendHome) => {
@@ -469,7 +599,6 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     priority: flybot.bot.send.priority?.APPROVAL ?? 900,
     async handle(msg) {
       if (msg.target?.remote !== true || (msg.to?.transport ?? 'bot-social') !== 'bot-social') return undefined
-      if (typeof msg.from === 'string' && !published(msg.from)) return { action: 'deny', reason: `${flybot.bot.get(msg.from)?.name ?? 'this Bot'} is not published, so it cannot message friends' Bots` }
       const bot = await remoteBot(msg.target.handle)
       if (bot === undefined) return { action: 'deny', reason: `${msg.target.handle} is not a Bot of a friend on Bot Social` }
       if (home && typeof msg.from === 'string' && !covered(await friendEntry(bot.home), msg.from)) {
@@ -504,8 +633,8 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       const bot = await remoteBot(msg.target.handle)
       if (bot === undefined) throw new Error(`${msg.target.handle} is no longer reachable`)
       if (home) {
-        const member = typeof msg.from === 'string' ? activeMember(msg.from) ?? await register(flybot.bot.get(msg.from)) : undefined
-        if (!member) throw new Error(published(msg.from) ? 'the sending Bot has no Bot Social identity' : 'the sending Bot is not published')
+        const member = typeof msg.from === 'string' ? activeMember(msg.from) : undefined
+        if (!member) throw new Error(`${flybot.bot.get(msg.from)?.name ?? 'this Bot'} has no grant to that Bot, so it cannot message friends' Bots`)
         const attachments = await uploadAll(msg.attachments, member.bot_id)
         const sent = await client.callTool('send_as_member', { from_bot_id: member.bot_id, to: bot.handle, text: msg.text, ...(attachments.length ? { attachments } : {}) })
         if (sent?.message?.status === 'pending_approval') pendingCache.at = 0
@@ -541,7 +670,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     const team = flybot.bot.list()
     // Only the Bots the friendship covers can sign; the one used before goes first.
     const entry = (await remoteBots()).homes.find(item => item.bots.some(bot => bot.handle === target))
-    const order = [team.find(bot => bot.id === settings.via[target]), team.find(bot => bot.isMain), ...team].filter(bot => bot && published(bot.id) && covered(entry, bot.id))
+    const order = [team.find(bot => bot.id === settings.via[target]), team.find(bot => bot.isMain), ...team].filter(bot => bot && activeMember(bot.id) && covered(entry, bot.id))
     const tried = new Set()
     let lastError
     for (const bot of order) {
@@ -595,7 +724,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       : [{ local: (config.localBot ? flybot.bot.find(config.localBot) : undefined) ?? flybot.bot.list().find(bot => bot.isMain), botId: config.botId }]
     let delivered = 0
     for (const { local, botId } of targets) {
-      if (local === undefined || !published(local.id)) continue
+      if (local === undefined || !activeMember(local.id)) continue
       const key = botId ?? 'default'
       const saved = settings.cursors[key]
       const result = await client.callTool('list_inbox', { peek: true, ...(saved !== undefined ? { since_cursor: saved } : {}), ...(botId ? { bot_id: botId } : {}) })
@@ -743,10 +872,9 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     if (!home) throw new Error('Bot Social is not connected: there is no FlyBot home yet')
     const bot = typeof botId === 'string' && botId ? flybot.bot.get(botId) : undefined
     if (!bot) throw new Error('Choose one of your Bots to invite a friend to')
-    if (!published(bot.id)) throw new Error(unpublishedMessage(bot))
-    const member = await register(bot)
+    const member = await register(bot, { forInvite: true })
     if (!member) throw new Error(`${bot.name} has no Bot Social identity yet`)
-    const invite = await client.callTool('create_invite', { bot_id: member.bot_id, max_uses: 1, expires_in_hours: 168, auto_accept: true, offered_capabilities: ['chat.public'], requested_capabilities: ['chat.public'], ...(message ? { message: String(message).slice(0, 280) } : {}) })
+    const invite = await api.createInvite({ bot_id: member.bot_id, max_uses: 1, expires_in_hours: 168, auto_accept: true, offered_capabilities: ['chat.public'], requested_capabilities: ['chat.public'], ...(message ? { message: String(message).slice(0, 280) } : {}) })
     const handle = norm(member.handle)
     return { botId: bot.id, botName: bot.name, handle, home: norm(home.handle), code: invite.code, url: invite.url, link: invite.url, expiresAt: invite.expires_at, status: invite.status, text: inviteText({ handle, name: bot.name, home: norm(home.handle), url: invite.url, expiresAt: invite.expires_at }) }
   }
@@ -761,7 +889,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       home: home ? norm(home.handle) : undefined,
       bots: home ? flybot.bot.list().map(bot => ({
         id: bot.id, name: bot.name, isMain: bot.isMain === true,
-        published: published(bot.id),
+        granted: hasPersonGrant(bot.id),
         handle: activeMember(bot.id)?.handle ? norm(activeMember(bot.id).handle) : undefined,
       })) : [],
       pendingApprovals: approvals.length,
@@ -783,8 +911,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       const team = flybot.bot.list()
       const bot = typeof botId === 'string' && botId ? flybot.bot.get(botId) : team.find(item => item.isMain) ?? team[0]
       if (!bot) throw new Error('Choose which of your Bots joins')
-      if (!published(bot.id)) throw new Error(unpublishedMessage(bot))
-      const member = await register(bot)
+      const member = await register(bot, { forInvite: true })
       if (!member) throw new Error(`${bot.name} has no Bot Social identity yet`)
       from = { from_bot_id: member.bot_id }
       joinedAs = { botId: bot.id, botName: bot.name, handle: norm(member.handle) }
@@ -820,6 +947,48 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     return result
   }))
   disposers.push(flybot.api.handle('social/remote-bots', async payload => remoteBots({ fresh: payload?.fresh === true }), { read: true }))
+  disposers.push(flybot.api.handle('social/hide-remote', async ({ handle } = {}) => hideRemote(handle)))
+  disposers.push(flybot.api.handle('social/access', async ({ botId } = {}) => {
+    const bot = typeof botId === 'string' && botId ? flybot.bot.get(botId) : undefined
+    if (!bot) throw new Error('Choose one of your Bots')
+    await syncOutgoingGrants().catch(() => {})
+    const grants = (flybot.grants?.of?.(bot.id) ?? []).filter(grant => !grant.roomId)
+    const rooms = roomsUsing(bot.id)
+    return {
+      botId: bot.id,
+      botName: bot.name,
+      granted: hasPersonGrant(bot.id),
+      grants: grants.map(grant => ({
+        id: grant.id,
+        grantee: grant.grantee,
+        name: grant.name,
+        relationshipId: grant.relationshipId,
+        rooms: roomsUsing(bot.id, grant.grantee),
+      })),
+      rooms,
+    }
+  }, { read: true }))
+  disposers.push(flybot.api.handle('social/revoke-grant', async ({ botId, grantId, relationshipId, grantee } = {}) => {
+    const bot = typeof botId === 'string' && botId ? flybot.bot.get(botId) : undefined
+    if (!bot) throw new Error('Choose one of your Bots')
+    const current = flybot.grants?.of?.(bot.id) ?? []
+    const target = current.find(grant =>
+      (grantId && grant.id === grantId)
+      || (relationshipId && grant.relationshipId === relationshipId)
+      || (grantee && norm(grant.grantee) === norm(grantee)))
+    if (!target && !grantId && !relationshipId) throw new Error('which grant?')
+    const member = memberOf(bot.id)
+    await api.revokeGrant({
+      grantId: grantId || target?.id,
+      relationshipId: relationshipId || target?.relationshipId,
+      botId: member?.bot_id,
+    })
+    const next = current.filter(grant => grant !== target && grant.id !== (grantId || target?.id))
+    if (typeof flybot.grants?.set === 'function') await flybot.grants.set(bot.id, next)
+    fetchedAt = 0
+    void remoteBots({ fresh: true }).catch(() => {})
+    return { botId: bot.id, revoked: grantId || target?.id || relationshipId, grants: flybot.grants?.of?.(bot.id) ?? next }
+  }))
   disposers.push(flybot.api.handle('social/friends', async payload => (await remoteBots({ fresh: payload?.fresh === true })).homes.flatMap(entry => entry.bots), { read: true }))
   disposers.push(flybot.api.handle('social/auto-approve', async ({ botId, home: friendHome, on }) => {
     flybot.fields.set(botId, 'autoApprove', { ...(flybot.fields.get(botId, 'autoApprove') ?? {}), [norm(friendHome)]: on === null ? undefined : Boolean(on) })
@@ -853,6 +1022,52 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       }
     }
   }
+  function roomsForApproval(item) {
+    const faceId = item?.roomId
+    const to = item?.to ? norm(item.to) : ''
+    const rooms = []
+    if (faceId) {
+      const hosted = flybot.rooms?.ofFace?.(faceId)
+      if (hosted?.id) rooms.push({ id: hosted.id, face: true })
+    }
+    if (typeof flybot.rooms?.list === 'function') {
+      for (const room of flybot.rooms.list()) {
+        if (rooms.some(entry => entry.id === room.id)) continue
+        const live = (room.participants ?? []).filter(p => p.leftSeq === undefined)
+        const handles = new Set(live.map(p => p.handle && norm(p.handle)).filter(Boolean))
+        if ((faceId && room.face?.roomId === faceId) || (to && handles.has(to))) rooms.push({ id: room.id, face: room.origin === 'face-to-face' })
+      }
+    }
+    return rooms
+  }
+  async function postChatNote(item, text) {
+    for (const room of roomsForApproval(item)) {
+      try { flybot.rooms.postNotice?.(room.id, text) } catch (error) { warn('approval notice not posted', error) }
+    }
+    const deliver = service.remote?.chats?.deliver ?? flybot.remote?.chats?.deliver
+    if (item?.to && deliver) {
+      try { await deliver({ handle: item.to, text, name: 'Room' }) } catch (error) { warn('approval chat note failed', error) }
+    }
+  }
+  async function syncApprovalNotices(items) {
+    settings.approvalNotices ??= {}
+    let changed = false
+    for (const item of items ?? []) {
+      if (settings.approvalNotices[item.id]) continue
+      await postChatNote(item, WAITING_OTHERS)
+      settings.approvalNotices[item.id] = { at: now(), kind: 'waiting' }
+      changed = true
+    }
+    if (changed) saveSettings()
+  }
+  async function postRejectNote(approvalId) {
+    const item = pendingCache.items.find(entry => entry.id === approvalId)
+    if (!item) return
+    await postChatNote(item, REJECT_NOTE)
+    settings.approvalNotices ??= {}
+    settings.approvalNotices[approvalId] = { at: now(), kind: 'rejected' }
+    saveSettings()
+  }
   // Bot Social's outbound hold (pending_approval). Distinct from FlyBot's local approval
   // cards: the draft already left this process; the friend sees nothing until the owner
   // decides here. Cached briefly so status + the Friends' Bots poll share one fetch.
@@ -868,6 +1083,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
         .map(item => approvalView(item, { localName: localNameOf }))
         .filter(item => item && (item.kind === 'outbound_message' || item.kind === 'face_room_message') && (item.status === 'pending' || item.status === 'pending_approval'))
       pendingCache = { at: now(), items }
+      void syncApprovalNotices(items).catch(error => warn('approval notice failed', error))
       return items
     } catch (error) {
       warn('list_approvals failed', error)
@@ -909,6 +1125,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       : decision === 'reject' || decision === 'rejected' ? 'rejected'
       : undefined
     if (!mapped) throw new Error('decision is approve or reject')
+    if (mapped === 'rejected') await postRejectNote(id)
     const result = await confirmedCall('decide_approval', { approval_id: id, decision: mapped })
     pendingCache = { at: 0, items: [] }
     return { approvalId: result?.approval_id ?? id, status: result?.decision ?? mapped }
@@ -943,7 +1160,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       isMain: bot.isMain === true,
       handle: member?.handle ? norm(member.handle) : undefined,
       botId: member?.bot_id,
-      published: publishedForJoin(bot, flybot.bot.isPublished),
+      roomOnly: roomOnlyForJoin(bot, flybot.bot.hasAnyGrant),
     }
   })
   const bringable = () => localFaceBots().filter(bot => bot.handle)
@@ -967,7 +1184,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     return Object.entries(settings.faceRooms).filter(([, meta]) => meta?.asBot && norm(meta.asBot) === key)
   }
   // Room-only identities exist so Bot Social can name the Bot in a face room. They must not
-  // linger as reachable home members: revoke when the Bot is in no face room and still unpublished.
+  // linger as reachable home members: revoke when the Bot is in no face room and still has no person-grant.
   async function releaseRoomOnlyIdentity(botId) {
     if (!isRoomOnlyMember(botId)) return
     const member = memberOf(botId)
@@ -1004,7 +1221,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
         displayName: p.displayName,
         ownerName: p.ownerName,
         remote: p.remote === true,
-        published: p.published === true,
+        roomOnly: p.roomOnly === true || p.published !== true,
         label: faceMemberLabel({ displayName: p.displayName, ownerName: p.ownerName, handle: p.handle }) || p.displayName || p.id,
       })),
       ...extra,
@@ -1023,7 +1240,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
         handle: m.handle,
         displayName: m.displayName,
         ownerName: m.ownerName,
-        published: m.published === true,
+        roomOnly: m.roomOnly === true || m.published !== true,
       })),
       localBots: locals,
     })
@@ -1106,6 +1323,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       const room = await applyFaceSnapshot(snapshot, { asBot: ready.handle })
       if (settings.faceRooms[snapshot.roomId]) settings.faceRooms[snapshot.roomId].asBot = ready.handle
       saveSettings()
+      if (room) await setRoomGrant(ready.id, room, { faceRoomId: snapshot.roomId, name: snapshot.name || room.name })
       return { ...viewHostedFace(room, { joinedAs: { botId: ready.id, botName: ready.name, handle: ready.handle } }), faceRoomId: snapshot.roomId, status: snapshot.status, expiresAt: snapshot.expiresAt, members: snapshot.members }
     } catch (error) {
       // A brand-new room-only identity that never made it into a room must not block retry
@@ -1120,7 +1338,11 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     if (!id) throw new Error('which room?')
     const result = await faceNeed().leave(id, { bots })
     const meta = settings.faceRooms[id]
-    if (meta?.localRoomId) await flybot.rooms.dropFace?.(meta.localRoomId).catch(() => {})
+    if (meta?.localRoomId) {
+      const leftBot = botByHandle(meta?.asBot)
+      if (leftBot) await dropRoomGrant(leftBot.id, meta.localRoomId)
+      await flybot.rooms.dropFace?.(meta.localRoomId).catch(() => {})
+    }
     delete settings.faceRooms[id]
     const left = botByHandle(meta?.asBot)
     if (left) await releaseRoomOnlyIdentity(left.id)
@@ -1182,8 +1404,10 @@ export function createSocial(service, config = {}, { client: given, home: givenH
 
   return {
     home,
+    register,
     registerAll,
     remoteBots,
+    hideRemote,
     pollInbox,
     pendingApprovals,
     approvalFor,

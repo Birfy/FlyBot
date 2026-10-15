@@ -18,7 +18,7 @@ index 05a42205df8a96369ec30f5c80ff86a109eb5646..f0a0442bd2a50af8de45b56400c0bfc6
  }
  
 diff --git a/src/client/i18n.js b/src/client/i18n.js
-index 6cf2df850b742d4f47b119bbedbf4f5dd4ec4b22..0a16b6e6f35c0b7c99831cd1e170ff1945d95968 100644
+index 6cf2df850b742d4f47b119bbedbf4f5dd4ec4b22..78a3f6b3a1b12e284ab20c0a3f397d1cb853ba36 100644
 --- a/src/client/i18n.js
 +++ b/src/client/i18n.js
 @@ -26,6 +26,21 @@ const ZH = {
@@ -83,7 +83,7 @@ index 6cf2df850b742d4f47b119bbedbf4f5dd4ec4b22..0a16b6e6f35c0b7c99831cd1e170ff19
    'in its own chat': '在自己的对话里',
    Reject: '拒绝',
    'Allow once': '允许一次',
-@@ -883,6 +913,19 @@ const HOST_ZH = {
+@@ -883,6 +913,20 @@ const HOST_ZH = {
    'Unknown Bot': '找不到这个 Bot',
    'Unknown conversation': '找不到这个对话',
    'A group chat needs at least two Bots': '群聊至少要两个 Bot',
@@ -92,7 +92,8 @@ index 6cf2df850b742d4f47b119bbedbf4f5dd4ec4b22..0a16b6e6f35c0b7c99831cd1e170ff19
 +  'Only a room admin can remove participants': '只有房间管理员可以移除成员',
 +  'Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief': '专员只待在其主人的私有房间里；跨主人房间只接受各方的 Chief',
 +  'Only a designated Chief of a room member may join a shared room': '只有房间成员的指定 Chief 可以加入共享房间',
-+  'Only a Chief or a Bot published to friends may join a shared room': '只有 Chief 或主人已向好友公开的 Bot 可以加入共享房间',
++  'Only a Bot granted to you may join a shared room': '只有已授权给你的 Bot 可以加入共享房间',
++  'Only a Chief or a Bot published to friends may join a shared room': '只有已授权给你的 Bot 可以加入共享房间',
 +  'Participant kind must be human or bot': '成员类型只能是 human 或 bot',
 +  'A participant needs an id': '成员需要 id',
 +  'Room role must be admin or member': '房间角色只能是 admin 或 member',

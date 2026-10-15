@@ -171,10 +171,15 @@ function confirmationCode(value) {
   return ''
 }
 
-// #51: the owner's published bit (`flybot.bot.isPublished` / `BotView.published`).
+// Face join of my own Bot is a room-scoped grant. True when this Bot has no person-grant.
+export function roomOnlyForJoin(bot, hasAnyGrant) {
+  if (typeof hasAnyGrant === 'function') return hasAnyGrant(typeof bot === 'string' ? bot : bot?.id) !== true
+  return bot?.granted !== true && bot?.published !== true
+}
+
+/** @deprecated published is gone; room-only is the face-join default. */
 export function publishedForJoin(bot, isPublished) {
-  if (typeof isPublished === 'function') return isPublished(typeof bot === 'string' ? bot : bot?.id) === true
-  return bot?.published === true
+  return !roomOnlyForJoin(bot, typeof isPublished === 'function' ? id => isPublished(id) : undefined)
 }
 
 export function faceMemberLabel(member) {
@@ -189,8 +194,8 @@ export function platformJoinText(member) {
   const name = cleanFaceName(member?.display_name || member?.displayName, 'Bot')
   const owner = cleanFaceName(member?.owner_name || member?.ownerName, 'Someone')
   // Server copy; we rebuild from sanitized fields so a poisoned payload cannot instruct.
-  if (member?.published === true) return `${owner}'s ${name} joined`
-  return `${owner}'s ${name} joined; not published, available to this room only`
+  if (member?.roomOnly === true || member?.published !== true) return `${owner}'s ${name} joined; available to this room only`
+  return `${owner}'s ${name} joined`
 }
 
 export function platformLeaveText(member) {
@@ -212,7 +217,7 @@ export function viewFaceMember(member) {
     handle,
     displayName: cleanFaceName(member.display_name || member.displayName, handle || 'Bot'),
     ownerName: cleanFaceName(member.owner_name || member.ownerName, ''),
-    published: member.published === true,
+    roomOnly: member.roomOnly === true || member.published !== true,
     label: cleanFaceName(member.label, '') || faceMemberLabel(member),
   }
 }

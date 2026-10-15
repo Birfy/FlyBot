@@ -59,10 +59,10 @@ index 9cdb56ac60dda8bb9f364eb0791908a867412210..6f275b131462facfa0e83d05128f1a88
  export function createRuntime(ctx, config = {}) {
 diff --git a/src/host/hooks.js b/src/host/hooks.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3867fcdda
+index 0000000000000000000000000000000000000000..79f6a1749c812b14ad4fbca138ed610ca04d31ab
 --- /dev/null
 +++ b/src/host/hooks.js
-@@ -0,0 +1,778 @@
+@@ -0,0 +1,795 @@
 +// FlyBot hooks: the `flybot` service feature plugins (plugins/social, plugins/tree)
 +// build on. Installed after resume.js, so its gate around rt.deliver is the outermost
 +// wrapper: every Bot-to-Bot message, including message_bot, stop_bot, and replies,
@@ -164,7 +164,7 @@ index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3
 +  const emit = (name, payload) => { try { ctx.emit?.(name, payload) } catch (error) { warn('flybot: %s listener failed: %s', name, error) } }
 +
 +  // ---------------------------------------------------------------- events
-+  const listeners = { 'change': new Set(), 'bot.created': new Set(), 'bot.removed': new Set(), 'bot.published': new Set() }
++  const listeners = { 'change': new Set(), 'bot.created': new Set(), 'bot.removed': new Set(), 'bot.grants': new Set() }
 +  const changes = []
 +  let changeSeq = 0
 +  // A new host process starts a new epoch: the browser resets its watermark on a change.
@@ -182,7 +182,7 @@ index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3
 +  // Cordis-style subscription, returns a disposer. 'change' listeners hear their own
 +  // plugin's fields unless they pass { all: true }; 'bot.removed' hears every removal.
 +  const onFor = plugin => (event, fn, { all = false } = {}) => {
-+    if (!listeners[event]) throw new Error(`flybot: unknown event ${event}; use 'change', 'bot.created', 'bot.removed', or 'bot.published'`)
++    if (!listeners[event]) throw new Error(`flybot: unknown event ${event}; use 'change', 'bot.created', 'bot.removed', or 'bot.grants'`)
 +    const listener = event === 'change' && !all ? change => { if (change.plugin === plugin) fn(change) } : fn
 +    listeners[event].add(listener)
 +    return () => listeners[event].delete(listener)
@@ -193,7 +193,7 @@ index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3
 +  const team = () => Object.values(state.bots).filter(bot => bot.remote === undefined)
 +  const view = bot => (bot === undefined ? undefined : {
 +    id: bot.id, name: bot.name, role: bot.role, isMain: rt.isMain(bot.id), createdBy: bot.createdBy ?? null,
-+    published: rt.isPublished?.(bot.id) === true,
++    granted: rt.hasAnyGrant?.(bot.id) === true,
 +    systemPrompt: bot.systemPrompt ?? '', fields: clone(bot.fields ?? {}),
 +  })
 +  const persist = () => { void rt.save().catch(error => warn('flybot: save failed: %s', error)) }
@@ -448,7 +448,7 @@ index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3
 +  }
 +  // The owner policy (reach.js) sits before the chain and is not a middleware: no verdict, bypass
 +  // or priority of a plugin can skip it. It judges the message as it is now, so a Bot that was
-+  // unpublished since it was written is refused.
++  // revoked since it was written is refused.
 +  const ownerPolicy = msg => rt.reach?.(msg) ?? { action: 'allow' }
 +  const run = async (msg) => {
 +    const owner = ownerPolicy(msg)
@@ -520,7 +520,7 @@ index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3
 +  rt.deliver = async (args) => {
 +    // Everything that is not a first, checked send still carries its sender: resumed, retried,
 +    // deferred and re-sent deliveries (and kickoffs, notices) are judged by the owner policy
-+    // now, since the Bot they name may have been unpublished, replaced or removed since.
++    // now, since the Bot they name may have had its grant revoked, replaced or removed since.
 +    if (!gated(args) && !args.flybotChecked && (args.remote?.handle || args.fromId !== undefined)) {
 +      const owner = ownerPolicy(args)
 +      if (owner.action === 'deny') {
@@ -621,7 +621,7 @@ index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3
 +      // A read-only host shows what the writer saved; it changes nothing.
 +      if (rt.readOnly() !== undefined) return
 +      const all = remoteStore()
-+      // Every published Bot gets a chat of its own (remote-chat.js).
++      // Every granted remote Bot gets a chat of its own (remote-chat.js).
 +      void rt.remoteChats?.sync(plugin, next).catch(error => warn('flybot: remote chats not synced: %s', error))
 +      if (same(all[plugin] ?? [], next)) return
 +      if (next.length === 0) delete all[plugin]
@@ -765,8 +765,9 @@ index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3
 +      list: () => team().map(view),
 +      find: name => view(rt.findBot?.(name)),
 +      isRemote,
-+      // Whether the Bot is reachable from another owner (the owner's choice; the Chief by default).
-+      isPublished: id => rt.isPublished?.(id) === true,
++      // Whether this Bot has at least one person-grant (Invite to this Bot was accepted).
++      hasGrant: (id, peer, roomId) => rt.hasGrant?.(id, peer, roomId) === true,
++      hasAnyGrant: id => rt.hasAnyGrant?.(id) === true,
 +      of: sessionId => view(rt.botOf(rt.selfOf(sessionId))),
 +      create: spec => create({ plugin, ...spec }),
 +      setSystemPrompt,
@@ -787,6 +788,17 @@ index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3
 +      setProvider(fn) { rt.listRoomApprovals = typeof fn === 'function' ? fn : undefined },
 +    },
 +    rooms: {
++      list() {
++        return Object.values(state.rooms || {}).map(room => ({
++          id: room.id,
++          name: room.name,
++          origin: room.origin,
++          face: room.face,
++          members: [...(room.members ?? [])],
++          participants: (room.participants ?? []).map(p => ({ ...p })),
++        }))
++      },
++      removeParticipant: (roomId, ref) => rt.removeRoomParticipant?.(roomId, ref),
 +      upsertFace: spec => rt.upsertFaceRoom?.(spec),
 +      applyFaceLine: (roomId, line) => {
 +        const room = rt.roomOf(roomId)
@@ -826,6 +838,11 @@ index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3
 +        of: handle => rt.remoteChats.of(toRemote(handle)?.handle),
 +      },
 +    },
++    grants: {
++      of: botId => rt.grantsOf?.(botId) ?? [],
++      has: (botId, peer, roomId) => rt.hasGrant?.(botId, peer, roomId) === true,
++      set: (botId, list) => rt.setGrants?.(botId, list),
++    },
 +    approvals,
 +    tools,
 +    api,
@@ -838,7 +855,7 @@ index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3
 +  // A local Bot's answer to a friend's Bot (turns.js): back through bot.send, so the
 +  // plugin's middleware still decides (auto-accept, or the approval hold).
 +  const replyRemote = ({ from, handle, home, text, replyTo }) => send({ from, to: { kind: 'remote', handle, ...(home ? { home } : {}) }, text, role: 'reply', via: 'auto-reply', meta: { replyTo } })
-+  rt.flybotPublishedChanged = botId => { const bot = rt.botOf(botId); if (bot !== undefined && bot.remote === undefined) fire('bot.published', view(bot)) }
++  rt.flybotGrantsChanged = botId => { const bot = rt.botOf(botId); if (bot !== undefined && bot.remote === undefined) fire('bot.grants', view(bot)) }
 +  Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSend: send, flybotIsRead: isReadEndpoint, flybotHideTools: hidePluginTools })
 +}
 diff --git a/src/host/roster.js b/src/host/roster.js
@@ -1529,10 +1546,10 @@ index 62fed26b0f4449349b2a06e219c18324109c7993..58fcd80ea8ad0ec119377f728853a977
        const dispose = execute()
 diff --git a/test/flybot.test.js b/test/flybot.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..c5f207c753fa32222110dbb6aa8fda0dbd164d09
+index 0000000000000000000000000000000000000000..f9bb6f52186d89e98c9f75e23faf2ebf84a807a2
 --- /dev/null
 +++ b/test/flybot.test.js
-@@ -0,0 +1,525 @@
+@@ -0,0 +1,535 @@
 +import assert from 'node:assert/strict'
 +import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 +import { tmpdir } from 'node:os'
@@ -1595,7 +1612,8 @@ index 0000000000000000000000000000000000000000..c5f207c753fa32222110dbb6aa8fda0d
 +    rmSync(home, { recursive: true, force: true, maxRetries: 5 })
 +  }
 +  const received = id => (agents.get(id)?.calls ?? []).map(([, m]) => m.content.map(b => b.text).join('\n'))
-+  return { ctx, fb: ctx.flybot, tool, call, home, stop, received, agents }
++  const grantTo = (botId, grantee) => ctx.flybot.grants.set(botId, [...(ctx.flybot.grants.of(botId) ?? []), { grantee }])
++  return { ctx, fb: ctx.flybot, tool, call, home, stop, received, agents, grantTo }
 +}
 +
 +test('apply provides the flybot service with the agreed surface', async (t) => {
@@ -1616,6 +1634,9 @@ index 0000000000000000000000000000000000000000..c5f207c753fa32222110dbb6aa8fda0d
 +  assert.equal(fb.fields, fb.bot.fields)
 +  assert.equal(typeof fb.rooms.upsertFace, 'function')
 +  assert.equal(typeof fb.rooms.onFaceLine, 'function')
++  assert.equal(typeof fb.rooms.list, 'function')
++  assert.equal(typeof fb.rooms.removeParticipant, 'function')
++  assert.ok(Array.isArray(fb.rooms.list()))
 +})
 +
 +test('flybot.warn writes to the host diagnostics log', async (t) => {
@@ -1774,8 +1795,9 @@ index 0000000000000000000000000000000000000000..c5f207c753fa32222110dbb6aa8fda0d
 +})
 +
 +test('bot.send reaches remote Bots through a transport and takes remote senders as untrusted', async (t) => {
-+  const { fb, received, stop } = await start()
++  const { fb, received, stop, grantTo } = await start()
 +  t.after(stop)
++  await grantTo('a', '@bob.bot')
 +  const out = []
 +  fb.transports.add('bot-social', { send: async msg => { out.push(msg); return { exchangeId: 'remote-1' } } })
 +  assert.deepEqual(await fb.bot.send({ from: 'a', to: { kind: 'remote', handle: '@bob.bot' }, text: 'hello bob' }), { action: 'allow', exchangeId: 'remote-1' })
@@ -1837,8 +1859,9 @@ index 0000000000000000000000000000000000000000..c5f207c753fa32222110dbb6aa8fda0d
 +})
 +
 +test('approvals (#12): an approved hold resumes the chain, a later deny wins, failures retry, limits hold', async (t) => {
-+  const { fb, received, stop } = await start()
++  const { fb, received, stop, grantTo } = await start()
 +  t.after(stop)
++  await grantTo('a', '@bob.bot')
 +  let block = true
 +  fb.bot.send.use({ name: 'hold-all', handle: () => ({ action: 'hold', reason: 'check' }) })
 +  fb.bot.send.use({ name: 'leak-guard', after: ['hold-all'], handle: m => (block && /secret/.test(m.text) ? { action: 'deny', reason: 'leak' } : undefined) })
@@ -1869,8 +1892,9 @@ index 0000000000000000000000000000000000000000..c5f207c753fa32222110dbb6aa8fda0d
 +})
 +
 +test('mentions (#13): a friend\'s Bot named with @ gets the message once; code, quotes and unknown handles stay local', async (t) => {
-+  const { ctx, fb, stop } = await start()
++  const { ctx, fb, stop, grantTo } = await start()
 +  t.after(stop)
++  await grantTo('a', '@helper.friend.home')
 +  const out = []
 +  fb.transports.add('bot-social', { send: async msg => { out.push(msg); return { exchangeId: `r${out.length}` } } })
 +  fb.scope('social').remote.publish([{ handle: '@helper.friend.home', name: '助手', home: '@friend.home' }])
@@ -1897,10 +1921,11 @@ index 0000000000000000000000000000000000000000..c5f207c753fa32222110dbb6aa8fda0d
 +})
 +
 +test('mentions in a group (#80, #81): the room gets a receipt — sent points to the friend\'s chat, a hold or failure says why', async (t) => {
-+  const { ctx, fb, stop, agents } = await start({
++  const { ctx, fb, stop, agents, grantTo } = await start({
 +    rooms: { 'room-1': { id: 'room-1', name: 'Group', members: ['a', 'b'], admin: 'a', mode: 'admin', notice: '', createdAt: 1, createdBy: null } },
 +  })
 +  t.after(stop)
++  await grantTo('a', '@helper.friend.home')
 +  const out = []
 +  fb.transports.add('bot-social', { send: async msg => { out.push(msg); return { exchangeId: `r${out.length}` } } })
 +  fb.scope('social').remote.publish([{ handle: '@helper.friend.home', name: '助手', home: '@friend.home' }])
@@ -1957,13 +1982,14 @@ index 0000000000000000000000000000000000000000..c5f207c753fa32222110dbb6aa8fda0d
 +})
 +
 +test('send edge cases (#20): a bogus middleware verdict denies; a remote send with no transport throws', async (t) => {
-+  const { fb, stop } = await start()
++  const { fb, stop, grantTo } = await start()
 +  t.after(stop)
 +  const off = fb.bot.send.use({ name: 'weird', handle: () => ({ action: 'maybe' }) })
 +  const out = await fb.bot.send({ from: 'a', to: 'b', text: 'x' })
 +  assert.equal(out.action, 'deny')
 +  assert.match(out.reason, /weird returned "maybe"/)
 +  off()
++  await grantTo('a', '@nobody.home')
 +  await assert.rejects(fb.bot.send({ from: 'a', to: '@nobody.home', text: 'x' }), /no transport/)
 +})
 +
@@ -1998,8 +2024,9 @@ index 0000000000000000000000000000000000000000..c5f207c753fa32222110dbb6aa8fda0d
 +})
 +
 +test('cleanRemote sanitizes peer name, homeName and owner at the record boundary (#75)', async (t) => {
-+  const { ctx, fb, tool, received, stop } = await start()
++  const { ctx, fb, tool, received, stop, grantTo } = await start()
 +  t.after(stop)
++  await grantTo('a', '@eve.friend.home')
 +  ctx.llm.listProviders = () => [{ id: 'flybot-remote', name: 'Friends\' Bots' }]
 +  ctx.llm.listModels = async () => [{ id: '@eve.friend.home', name: 'Eve' }]
 +  let sessions = 0

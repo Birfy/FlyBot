@@ -94,6 +94,13 @@ window.__ModuleLoader__.load({
 .fs-face-auto{white-space:normal;font-size:13px;line-height:18px;color:var(--bt-ink,#141414);align-items:flex-start}
 .fs-face-auto input{margin-top:2px}
 .fs-face-note{padding:0}
+.fs-row-wrap{position:relative;display:flex;align-items:center;gap:4px;min-width:0}
+.fs-row-wrap .fs-row,.fs-row-wrap > :first-child{flex:1 1 auto;min-width:0}
+.fs-remove{flex:none}
+.fs-menu{position:absolute;right:4px;top:100%;z-index:5;min-width:160px;padding:4px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:8px;background:var(--bt-card,#fff);box-shadow:0 4px 16px rgba(0,0,0,.12)}
+.fs-menu button{display:block;width:100%;text-align:left;height:28px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:13px;cursor:pointer}
+.fs-menu button:hover{background:var(--bt-hover,rgba(119,119,119,.09))}
+.fs-chat-approval{margin:4px 0 8px}
 `
     function useStyles() {
       useEffect(() => {
@@ -249,8 +256,8 @@ window.__ModuleLoader__.load({
             h('select', { className: 'fs-input', value: joiner, 'aria-label': 'Which of your Bots joins', onChange: e => setJoiner(e.target.value) },
               bots.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name))),
             ' (default: first)') : null,
-          chosen ? h('div', { className: 'fs-hint', 'data-flybot': 'face-join-published' },
-            chosen.published === true ? 'Published to friends.' : 'not published, available to this room only') : null,
+          chosen ? h('div', { className: 'fs-hint', 'data-flybot': 'face-join-room' },
+            'Available to this room only. Friends cannot see this Bot unless you invite them to it.') : null,
           status ? h('div', { className: 'fs-status', role: 'status', 'data-tone': status.tone }, status.text) : null) : null)
     }
 
@@ -279,6 +286,123 @@ window.__ModuleLoader__.load({
           candidate ? h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('start', () => call('social/face-start', { roomId: room.roomId, faceRoomId: room.faceRoomId })) }, 'Start chat') : null,
           h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('leave', () => call('social/face-leave', { roomId: room.roomId, faceRoomId: room.faceRoomId })) }, 'Leave')),
         note ? h('div', { className: 'fs-status', 'data-tone': note.tone }, note.text) : null)
+    }
+
+    const WAITING_OWNER = 'Waiting for approval'
+    const WAITING_OTHERS = "Waiting for the owner's approval"
+
+    function ChatApproval({ item, canDecide = true, busy, onDecide, autoSend, onAutoSend, autoBusy, autoError } = {}) {
+      if (!item) return null
+      if (canDecide !== true) {
+        return h('div', { className: 'fs-pending fs-chat-approval', 'data-flybot': 'chat-approval', 'data-role': 'other', role: 'status' },
+          h('div', { className: 'fs-name' }, WAITING_OTHERS))
+      }
+      const locked = !!busy || autoBusy
+      return h('div', { className: 'fs-pending fs-chat-approval', 'data-flybot': 'chat-approval', 'data-role': 'owner', role: 'region', 'aria-label': WAITING_OWNER },
+        h('div', { className: 'fs-label' }, WAITING_OWNER),
+        item.from ? h('div', { className: 'fs-sub' }, `${item.from} → ${item.toName || item.to || 'friend'}`) : null,
+        item.text ? h('div', { className: 'fs-draft' }, item.text) : (item.summary ? h('div', { className: 'fs-sub fs-msg' }, item.summary) : null),
+        h('label', { className: 'fs-auto', title: 'Skip the hold on later messages from this Bot.', 'data-flybot': 'chat-auto-send' },
+          h('input', {
+            type: 'checkbox',
+            checked: autoSend === true,
+            disabled: locked,
+            'aria-label': 'Auto-send',
+            onChange: e => onAutoSend?.(e.target.checked),
+          }),
+          'Auto-send'),
+        autoError ? h('div', { className: 'fs-status', 'data-tone': 'error', role: 'status' }, autoError) : null,
+        h('div', { className: 'fs-actions' },
+          h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: locked, onClick: () => onDecide?.(item, 'approve') }, 'Approve'),
+          h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: locked, onClick: () => onDecide?.(item, 'reject') }, 'Reject')))
+    }
+
+    function approvalsForOpenChat(items, { sessionId, room, bot } = {}) {
+      const list = Array.isArray(items) ? items : []
+      const handle = bot?.remote?.handle
+      const faceId = room?.face?.roomId
+      const handles = new Set((room?.participants ?? []).map(p => p.handle).filter(Boolean))
+      if (handle) handles.add(handle)
+      return list.filter(item => {
+        if (faceId && item.roomId === faceId) return true
+        if (room?.id && item.roomId === room.id) return true
+        if (item.to && handles.has(item.to)) return true
+        if (sessionId && item.sessionId === sessionId) return true
+        return false
+      })
+    }
+
+    function ChatApprovalDock({ sessionId, roster, room, bot } = {}) {
+      useStyles()
+      const [items, setItems] = useState([])
+      const [busy, setBusy] = useState('')
+      const [autoSend, setAutoSend] = useState(false)
+      const [autoBusy, setAutoBusy] = useState(false)
+      const [autoError, setAutoError] = useState('')
+      const load = () => call('social/status', {}).then(value => {
+        setItems(Array.isArray(value?.approvals) ? value.approvals : [])
+        if (typeof value?.autoApproveFaceRooms === 'boolean') setAutoSend(value.autoApproveFaceRooms)
+      }, () => {})
+      useEffect(() => {
+        load()
+        if (typeof setInterval !== 'function') return undefined
+        const timer = setInterval(load, 5000)
+        timer?.unref?.()
+        return () => clearInterval(timer)
+      }, [])
+      const mine = approvalsForOpenChat(items, { sessionId, roster, room, bot })
+      if (!mine.length) return null
+      const decide = async (item, decision) => {
+        setBusy(item.id)
+        try {
+          await call('social/decide-approval', { approvalId: item.id, decision })
+          await load()
+        } finally { setBusy('') }
+      }
+      const toggle = async (next) => {
+        setAutoBusy(true)
+        setAutoError('')
+        try {
+          const first = mine[0]
+          if (first?.kind === 'face_room_message') {
+            const result = await call('social/face-auto', { on: next })
+            setAutoSend(result?.autoApproveFaceRooms === true)
+          } else if (first?.to) {
+            const home = String(first.to).replace(/^@[^.]+\./, '@')
+            await call('social/auto-accept', { home, on: next })
+            setAutoSend(next === true)
+          }
+        } catch (e) { setAutoError(errorText(e)) }
+        finally { setAutoBusy(false) }
+      }
+      return h('div', { 'data-flybot': 'chat-approvals' },
+        mine.map(item => h(ChatApproval, {
+          key: item.id, item, canDecide: true, busy: busy === item.id, onDecide: decide,
+          autoSend, onAutoSend: toggle, autoBusy, autoError,
+        })))
+    }
+
+    function FriendBotRow({ bot, chat, renderBot, busy, onRemove }) {
+      const [menu, setMenu] = useState(false)
+      return h('div', {
+        className: 'fs-row-wrap',
+        'data-flybot': 'friend-bot',
+        'data-handle': bot.handle,
+        onContextMenu: (event) => { event?.preventDefault?.(); setMenu(true) },
+      },
+        chat && typeof renderBot === 'function'
+          ? renderBot(chat)
+          : h('div', { className: 'fs-hint', title: bot.handle }, `${bot.name} · opening its chat…`),
+        h('button', {
+          type: 'button',
+          className: 'fs-btn fs-btn-sm fs-remove',
+          'data-flybot': 'remove-friend-bot',
+          title: 'Remove this Bot from Friends\' Bots and from your groups. This does not unfriend the owner.',
+          disabled: !!busy,
+          onClick: (event) => { event?.stopPropagation?.(); onRemove?.(bot) },
+        }, 'Remove this Bot'),
+        menu ? h('div', { className: 'fs-menu', role: 'menu', 'data-flybot': 'friend-bot-menu' },
+          h('button', { type: 'button', role: 'menuitem', onClick: () => { setMenu(false); onRemove?.(bot) } }, 'Remove this Bot')) : null)
     }
 
     function countdown(expiresAt) {
@@ -367,6 +491,7 @@ window.__ModuleLoader__.load({
       const [auto, setAuto] = useState({})
       const [saving, setSaving] = useState('')
       const [pending, setPending] = useState([])
+      const [hiding, setHiding] = useState('')
       const load = () => call('social/remote-bots', { fresh: true }).then(value => { setData(value); setError('') }, e => setError(errorText(e)))
       const loadSettings = () => call('social/settings', {}).then(value => setAuto(value?.autoAccept ?? {}), () => {})
       const loadApprovals = () => call('social/status', {}).then(value => {
@@ -397,13 +522,36 @@ window.__ModuleLoader__.load({
           await loadApprovals()
         } catch (e) { setError(errorText(e)) } finally { setSaving('') }
       }
+      const removeBot = async (bot) => {
+        setHiding(bot.handle)
+        try {
+          const result = await call('social/hide-remote', { handle: bot.handle })
+          if (result?.homes) setData(result)
+          else await load()
+          const chat = chats.find(entry => entry.remote?.handle === bot.handle)
+          if (chat && typeof actions?.updateRoom === 'function') {
+            for (const room of actions.roster?.rooms ?? []) {
+              const hit = (room.participants ?? []).find(p => p.remote && p.handle === bot.handle && p.leftSeq === undefined)
+              if (hit) void actions.updateRoom(room.id, { removeParticipants: [{ kind: 'bot', id: hit.handle || hit.id, remote: true }] })
+            }
+          }
+        } catch (e) { setError(errorText(e)) } finally { setHiding('') }
+      }
+      const openPending = () => {
+        const first = pending[0]
+        if (!first) return
+        const chat = chats.find(entry => entry.remote?.handle === first.to)
+        if (chat && typeof actions?.openSession === 'function') actions.openSession(chat.sessionId || chat.id)
+        else if (first.roomId && typeof actions?.openSession === 'function') actions.openSession(first.roomId)
+        setOpen(true)
+      }
       return h('section', { className: 'fs bt-social', 'aria-label': 'Friends\' Bots' },
         h('div', { className: 'fs-head' },
           h('button', { type: 'button', className: 'fs-head-main', 'aria-expanded': open, onClick: () => setOpen(!open) },
             h('span', { className: 'fs-chev', 'aria-hidden': true }, '▾'),
             h('span', { className: 'fs-title' }, 'Friends\' Bots'),
-            data ? h('span', { className: 'fs-count', title: `${count} ${count === 1 ? 'Bot' : 'Bots'}` }, String(count)) : null,
-            pending.length ? h('span', { className: 'fs-tag fs-pending-tag', 'data-flybot': 'pending-badge', title: `${pending.length} outbound ${pending.length === 1 ? 'reply' : 'replies'} waiting for your approval` }, `${pending.length} to approve`) : null),
+            data ? h('span', { className: 'fs-count', title: `${count} ${count === 1 ? 'Bot' : 'Bots'}` }, String(count)) : null),
+          pending.length ? h('button', { type: 'button', className: 'fs-tag fs-pending-tag', 'data-flybot': 'pending-badge', title: `${pending.length} outbound ${pending.length === 1 ? 'reply' : 'replies'} waiting for your approval. Opens that chat.`, onClick: openPending }, `${pending.length} to approve`) : null,
           unavailable ? null : h('button', { type: 'button', className: 'fs-icon', 'aria-expanded': adding, title: 'Add a friend', onClick: () => { setAdding(!adding); setOpen(true) } }, adding ? 'Done' : '+ Add')),
         open ? h('div', { className: 'fs-body' },
           h(PendingApprovals, { items: pending, busy: saving, onDecide: decide }),
@@ -425,9 +573,9 @@ window.__ModuleLoader__.load({
                   h('input', { type: 'checkbox', checked: auto[entry.home] !== false, disabled: saving === entry.home, onChange: e => toggleAuto(entry.home, e.target.checked) }),
                   'Auto-accept')),
               shut ? null : entry.bots.length === 0 ? h('div', { className: 'fs-hint' }, 'No Bots shared yet') : null,
-              shut ? null : h('div', { className: 'bt-social-rows' }, rows.map(({ bot, chat }) => (chat && typeof renderBot === 'function'
-                ? renderBot(chat)
-                : h('div', { key: bot.handle, className: 'fs-hint', title: bot.handle }, `${bot.name} · opening its chat…`)))))
+              shut ? null : h('div', { className: 'bt-social-rows' }, rows.map(({ bot, chat }) => h(FriendBotRow, {
+                key: bot.handle, bot, chat, renderBot, busy: hiding === bot.handle, onRemove: removeBot,
+              }))))
           }),
           data && homes.length === 0 && !adding
             ? h('div', { className: 'fs-empty' }, 'No friends yet. Right-click one of your Bots and choose ', h('b', null, 'Copy invite link'), ' (or ', h('b', null, 'Copy invite with instructions'), '), or use ', h('b', null, '+ Add'), ' to join a friend\'s invite.')
@@ -536,45 +684,56 @@ window.__ModuleLoader__.load({
       return Boolean(status.value?.connected && status.value.bots.some(bot => bot.id === botId))
     }
 
-    // #51: `set-published` { id | botId, published: true|false|null }. BotView.published
-    // is always a boolean (Chief true by default).
-    const PUBLISHED_NOTE = 'Friends can message this Bot and add it to rooms; unpublished Bots stay private.'
-    function PublishedToFriends({ bot }) {
-      const [on, setOn] = useState(bot?.published === true)
-      const [busy, setBusy] = useState(false)
+    const ACCESS_NOTE = 'Each grant is this Bot to one person. Accepting Invite to this Bot creates a grant. Revoke one person without touching the others. Default: nobody, including for the Chief.'
+    function ManageAccess({ bot }) {
+      const [view, setView] = useState(null)
+      const [busy, setBusy] = useState('')
       const [error, setError] = useState('')
-      useEffect(() => { setOn(bot?.published === true); setError('') }, [bot?.id, bot?.published])
+      const load = async () => {
+        if (!bot?.id) return
+        try {
+          setView(await call('social/access', { botId: bot.id }))
+          setError('')
+        } catch (e) { setError(errorText(e)) }
+      }
+      useEffect(() => { void load() }, [bot?.id])
       if (!bot?.id) return null
-      const toggle = async (next) => {
-        setBusy(true)
+      const revoke = async (grant) => {
+        setBusy(grant.id)
         setError('')
         try {
-          const view = await call('set-published', { id: bot.id, published: next })
-          const updated = (view?.bots ?? []).find(item => item.id === bot.id)
-          setOn(typeof updated?.published === 'boolean' ? updated.published : next)
-        } catch (e) {
-          setError(errorText(e))
-        } finally { setBusy(false) }
+          setView(await call('social/revoke-grant', { botId: bot.id, grantId: grant.id, relationshipId: grant.relationshipId, grantee: grant.grantee }))
+          const next = await call('social/access', { botId: bot.id })
+          setView(next)
+        } catch (e) { setError(errorText(e)) }
+        finally { setBusy('') }
       }
-      return h('div', { className: 'fs fs-card', 'data-flybot': 'published-to-friends' },
-        h('label', { className: 'fs-auto fs-face-auto', title: PUBLISHED_NOTE },
-          h('input', {
-            type: 'checkbox',
-            checked: on === true,
-            disabled: busy,
-            'aria-label': 'Published to friends',
-            onChange: e => toggle(e.target.checked),
-          }),
-          'Published to friends'),
-        h('div', { className: 'fs-hint fs-face-note' }, PUBLISHED_NOTE),
+      const grants = view?.grants ?? []
+      return h('div', { className: 'fs fs-card', 'data-flybot': 'manage-access' },
+        h('div', { className: 'fs-name' }, 'Manage access'),
+        h('div', { className: 'fs-hint fs-face-note' }, ACCESS_NOTE),
+        grants.length === 0 ? h('div', { className: 'fs-hint' }, 'Nobody has this Bot yet. Invite a friend to grant it.') : null,
+        grants.map(grant => h('div', { key: grant.id || grant.grantee, className: 'fs-line', 'data-flybot': 'access-grant' },
+          h('div', { className: 'fs-col' },
+            h('span', { className: 'fs-name' }, grant.name || grant.grantee),
+            h('span', { className: 'fs-sub' }, grant.grantee),
+            (grant.rooms ?? []).length ? h('span', { className: 'fs-hint' }, `In use: ${(grant.rooms ?? []).map(room => room.name || room.id).join(', ')}`) : null),
+          h('button', {
+            type: 'button', className: 'fs-btn', disabled: Boolean(busy),
+            'data-flybot': 'revoke-grant', 'aria-label': `Revoke ${grant.name || grant.grantee}`,
+            onClick: () => revoke(grant),
+          }, busy === grant.id ? 'Revoking…' : 'Revoke'))),
+        (view?.rooms ?? []).filter(room => room.origin === 'face-to-face').length
+          ? h('div', { className: 'fs-hint' }, `This room only: ${(view.rooms ?? []).filter(room => room.origin === 'face-to-face').map(room => room.name || room.id).join(', ')}`)
+          : null,
         error ? h('div', { className: 'fs-status', 'data-tone': 'error', role: 'status' }, error) : null)
     }
 
     function BotSocialDetails({ bot }) {
       useStyles()
       return h('div', { 'data-flybot': 'bot-social-details' },
-        h(PublishedToFriends, { bot }),
-        h(InviteToBot, { bot }))
+        h(InviteToBot, { bot }),
+        h(ManageAccess, { bot }))
     }
 
     // In a Bot's settings: invite a friend to this Bot.
@@ -594,7 +753,7 @@ window.__ModuleLoader__.load({
         if (clip?.writeText) clip.writeText(text).then(() => setNote({ tone: 'ok', text: 'Copied.' }), () => setNote({ tone: 'error', text: 'Could not copy. Select the link and copy it by hand.' }))
       }
       return h('div', { className: 'fs fs-card', 'data-flybot': 'invite-to-bot' },
-        h('div', { className: 'fs-hint' }, `Invite a friend to ${bot.name}. They can talk to ${bot.name} only.`),
+        h('div', { className: 'fs-hint' }, `Invite a friend to ${bot.name}. Accepting the invite grants them ${bot.name} only. You can revoke that grant later.`),
         h('button', { type: 'button', className: 'fs-btn', disabled: busy, onClick: create }, invite ? 'Create another invite link' : 'Invite to this Bot'),
         invite ? h('div', { className: 'fs-line' },
           h('input', { className: 'fs-input', readOnly: true, value: invite.link, 'aria-label': 'Invite link', onFocus: e => e.target.select() }),
@@ -619,9 +778,12 @@ window.__ModuleLoader__.load({
       errorText,
       canInvite,
       InviteToBot,
-      PublishedToFriends,
+      ManageAccess,
       BotSocialDetails,
       PendingApprovals,
+      ChatApproval,
+      ChatApprovalDock,
+      FriendBotRow,
       JoinWithNumber,
       FaceRoomOverview,
       FaceAutoSend,
@@ -640,6 +802,7 @@ window.__ModuleLoader__.load({
             slots().register('flybot.composer.mention', { id: 'social', order: 100, candidates: friendRows }),
             slots().register('flybot.bot.details', { id: 'social-invite', order: 100, component: BotSocialDetails }),
             slots().register('flybot.room.overview', { id: 'social-face', order: 50, component: FaceRoomOverview }),
+            slots().register('flybot.session.dock', { id: 'social-approval', order: 50, component: ChatApprovalDock }),
           ]
           // For other plugins (the tree's per-node "Copy invite link"): ctx.flybot.social.canInvite(botId)
           // is synchronous; flybot.call('social.createInvite', { botId }) returns { link, text, ... }.

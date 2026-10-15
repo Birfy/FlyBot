@@ -190,6 +190,8 @@ test('join and leave follow the membership-window history rule', async (t) => {
   }
   const early = await rt.postRoomMessage('later', { text: 'before Bob' }, actorA)
   assert.equal(early.seq >= 1, true)
+  await rt.setGrants('chief-a', [{ grantee: bob.memberId }])
+  await rt.setGrants('chief-b', [{ grantee: 'owner-1' }])
   await rt.addRoomParticipant('later', { kind: 'human', id: 'owner-2', displayName: 'Bob' }, actorA)
   const after = await rt.postRoomMessage('later', { text: 'after Bob joined' }, actorA)
 
@@ -241,24 +243,26 @@ test('a specialist cannot join a cross-owner room', async (t) => {
   assert.equal(isCrossOwnerRoom(rt.state.rooms.shared, rt.state), true)
 })
 
-test('#51: a published specialist may join a cross-owner room, and unpublishing takes it out at once', async (t) => {
+test('#90: a granted specialist may join a cross-owner room, and revoking takes it out at once', async (t) => {
   const { rt } = host(t, TEAM)
   await rt.load()
   const { alice } = await signAliceAndBob(rt)
   const actorA = await rt.authenticate(alice.sessionToken)
   const create = { members: ['chief-a', 'spec-b'], participants: [{ kind: 'human', id: 'owner-1' }, { kind: 'human', id: 'owner-2' }, { kind: 'bot', id: 'chief-a' }, { kind: 'bot', id: 'spec-b' }] }
   assert.equal(rt.authorize(actorA, 'create-room', create).ok, false)
-  await rt.setPublished('spec-b', true)
+  await rt.setGrants('spec-b', [{ grantee: 'owner-1' }])
+  await rt.setGrants('chief-a', [{ grantee: 'owner-2' }])
+  await rt.setGrants('chief-b', [{ grantee: 'owner-1' }])
   assert.equal(rt.authorize(actorA, 'create-room', create).ok, true)
   await rt.addRoomParticipant('shared', { kind: 'bot', id: 'spec-b' }, actorA)
   assert.equal(rt.state.rooms.shared.members.includes('spec-b'), true)
-  // One unpublished member in the room also keeps another specialist out.
-  await assert.rejects(() => rt.addRoomParticipant('shared', { kind: 'bot', id: 'spec-a' }, actorA), /Specialists stay/)
-  await rt.setPublished('spec-b', false)
+  // One ungranted member in the room also keeps another specialist out.
+  await assert.rejects(() => rt.addRoomParticipant('shared', { kind: 'bot', id: 'spec-a' }, actorA), /Specialists stay|granted/)
+  await rt.setGrants('spec-b', [])
   assert.equal(rt.state.rooms.shared.members.includes('spec-b'), false)
   assert.ok(rt.state.rooms.shared.log.some(line => line.kind === 'left' && line.authorId === 'spec-b'))
-  // A Chief replaced by its owner's choice leaves too; the room itself stays.
-  await rt.setPublished('chief-b', false)
+  // A Chief whose grant is revoked leaves too; the room itself stays.
+  await rt.setGrants('chief-b', [])
   assert.equal(rt.state.rooms.shared.members.includes('chief-b'), false)
   assert.ok(rt.state.rooms.shared.participants.some(p => p.kind === 'human' && p.id === 'owner-2' && p.leftSeq === undefined))
 })
@@ -286,6 +290,8 @@ test('authz allows a shared room of Chiefs and denies a mixed specialist create'
   await rt.load()
   const { alice, bob } = await signAliceAndBob(rt)
   const actorA = await rt.authenticate(alice.sessionToken)
+  await rt.setGrants('chief-a', [{ grantee: 'owner-2' }])
+  await rt.setGrants('chief-b', [{ grantee: 'owner-1' }])
   const shared = rt.authorize(actorA, 'create-room', {
     members: ['chief-a', 'chief-b'],
     participants: [

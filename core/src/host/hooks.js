@@ -99,7 +99,7 @@ export function install(rt) {
   const emit = (name, payload) => { try { ctx.emit?.(name, payload) } catch (error) { warn('flybot: %s listener failed: %s', name, error) } }
 
   // ---------------------------------------------------------------- events
-  const listeners = { 'change': new Set(), 'bot.created': new Set(), 'bot.removed': new Set(), 'bot.published': new Set() }
+  const listeners = { 'change': new Set(), 'bot.created': new Set(), 'bot.removed': new Set(), 'bot.grants': new Set() }
   const changes = []
   let changeSeq = 0
   // A new host process starts a new epoch: the browser resets its watermark on a change.
@@ -117,7 +117,7 @@ export function install(rt) {
   // Cordis-style subscription, returns a disposer. 'change' listeners hear their own
   // plugin's fields unless they pass { all: true }; 'bot.removed' hears every removal.
   const onFor = plugin => (event, fn, { all = false } = {}) => {
-    if (!listeners[event]) throw new Error(`flybot: unknown event ${event}; use 'change', 'bot.created', 'bot.removed', or 'bot.published'`)
+    if (!listeners[event]) throw new Error(`flybot: unknown event ${event}; use 'change', 'bot.created', 'bot.removed', or 'bot.grants'`)
     const listener = event === 'change' && !all ? change => { if (change.plugin === plugin) fn(change) } : fn
     listeners[event].add(listener)
     return () => listeners[event].delete(listener)
@@ -128,7 +128,7 @@ export function install(rt) {
   const team = () => Object.values(state.bots).filter(bot => bot.remote === undefined)
   const view = bot => (bot === undefined ? undefined : {
     id: bot.id, name: bot.name, role: bot.role, isMain: rt.isMain(bot.id), createdBy: bot.createdBy ?? null,
-    published: rt.isPublished?.(bot.id) === true,
+    granted: rt.hasAnyGrant?.(bot.id) === true,
     systemPrompt: bot.systemPrompt ?? '', fields: clone(bot.fields ?? {}),
   })
   const persist = () => { void rt.save().catch(error => warn('flybot: save failed: %s', error)) }
@@ -383,7 +383,7 @@ export function install(rt) {
   }
   // The owner policy (reach.js) sits before the chain and is not a middleware: no verdict, bypass
   // or priority of a plugin can skip it. It judges the message as it is now, so a Bot that was
-  // unpublished since it was written is refused.
+  // revoked since it was written is refused.
   const ownerPolicy = msg => rt.reach?.(msg) ?? { action: 'allow' }
   const run = async (msg) => {
     const owner = ownerPolicy(msg)
@@ -455,7 +455,7 @@ export function install(rt) {
   rt.deliver = async (args) => {
     // Everything that is not a first, checked send still carries its sender: resumed, retried,
     // deferred and re-sent deliveries (and kickoffs, notices) are judged by the owner policy
-    // now, since the Bot they name may have been unpublished, replaced or removed since.
+    // now, since the Bot they name may have had its grant revoked, replaced or removed since.
     if (!gated(args) && !args.flybotChecked && (args.remote?.handle || args.fromId !== undefined)) {
       const owner = ownerPolicy(args)
       if (owner.action === 'deny') {
@@ -556,7 +556,7 @@ export function install(rt) {
       // A read-only host shows what the writer saved; it changes nothing.
       if (rt.readOnly() !== undefined) return
       const all = remoteStore()
-      // Every published Bot gets a chat of its own (remote-chat.js).
+      // Every granted remote Bot gets a chat of its own (remote-chat.js).
       void rt.remoteChats?.sync(plugin, next).catch(error => warn('flybot: remote chats not synced: %s', error))
       if (same(all[plugin] ?? [], next)) return
       if (next.length === 0) delete all[plugin]
@@ -700,8 +700,9 @@ export function install(rt) {
       list: () => team().map(view),
       find: name => view(rt.findBot?.(name)),
       isRemote,
-      // Whether the Bot is reachable from another owner (the owner's choice; the Chief by default).
-      isPublished: id => rt.isPublished?.(id) === true,
+      // Whether this Bot has at least one person-grant (Invite to this Bot was accepted).
+      hasGrant: (id, peer, roomId) => rt.hasGrant?.(id, peer, roomId) === true,
+      hasAnyGrant: id => rt.hasAnyGrant?.(id) === true,
       of: sessionId => view(rt.botOf(rt.selfOf(sessionId))),
       create: spec => create({ plugin, ...spec }),
       setSystemPrompt,
@@ -722,6 +723,17 @@ export function install(rt) {
       setProvider(fn) { rt.listRoomApprovals = typeof fn === 'function' ? fn : undefined },
     },
     rooms: {
+      list() {
+        return Object.values(state.rooms || {}).map(room => ({
+          id: room.id,
+          name: room.name,
+          origin: room.origin,
+          face: room.face,
+          members: [...(room.members ?? [])],
+          participants: (room.participants ?? []).map(p => ({ ...p })),
+        }))
+      },
+      removeParticipant: (roomId, ref) => rt.removeRoomParticipant?.(roomId, ref),
       upsertFace: spec => rt.upsertFaceRoom?.(spec),
       applyFaceLine: (roomId, line) => {
         const room = rt.roomOf(roomId)
@@ -761,6 +773,11 @@ export function install(rt) {
         of: handle => rt.remoteChats.of(toRemote(handle)?.handle),
       },
     },
+    grants: {
+      of: botId => rt.grantsOf?.(botId) ?? [],
+      has: (botId, peer, roomId) => rt.hasGrant?.(botId, peer, roomId) === true,
+      set: (botId, list) => rt.setGrants?.(botId, list),
+    },
     approvals,
     tools,
     api,
@@ -773,6 +790,6 @@ export function install(rt) {
   // A local Bot's answer to a friend's Bot (turns.js): back through bot.send, so the
   // plugin's middleware still decides (auto-accept, or the approval hold).
   const replyRemote = ({ from, handle, home, text, replyTo }) => send({ from, to: { kind: 'remote', handle, ...(home ? { home } : {}) }, text, role: 'reply', via: 'auto-reply', meta: { replyTo } })
-  rt.flybotPublishedChanged = botId => { const bot = rt.botOf(botId); if (bot !== undefined && bot.remote === undefined) fire('bot.published', view(bot)) }
+  rt.flybotGrantsChanged = botId => { const bot = rt.botOf(botId); if (bot !== undefined && bot.remote === undefined) fire('bot.grants', view(bot)) }
   Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSend: send, flybotIsRead: isReadEndpoint, flybotHideTools: hidePluginTools })
 }
