@@ -9,10 +9,15 @@ export const call = async (endpoint, payload, signal) => {
   let response
   try {
     // Document-relative so the Web UI keeps working under a mounted base path.
+    const headers = { 'content-type': 'application/json' }
+    try {
+      const token = localStorage.getItem('flybot-member-session')
+      if (token) headers['x-flybot-member-session'] = token
+    } catch { /* private mode */ }
     response = await fetch(ROUTE, {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify({ endpoint, payload: payload ?? null }),
       signal,
     })

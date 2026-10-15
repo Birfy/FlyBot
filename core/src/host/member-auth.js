@@ -110,6 +110,8 @@ export function install(rt) {
         memberId: member.id,
         createdAt: now,
         revokedAt: null,
+        // Session-scoped only: the member record stays the #47 identity shape.
+        ...(displayName ? { displayName } : {}),
       }
       invitation.redeemedAt = now
       invitation.redeemedByMemberId = member.id
@@ -125,7 +127,7 @@ export function install(rt) {
     if (!session || session.revokedAt) return null
     const member = (rt.state.members || {})[session.memberId]
     if (!member) return null
-    return { memberId: member.id, sessionId: session.id, displayName: displayNameOf(member) }
+    return { memberId: member.id, sessionId: session.id, displayName: displayNameOf(member, session.displayName) }
   }
 
   rt.revokeSession = async function revokeSession(sessionToken) {

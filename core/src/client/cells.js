@@ -4,11 +4,12 @@ import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { inkText } from './inks.js'
 import { currentPart, linkMentions, mentionTarget, dayLabel, contentText, stripHeader, stripTrace, isHiddenTurn, isRelayContext, relaysBefore, relayPart, commRunOf, toolName, toolArgs, reminderPrompts } from './text.js'
 import { SmileIcon, ReplyIcon, DotsIcon, CheckIcon, DownloadIcon, CopyIcon, MemoryIcon } from './icons.js'
-import { colorOf, toolState, BotMark, RoomAvatar } from './mark.js'
+import { colorOf, remoteSeed, toolState, BotMark, RoomAvatar } from './mark.js'
 import { AnsweredCell, SettledQuestion, PendingQuestion } from './questions.js'
 import { SecretToolCell } from './secret-card.js'
 import { dateLocale, t } from './i18n.js'
 import { remoteMessageText } from './flybot-registry.js'
+import { remoteBotTitle } from '../shared/remote-label.js'
 import { fileSize } from './flybot-slots.js'
 import { call } from './api.js'
 import { failureLabel } from './diagnostics.js'
@@ -192,9 +193,15 @@ export function remoteSpeaker(source, roster) {
   const handle = source.remote.handle
   const member = (roster.remoteBots ?? []).find(bot => bot.handle === handle)
   const chat = (roster.bots ?? []).find(bot => bot.remote?.handle === handle)
-  const name = chat?.name ?? member?.name ?? source.senderName ?? handle
-  // The sidebar's Bot record when there is one; else a stable look derived from the handle.
-  const bot = chat ?? { id: `remote:${handle}`, name, color: member?.color, shape: member?.shape }
+  const name = remoteBotTitle({
+    displayName: chat?.name ?? member?.name ?? source.senderName ?? handle,
+    ownerName: member?.homeName || member?.owner || chat?.remote?.homeName || chat?.remote?.owner,
+    handle,
+    isChief: member?.isChief ?? chat?.remote?.isChief,
+  })
+  // The sidebar's Bot record when there is one; else a synthetic one whose id seeds the
+  // same handle-derived look the record would get (characters.js remoteSeed).
+  const bot = chat ?? { id: remoteSeed(handle), name, color: member?.color, shape: member?.shape }
   return { bot, member, name, handle, chatId: chat ? currentPart(chat) : undefined }
 }
 
@@ -644,7 +651,10 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
     replies.map((reply, index) => {
       const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? 'gray' }
       if (reply.kind === 'user') {
-        return h('div', { key: `user-${index}`, className: 'bt-urow' }, h('div', { className: 'bt-ububble' },
+        const who = reply.name || reply.authorId
+        return h('div', { key: `user-${index}`, className: 'bt-urow', 'data-author': reply.authorId, 'data-author-name': who },
+          who ? h('span', { className: 'bt-uauthor' }, who) : null,
+          h('div', { className: 'bt-ububble' },
           h(MarkdownText, { text: reply.text, labels: mdLabels(), variant: 'compact' })))
       }
       if (reply.kind === 'failed') {

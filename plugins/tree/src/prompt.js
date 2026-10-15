@@ -8,6 +8,8 @@ export function traceRule(trace, root) {
   if (root) return `Do not start your replies with a trace or path line (e.g. "${trace} → <child>"). ${NO_TRACE}`
   return `Only when you answer your parent bot in the tree, start that answer with a one-line trace of the path the request took, e.g. "${trace}". ${NO_TRACE}`
 }
+// A published tree Bot can be contacted from outside the tree (a friend's Bot, another owner's Bot).
+export const OUTSIDE_RULE = 'If your owner has published you, a bot outside the tree (a friend\'s bot, or another owner\'s bot) may message you directly. Answer that sender directly, with no trace line, and delegate only to your own children, never to bots outside the tree.'
 export function systemPrompt({ name, role, trace, children, root = false }) {
   const head = root
     ? [`Bot tree: you (${name}) are also the ROOT of a recursive bot tree of child bots. For tasks you delegate into the tree, follow these tree rules.`, `Your position: ${trace}`]
@@ -17,7 +19,7 @@ export function systemPrompt({ name, role, trace, children, root = false }) {
     return [...head, '',
       'You have no children: do the work yourself and answer concisely with concrete results.',
       'Only if the task clearly splits into a separate domain you cannot cover, you may create a child with create_child_bot and delegate to it.',
-      'You may message only your parent and your direct children.', tools,
+      'You may message only your parent and your direct children.', ...(root ? [] : [OUTSIDE_RULE]), tools,
       traceRule(trace, root)].join('\n')
   }
   return [...head, '',
@@ -28,7 +30,7 @@ export function systemPrompt({ name, role, trace, children, root = false }) {
     '3. Send each child only its own self-contained part, all in parallel, then wait.',
     '4. Aggregate the answers into one concise answer for your parent (or the user). If only one child answered, pass its answer through unchanged.',
     `5. ${traceRule(trace, root)}`,
-    'You may message only your parent and your direct children.', tools].join('\n')
+    'You may message only your parent and your direct children.', ...(root ? [] : [OUTSIDE_RULE]), tools].join('\n')
 }
 
 // The tree's text is kept in a marked block inside the bot's systemPrompt, so text written by the

@@ -32,6 +32,9 @@ const NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/i
 
 const clone = value => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)))
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+// Peer-controlled labels (display name, home, owner): strip @ so they cannot look
+// like a mention of another Bot, strip controls/newlines, keep a 60-char cap (#75).
+export const cleanPublishedName = (value) => String(value ?? '').replace(/@/g, '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
 // A remote address: { kind: 'remote', handle, home? } or a '@handle' string. Remote Bots
 // are never in bot.list(); their handle is '@<bot>.<home>' (home '@<home>') or a plain
 // per-bot identity.
@@ -96,7 +99,7 @@ export function install(rt) {
   const emit = (name, payload) => { try { ctx.emit?.(name, payload) } catch (error) { warn('flybot: %s listener failed: %s', name, error) } }
 
   // ---------------------------------------------------------------- events
-  const listeners = { 'change': new Set(), 'bot.created': new Set(), 'bot.removed': new Set() }
+  const listeners = { 'change': new Set(), 'bot.created': new Set(), 'bot.removed': new Set(), 'bot.published': new Set() }
   const changes = []
   let changeSeq = 0
   // A new host process starts a new epoch: the browser resets its watermark on a change.
@@ -114,7 +117,7 @@ export function install(rt) {
   // Cordis-style subscription, returns a disposer. 'change' listeners hear their own
   // plugin's fields unless they pass { all: true }; 'bot.removed' hears every removal.
   const onFor = plugin => (event, fn, { all = false } = {}) => {
-    if (!listeners[event]) throw new Error(`flybot: unknown event ${event}; use 'change', 'bot.created', or 'bot.removed'`)
+    if (!listeners[event]) throw new Error(`flybot: unknown event ${event}; use 'change', 'bot.created', 'bot.removed', or 'bot.published'`)
     const listener = event === 'change' && !all ? change => { if (change.plugin === plugin) fn(change) } : fn
     listeners[event].add(listener)
     return () => listeners[event].delete(listener)
@@ -125,6 +128,7 @@ export function install(rt) {
   const team = () => Object.values(state.bots).filter(bot => bot.remote === undefined)
   const view = bot => (bot === undefined ? undefined : {
     id: bot.id, name: bot.name, role: bot.role, isMain: rt.isMain(bot.id), createdBy: bot.createdBy ?? null,
+    published: rt.isPublished?.(bot.id) === true,
     systemPrompt: bot.systemPrompt ?? '', fields: clone(bot.fields ?? {}),
   })
   const persist = () => { void rt.save().catch(error => warn('flybot: save failed: %s', error)) }
@@ -311,7 +315,10 @@ export function install(rt) {
   // then it is dispatched; a failed dispatch stays visible for Retry.
   const release = async (approval) => {
     let verdict
-    try { verdict = await evaluate(approval.request, { after: approval.by }) } catch (error) { verdict = { action: 'deny', reason: error?.message ?? String(error) } }
+    // Approved or not, the owner policy is asked again: the hold may be hours old.
+    const owner = ownerPolicy(approval.request)
+    if (owner.action === 'deny') verdict = owner
+    else try { verdict = await evaluate(approval.request, { after: approval.by }) } catch (error) { verdict = { action: 'deny', reason: error?.message ?? String(error) } }
     if (verdict.action === 'deny') {
       approval.status = 'denied'
       approval.error = verdict.reason
@@ -374,7 +381,13 @@ export function install(rt) {
     outcomes.set(exchangeId, outcome)
     if (outcomes.size > 500) outcomes.delete(outcomes.keys().next().value)
   }
+  // The owner policy (reach.js) sits before the chain and is not a middleware: no verdict, bypass
+  // or priority of a plugin can skip it. It judges the message as it is now, so a Bot that was
+  // unpublished since it was written is refused.
+  const ownerPolicy = msg => rt.reach?.(msg) ?? { action: 'allow' }
   const run = async (msg) => {
+    const owner = ownerPolicy(msg)
+    if (owner.action === 'deny') return { action: 'deny', reason: owner.reason, by: owner.by }
     const verdict = await evaluate(msg)
     if (verdict.action === 'deny') return { action: 'deny', reason: verdict.reason, by: verdict.by }
     if (verdict.action === 'hold') {
@@ -440,6 +453,18 @@ export function install(rt) {
     && !args.flybotChecked && !args.resent && !args.resumed && !args.retried && !args.deferred
   innerDeliver = rt.deliver
   rt.deliver = async (args) => {
+    // Everything that is not a first, checked send still carries its sender: resumed, retried,
+    // deferred and re-sent deliveries (and kickoffs, notices) are judged by the owner policy
+    // now, since the Bot they name may have been unpublished, replaced or removed since.
+    if (!gated(args) && !args.flybotChecked && (args.remote?.handle || args.fromId !== undefined)) {
+      const owner = ownerPolicy(args)
+      if (owner.action === 'deny') {
+        const exchangeId = args.exchangeId ?? randomUUID()
+        noteOutcome(exchangeId, { action: 'deny', reason: owner.reason, by: owner.by })
+        warn('flybot: delivery to %s refused: %s', args.toId, owner.reason)
+        return exchangeId
+      }
+    }
     if (!gated(args)) return innerDeliver(args)
     const exchangeId = args.exchangeId ?? randomUUID()
     const msg = { from: args.fromId, to: args.toId, target: targetOf(args.toId), text: args.text, role: args.role, hop: args.hop ?? 0, via: 'ds-bot', exchangeId, deliverArgs: { ...args, exchangeId } }
@@ -518,7 +543,10 @@ export function install(rt) {
   }
   const cleanRemote = (plugin, bot) => {
     const remote = toRemote(bot.handle)
-    return { handle: remote.handle, home: bot.home ? toRemote(bot.home).handle : remote.home, name: String(bot.name ?? remote.handle).slice(0, 60), ...(bot.homeName ? { homeName: String(bot.homeName).slice(0, 60) } : {}), ...(bot.owner ? { owner: String(bot.owner).slice(0, 60) } : {}), plugin, remote: true }
+    const name = cleanPublishedName(bot.name) || cleanPublishedName(remote.handle) || 'a remote Bot'
+    const homeName = cleanPublishedName(bot.homeName)
+    const owner = cleanPublishedName(bot.owner)
+    return { handle: remote.handle, home: bot.home ? toRemote(bot.home).handle : remote.home, name, ...(homeName ? { homeName } : {}), ...(owner ? { owner } : {}), plugin, remote: true }
   }
   const remoteMembers = {
     // Replaces this plugin's list; saves only when it changed.
@@ -672,6 +700,8 @@ export function install(rt) {
       list: () => team().map(view),
       find: name => view(rt.findBot?.(name)),
       isRemote,
+      // Whether the Bot is reachable from another owner (the owner's choice; the Chief by default).
+      isPublished: id => rt.isPublished?.(id) === true,
       of: sessionId => view(rt.botOf(rt.selfOf(sessionId))),
       create: spec => create({ plugin, ...spec }),
       setSystemPrompt,
@@ -688,6 +718,9 @@ export function install(rt) {
     // Same log as Settings → Feedback. Plugins must not depend on ctx.logger (DSH may export none).
     warn: (...args) => rt.warn?.(...args),
     transports: { add: addTransport },
+    roomApprovals: {
+      setProvider(fn) { rt.listRoomApprovals = typeof fn === 'function' ? fn : undefined },
+    },
     remote: {
       publish: list => remoteMembers.publish(plugin, list),
       list: remoteMembers.list,
@@ -715,5 +748,6 @@ export function install(rt) {
   // A local Bot's answer to a friend's Bot (turns.js): back through bot.send, so the
   // plugin's middleware still decides (auto-accept, or the approval hold).
   const replyRemote = ({ from, handle, home, text, replyTo }) => send({ from, to: { kind: 'remote', handle, ...(home ? { home } : {}) }, text, role: 'reply', via: 'auto-reply', meta: { replyTo } })
+  rt.flybotPublishedChanged = botId => { const bot = rt.botOf(botId); if (bot !== undefined && bot.remote === undefined) fire('bot.published', view(bot)) }
   Object.assign(rt, { flybot, flybotReplyRemote: replyRemote, flybotEndpoint: endpoint, flybotRemoteMembers: remoteMembers.list, flybotSend: send, flybotIsRead: isReadEndpoint, flybotHideTools: hidePluginTools })
 }

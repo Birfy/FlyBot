@@ -27,16 +27,27 @@ export function install(rt) {
   const roomLine = (room, self) => {
     const members = room.members.map(rt.botOf).filter(Boolean)
       .map(bot => `${bot.name}${bot.id === room.admin ? ' (admin)' : ''}${bot.id === self ? ' (you)' : ''}`)
+    const remotes = (room.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
+      .map(p => `${String(p.displayName ?? p.handle).replace(/[\u0000-\u001f\u007f-\u009f[\]"<>`]/g, '').slice(0, 60)} (${String(p.ownerName ?? p.ownerHome ?? 'friend').replace(/[\u0000-\u001f\u007f-\u009f[\]"<>`]/g, '').slice(0, 40)}'s Bot)`)
     const parts = [
-      `members: ${members.join(', ')}`,
+      `members: ${[...members, ...remotes].join(', ')}`,
       room.mode === 'admin' && room.admin ? 'plain messages go to the admin first' : 'every member replies in turn',
       room.notice ? `notice: ${room.notice.split('\n')[0].slice(0, 100)}` : '',
       room.workDir ? `members work in ${room.workDir} here` : '',
     ].filter(Boolean)
     return `- "${room.name}" — ${parts.join('; ')}`
   }
-  // Main Bots see every group; other Bots see the groups they are in.
-  const visibleRooms = self => Object.values(state.rooms).filter(room => rt.isMain(self) || room.members.includes(self))
+  // Main Bots see every group in their owner's scope; other Bots see the groups
+  // they are in. A Main Bot of one owner does not see another owner's private rooms.
+  const visibleRooms = (self) => Object.values(state.rooms).filter((room) => {
+    if (room.members.includes(self)) return true
+    if (!rt.isMain(self)) return false
+    if (!rt.authzEnforced?.()) return true
+    const bot = rt.botOf(self)
+    if (!bot?.ownerId) return true
+    if (rt.isCrossOwnerRoom?.(room) && !room.members.includes(self)) return false
+    return rt.roomOwnedBy?.({ memberId: bot.ownerId }, room.id) !== false
+  })
 
   ctx.tools.register(defineTool({
     name: 'list_bots',

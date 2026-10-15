@@ -101,6 +101,11 @@ export function install(rt) {
       if (main) {
         state.mainBotIds.push(id)
         rt.syncDesignatedChief()
+        // A second owner's first Main Bot becomes their designated Chief (#50).
+        const owner = state.members[ownerId]
+        if (owner && (owner.designatedChiefId === undefined || owner.designatedChiefId === null)) {
+          owner.designatedChiefId = id
+        }
       }
       const creator = rt.botOf(createdBy)
       const original = rt.botOf(copyOf)
@@ -260,7 +265,14 @@ export function install(rt) {
   // admin may change its own group but not delete it. Only a member can be admin.
 
   const roomBusy = id => [...rt.roomProgress.values()].some(round => round.roomId === id)
-  const autoRoomName = members => ['You', ...members.map(id => rt.botOf(id)?.name).filter(Boolean)].join(', ')
+  const autoRoomName = (members, room) => {
+    const humans = (room?.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
+      .map(p => p.displayName || p.id)
+    const people = humans.length > 0 ? humans : ['You']
+    const remotes = (room?.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
+      .map(p => p.displayName || p.handle)
+    return [...people, ...members.map(id => rt.botOf(id)?.name).filter(Boolean), ...remotes].join(', ')
+  }
   const cleanNotice = text => String(text ?? '').trim().slice(0, ROOM_NOTICE_MAX)
 
   function cleanRoomName(text, selfId) {
@@ -282,7 +294,7 @@ export function install(rt) {
   async function followMemberNames(rooms = Object.values(state.rooms)) {
     for (const room of rooms) {
       if (room.named) continue
-      const next = autoRoomName(room.members)
+      const next = autoRoomName(room.members, room)
       if (next === room.name) continue
       room.name = next
       await retitleRoom(room)
@@ -294,9 +306,14 @@ export function install(rt) {
     if (members.length > ROOM_MAX_MEMBERS) throw new Error(`A group chat holds at most ${ROOM_MAX_MEMBERS} Bots`)
   }
 
-  async function createRoom({ members: memberIds = [], name: roomName, notice, mode, admin, createdBy } = {}) {
-    const members = [...new Set(memberIds)].filter(id => rt.botOf(id))
-    checkMembers(members)
+  async function createRoom({ members: memberIds = [], name: roomName, notice, mode, admin, createdBy, participants, actor } = {}) {
+    const fromParticipants = Array.isArray(participants)
+      ? participants.filter(p => p?.kind === 'bot' && !p.remote && !p.handle).map(p => p.id)
+      : []
+    const remotes = Array.isArray(participants) ? participants.filter(p => p?.kind === 'bot' && (p.remote || p.handle)) : []
+    const members = [...new Set([...memberIds, ...fromParticipants])].filter(id => rt.botOf(id))
+    if (members.length >= 2) checkMembers(members)
+    else if (members.length + remotes.length < 2 || members.length === 0) checkMembers(members)
     const custom = cleanRoomName(roomName ?? '')
     // A Main Bot leads the groups it makes; a group the user makes is led by a Main
     // Bot member when it has one.
@@ -319,6 +336,12 @@ export function install(rt) {
         createdAt: Date.now(),
         createdBy: createdBy ?? null,
       }
+      if (Array.isArray(participants) && participants.length > 0) {
+        rt.applyParticipants(state.rooms[id], participants, actor)
+        if (!custom) {
+          state.rooms[id].name = autoRoomName(state.rooms[id].members, state.rooms[id])
+        }
+      }
       await rt.save()
       return state.rooms[id]
     } catch (error) {
@@ -331,13 +354,15 @@ export function install(rt) {
     }
   }
 
-  // `actorId` is the Bot asking, or undefined for the user. Returns what changed, in words.
-  async function updateRoom(id, patch, actorId) {
+  // `actorId` is the Bot asking, or undefined for the user. `actor` is the signed-in
+  // human when member-auth is on. Returns what changed, in words.
+  async function updateRoom(id, patch, actorId, actor) {
     const room = rt.roomOf(id)
     if (room === undefined) throw new Error('Unknown group chat')
+    const humanAdmin = actor && rt.canManageParticipants?.(room, actor)
     const byMain = actorId === undefined || rt.isMain(actorId)
     const byAdmin = !byMain && rt.isAdminOf(room, actorId)
-    if (!byMain && !byAdmin) throw new Error(`Only the user, a Main Bot, or the admin of "${room.name}" can change it`)
+    if (!byMain && !byAdmin && !humanAdmin) throw new Error(`Only the user, a Main Bot, or the admin of "${room.name}" can change it`)
     let members = Array.isArray(patch.members) ? [...new Set(patch.members)] : [...room.members]
     for (const member of patch.add ?? []) if (!members.includes(member)) members.push(member)
     members = members.filter(member => !(patch.remove ?? []).includes(member) && rt.botOf(member))
@@ -365,12 +390,17 @@ export function install(rt) {
     const removed = room.members.filter(member => !members.includes(member))
     if (added.length > 0) changes.push(`added ${names(added)}`)
     if (removed.length > 0) changes.push(`removed ${names(removed)}`)
-    // A member who leaves and comes back starts from a fresh look at the log.
-    for (const member of removed) {
-      if (room.seen) delete room.seen[member]
-      rt.dropGroupSession(room, member)
+    if (Array.isArray(room.participants)) {
+      for (const botId of added) await rt.addRoomParticipant(room.id, { kind: 'bot', id: botId }, actor)
+      for (const botId of removed) await rt.removeRoomParticipant(room.id, { kind: 'bot', id: botId }, actor)
+    } else {
+      // A member who leaves and comes back starts from a fresh look at the log.
+      for (const member of removed) {
+        if (room.seen) delete room.seen[member]
+        rt.dropGroupSession(room, member)
+      }
+      room.members = members
     }
-    room.members = members
     if (admin !== (room.admin ?? null)) changes.push(admin ? `made ${rt.botOf(admin).name} the admin` : 'removed the admin')
     room.admin = admin
     if (patch.mode !== undefined && patch.mode !== room.mode) {
@@ -396,7 +426,13 @@ export function install(rt) {
         delete room.named
       }
     }
-    if (!room.named) room.name = autoRoomName(room.members)
+    if (Array.isArray(patch.addParticipants)) {
+      for (const draft of patch.addParticipants) await rt.addRoomParticipant(room.id, draft, actor)
+    }
+    if (Array.isArray(patch.removeParticipants)) {
+      for (const ref of patch.removeParticipants) await rt.removeRoomParticipant(room.id, ref, actor)
+    }
+    if (!room.named) room.name = autoRoomName(room.members, room)
     if (room.name !== before) {
       changes.push(`renamed it "${room.name}"`)
       await retitleRoom(room)

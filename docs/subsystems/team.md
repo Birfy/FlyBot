@@ -60,10 +60,32 @@ A thin invitation-and-session layer on top of the #47 identity schema, in `core/
 Central authorization in `core/src/host/authz.js`, installed after member-auth:
 
 - **Enforced only once a member session exists** (`authzEnforced`). With no sessions the shipped single-human product is unchanged.
-- When enforced, every Bot / room / session an endpoint touches must belong to the signed-in actor (`bot/forbidden` otherwise). `body.actorId` still grants nothing.
-- Shared resources that cannot yet be isolated per owner (secrets, connectors, folder picks, browser bridge, update-install, diagnostics, set-prefs, capability library writes) are **explicitly blocked** with `bot/blocked-shared` while more than one member exists — not hidden only in the UI.
-- `create-bot` stamps `ownerId` from the actor; `view()` and `live()` filter to that owner's bots/rooms.
-- **Not done here:** cross-owner messaging, filesystem sandbox redesign, Chief-to-Chief routing (#51), human/Chief room membership (#50). Team mode stays disabled; #16 stays open.
+- When enforced, every Bot / room / session an endpoint touches must belong to the signed-in actor (`bot/forbidden` otherwise). `body.actorId` still grants nothing. Session targets resolve through the store's owner maps (`botOf` for a Bot id; `selfOf` / `groupOwners` / `pastOwners` for a current chat, group Session or earlier part); unresolvable ids deny. `approval-answer` is judged by the approval's own Bot or room, resolved by approval id — caller-supplied session fields grant nothing.
+- Shared resources that cannot yet be isolated per owner (secrets, connectors, folder picks, browser bridge, update-install, diagnostics, set-prefs, capability library writes, `add-agent` — the DSH Agent is one per deployment with no owner) are **explicitly blocked** with `bot/blocked-shared` while more than one member exists — not hidden only in the UI. `flybot/*` plugin endpoints follow the same split: plugin reads reach any signed-in actor, plugin writes are shared-blocked.
+- `create-bot` stamps `ownerId` from the actor; `view()` and `live()` narrow to the actor — per-session entries (`questions`, `exchangeTurns`) keep the actor's own, deployment-wide surfaces (agents, secrets, connectors, memory reviews) stay visible while a single member exists and hide with more than one, the same rule as the shared writes. `create-room` refuses a request with neither a member Bot nor any participant (a room with nothing in it would belong to nobody); view() also keeps the shared rooms the actor belongs to and the Bots in them (#50).
+- Watch item: `set-main` lets an owner promote their own Bot to a Main Bot. Main rights inside the Bot team are a shipped product concept, but how they compose with multi-human authority is exactly what #16 owns — revisit there before team mode turns on.
+- **Not done here:** cross-owner task execution and filesystem sandbox redesign (reach is #51, below). Team mode stays disabled; #16 stays open.
+
+## Room membership foundation (landed, #50)
+
+Typed participants on a native room, in `core/src/host/room-membership.js`, installed after groups:
+
+- A room may carry `participants`: `{ kind: 'human'|'bot', id, role: 'admin'|'member', displayName, joinedSeq, joinedAt, leftSeq?, leftAt?, invitedBy? }`. A **published remote Bot** is the same kind with `remote: true`, `handle`, `ownerHome`, `ownerName`, `isChief?`. `room.members` stays the current *local* bot ids so existing single-owner groups keep their shape. Rooms without `participants` stay legacy: the owner is implicit and `who: 'User'` is that owner.
+- Across owners, a *local* agent must be **published** (#51; the owner's choice, the designated Chief by default) or have joined this room by its room code (#83, this room only). An unpublished Bot cannot be added, and cannot be in a room that has another owner or a friend's Bot (enforced on the host, not only hidden in the UI; unpublishing takes it out at once). A friend's Bot listed by `@flybot/social` `social/remote-bots` (the `cleanRemote` records) may be added; unpublished specialists stay owner-private.
+- Every posted line carries `authorId` + `authorKind` + a display snapshot (`who`). The signed-in actor wins; `body.authorId` grants nothing. Peer names are sanitized (`cleanPeerName` / `cleanRemote`).
+- **History-visibility rule (membership window):** only a *current* participant — or the owner of an invited Bot — may read a room. They see lines with `seq >=` the `joinedSeq` of their open interval (for an invited owner, their Bot's interval). Leaving closes the interval and withdraws all history access. Rejoining opens a new interval at the then-current seq; prior intervals do not come back. Non-members cannot read or inject.
+- Endpoints: `room-history`, `room-post`; `create-room` / `update-room` accept `participants` / `addParticipants` / `removeParticipants`. `view()` presents each viewer under the table below. Inbound projections (`origin: 'inbound-share'`, `rt.recordInboundSharedRoom`) are the remote owner's copy of a friend's room that invited their published Bot.
+- Replies that leave through Bot Social still follow that plugin's outbound hold (`pending_approval` / Friends' Bots “N to approve”). The shared-room view surfaces those items; nothing is auto-sent.
+- **Not team mode:** no flag/config/env. Cross-owner *task* execution stays out of scope; who may reach whom is the published rule below (#51). The gates below remain unsatisfied.
+
+### Per-viewer display (native room)
+
+| Viewer | How the room appears | What they see | What they may do |
+| --- | --- | --- | --- |
+| Inviter (human participant who added the Bot) | Their own room, usual name | Humans, local Bots, remotes as `<Bot> · <owner>'s Bot` (Chief: `<owner>'s Chief`), owner badge, attributed lines from their join seq | Manage participants they are allowed to; post; history in their window |
+| Other human in the room | Same room | Same labels and badges; attributed lines from *their* join seq | Speak; leave; no extra private context |
+| Remote owner (owns an invited Bot, not a human member) / inbound share | Sidebar **Shared room from \<inviter\>** | Current participants with owner badges; who invited their Bot and when; lines from the Bot's `joinedSeq`; pending social approvals in this view | Remove their Bot (leave closes the interval); approve/reject held replies; cannot inject as themselves |
+| Remote Bot | Only the room lines fenced as untrusted data, from its join seq | No inviter private rooms, no unpublished specialists | Reply through Bot Social (held unless the owner auto-approves) |
 
 ## Identity model
 
@@ -73,15 +95,15 @@ Central authorization in `core/src/host/authz.js`, installed after member-auth:
 | Designated Chief → specialists | The Chief is the root of its owner's tree; specialists are its children (or descendants). Specialists inherit their scope only from their Chief's owner. |
 | Specialist → owner | A specialist belongs to exactly one owner's tree. There are no ownerless or shared specialists. |
 | Authority follows the human | Ownership is an assignment to a person, not to a Bot name. Renaming, replacing or disabling a Bot never transfers authority by itself. |
-| Chief ↔ Chief | The only legal cross-owner hop. Each Chief remains accountable to its own owner. |
+| Published ↔ published | The only legal cross-owner hop (#51): a Bot another owner (or a friend) can reach is one its owner **published**. The Chief is published by default, any other Bot only if its owner chooses, and nothing is routed through the Chief. Each Bot remains accountable to its own owner. |
 
-## Room visibility (planned)
+## Room visibility (membership window landed, #50; published remotes follow-up)
 
 | Room | Who may see it |
 | --- | --- |
 | Owner's private rooms (their 1:1 chats with their Chief and specialists) | That owner, their designated Chief, their specialists. Everyone else — including another owner's Chief — is outside the scope. |
 | Shared rooms (group chats both sides belong to) | Their members under the shipped group rules (member speaks, group admin manages). Team administration manages the shared room only; it never opens another owner's private rooms. |
-| Cross-owner exchange | Stays at Chief level (invariant 4): each Chief sees the exchange and reports to its **own** owner; nothing lands in a specialist of the other side, and no shared room is repurposed as a back door. |
+| Cross-owner exchange | Stays between published Bots (invariant 4): each side reports to its **own** owner; nothing lands in an unpublished Bot of the other side, and no shared room is repurposed as a back door. |
 
 Shipped room privacy (a group never reads a Bot's private chat) is unchanged; this table only adds the second human boundary on top of it.
 
@@ -89,8 +111,8 @@ Shipped room privacy (a group never reads a Bot's private chat) is unchanged; th
 
 1. **Owner scope is the unit of authority.** A human's rights stop at their own scope. Team administration over shared surfaces never grants another owner's private scope.
 2. **One designated Chief per owner.** Specialists carry Chief-derived rights only; a specialist's authority is never its own.
-3. **Specialists are owner-private.** No specialist may read or write another owner's rooms, Bots, memory, files or approvals — including "just to look" or "just to relay".
-4. **Chief-only cross-owner traffic.** Cross-owner requests terminate at a designated Chief on each side; a Chief never forwards them downward into another owner's specialist as if they were its own owner's request.
+3. **Unpublished Bots are owner-private.** No Bot may read or write another owner's rooms, Bots, memory, files or approvals — including "just to look" or "just to relay"; another owner's *unpublished* Bot cannot be messaged at all, and a published one is reached only as a Bot (its own answer), never as a window into its owner's scope.
+4. **Published-only cross-owner traffic.** Cross-owner requests (and friends' requests) go to a *published* Bot, which the owner chose to expose (the Chief by default). They are not forced through the Chief, and a Bot never forwards them into another owner's unpublished Bot as if they were its own owner's request. The check is the core's `reach()` owner policy: it runs before the `bot.send` chain, again when a held message is approved, and on every resumed, retried, deferred or re-sent delivery, and no plugin verdict or bypass can skip it.
 5. **No forwarding to owner approval.** No route may turn another human's request into owner approval by forwarding it. An approval is created only by the owner whose authority is spent, for the exact action; receipt, relay, or a Chief's word never becomes approval.
 6. **Approval authority stays with the human.** A Chief may ask its own owner, present options, and act on an approval it actually received from that owner. It cannot mint an approval, replay another owner's approval, or treat silence as consent.
 7. **Team mode is disabled** until every gate below passes.
@@ -105,9 +127,9 @@ Planned rules for team mode. Default is **deny**: a route is allowed only if a r
 
 | Actor | Own Chief | Own specialist (same tree) | Other owner's Chief | Other owner's specialist | Other owner's human | Shared team surfaces |
 | --- | --- | --- | --- | --- | --- | --- |
-| Human owner | Allowed — directs its Chief | Allowed — directs its specialists | Not directly; goes Chief → Chief | Forbidden | Forbidden | Allowed as team admin (shared only; never another owner's private scope) |
-| Designated Chief | — (it is the Chief) | Allowed — delegate, aggregate, report down | Allowed — Chief ↔ Chief only, both sides stay accountable to their own owners | Forbidden | Forbidden — may present to *its own* owner only | Allowed as team admin within shared surfaces only |
-| Specialist | Allowed — report upward | Allowed — parent ↔ direct child (existing tree rule) | Forbidden | Forbidden | Forbidden | Speak only where its Chief placed it; no admin rights, no cross-owner relay |
+| Human owner | Allowed — directs its Chief | Allowed — directs its specialists | Not directly; goes through their own published Bot | Forbidden — unless published, then via their own Bot | Forbidden | Allowed as team admin (shared only; never another owner's private scope) |
+| Designated Chief | — (it is the Chief) | Allowed — delegate, aggregate, report down | Allowed — both are published by default; both sides stay accountable to their own owners | Allowed only if that specialist is published; otherwise forbidden | Forbidden — may present to *its own* owner only | Allowed as team admin within shared surfaces only |
+| Specialist | Allowed — report upward | Allowed — parent ↔ direct child (existing tree rule) | Allowed only if the specialist itself is published | Allowed only if both are published | Forbidden | Speak only where its Chief placed it; no admin rights, no cross-owner relay |
 
 ### Worked examples
 
@@ -120,6 +142,7 @@ Planned rules for team mode. Default is **deny**: a route is allowed only if a r
 | e | Specialist B forwards "Owner B approved this" to Chief A, which then spends Owner A's authority | **Forbidden** — forwarding cannot escalate | Invariants 5–6; approval only comes from the owner whose authority is spent, for that exact action — a relayed request or forwarded approval is never approval. |
 | f | Owner A disables their Chief | Owner scope fails closed | See [Ownership changes](#ownership-changes-disabled--replaced-chiefs); no specialist auto-promotes. |
 | g | Owner A's seat is transferred to Owner C | Whole scope moves with the person | Identity model: *authority follows the human*, not the Bot name. |
+| h | Chief A (or a friend's Bot) messages Owner B's specialist B2 directly | **Allowed if B2 is published**, **forbidden if not** | #51; the owner's `published` choice, no redirect through Chief B. Unpublishing B2 later refuses messages still queued or held for it. |
 
 ### Approval authority
 
@@ -181,6 +204,8 @@ Planned rules (fail closed by default):
 
 **Member auth foundation (#48)** has tests in `core/test/member-auth.test.js`: two members get distinct identities via invite→redeem, forged strings never authenticate (only a live session token does), invitation replay and expiry fail, `removeMember` / `revokeSession` invalidate sessions, the last owner cannot be removed, and tokens are stored only as hashes. These cover the sign-in surface only — no owner scoping or cross-owner behavior.
 
-Owner-scoped access (#49) tests in `core/test/authz.test.js`.
+Owner-scoped access (#49) tests in `core/test/authz.test.js`: cross-owner denials, and the positive paths that keep an owner working — their own Bots' sessions (Bot id, current chat, group Session, schedule), plugin-endpoint reads, approval answering by id, and the `view()`/`live()` narrowing rules for one and for several members.
+
+**Room membership foundation (#50)** has tests in `core/test/room-membership.test.js`: Alice, Bob and both Chiefs keep distinct authorship; concurrent posts keep order and identity; unauthorized history reads fail; join/leave follows the membership-window rule; non-members cannot inject (forged `authorId` is ignored); existing single-owner groups still display and accept posts; a specialist cannot join a cross-owner room.
 
 The routing-matrix rows above remain untested because the behavior is not shipped. When enforcement work starts (#48+), each row becomes a test first, per [fail-without-change](../code-standards.md): same-owner delegation allowed (a), Chief-to-Chief allowed (b), cross-owner specialist denied (c), team-admin vs private-owner denied (d), forwarded approval rejected (e). Each must fail on the unbroken tip before implementation lands.

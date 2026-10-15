@@ -63,12 +63,22 @@ export function defaultShape(id) {
   return DEFAULT_SHAPES[((value ^ (value >>> 16)) >>> 0) % DEFAULT_SHAPES.length]
 }
 
-// A stored shape or color wins; then the id. With no Bot it is a black gumdrop.
-export const colorOf = bot => (isColor(bot?.color) ? bot.color : bot?.id ? defaultColor(String(bot.id)) : 'black')
+// A remote Bot's default look is seeded by its handle, not its session id: the handle is
+// the one identity both homes share, so one friend's Bot shows the same generated look on
+// every surface, survives a delete/re-add, and looks the same to the friend's home too (#84).
+export const remoteSeed = handle => `remote:${String(handle ?? '').trim().replace(/^@+/, '').toLowerCase()}`
+const lookSeed = bot => (typeof bot?.remote?.handle === 'string' && bot.remote.handle.trim() !== ''
+  ? remoteSeed(bot.remote.handle)
+  : bot?.id !== undefined ? String(bot.id) : undefined)
+
+// A stored shape or color wins; then the seed (a remote Bot's handle, else its id).
+// With no Bot it is a black gumdrop.
+export const colorOf = bot => (isColor(bot?.color) ? bot.color : lookSeed(bot) !== undefined ? defaultColor(lookSeed(bot)) : 'black')
 export function lookOf(bot) {
   const avatar = bot?.avatar ?? {}
+  const seed = lookSeed(bot)
   return {
-    shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? defaultShape(String(bot.id)) : FALLBACK_SHAPE,
+    shape: hasShape(avatar.shape) ? avatar.shape : seed !== undefined ? defaultShape(seed) : FALLBACK_SHAPE,
     image: avatar.image,
     color: colorOf(bot),
   }

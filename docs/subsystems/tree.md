@@ -32,6 +32,7 @@ Everything in `plugins/tree/` (entry `plugins/tree/index.js` and any helpers).
 
 1. Tree code stays inside `plugins/tree/`; no edits to `ds-bot/` or `core/src/`.
 2. Uses documented plugin APIs only (hooks/slots).
+3. Reach (#51): tree never routes an outside sender through the root. A remote sender (friend's Bot) reaching a tree Bot is denied if `flybot.bot.isPublished` says it is not published (new and adopted Bots start unpublished; the Chief is published by default) and is not the tree's call if it is, so a published Bot is reached directly, at any depth. Published Bots on both sides are not the tree's call across trees or to non-tree Bots (the core's owner policy decides); inside one tree the parent/child rule is unchanged, and `stopped` / `report` notices are unchanged. On a core without `isPublished` the remote-sender rule gives no opinion.
 
 ## Tests
 

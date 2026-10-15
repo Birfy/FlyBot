@@ -38,14 +38,27 @@ export function install(rt) {
     // `sessionId` is the Bot's current own-chat part; `parts` its earlier ones.
     // `waiting`: the Bot holds its greeting until the user picks its model.
     bots: Object.values(state.bots).map(({ segments, kickoff, ...bot }) => ({
-      ...bot, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
+      // `published`: whether other owners and friends can reach it (#51), the effective value.
+      ...bot, published: rt.isPublished?.(bot.id) === true, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
     })),
     // `parts`: the members' hidden group Sessions and their earlier segments, for usage.
     rooms: Object.values(state.rooms).map(({ log, seen, botRounds, lateRounds, sessions, segments, ...room }) => {
       const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId)]
       const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
-      return { ...room, parts, ...(last ? { preview: last.who === 'User' ? last.text : `${last.who}：${last.text}` } : {}) }
+      const previewWho = last && (last.authorKind === 'human' && last.who && last.who !== 'User' ? `${last.who}: ${last.text}` : last.who === 'User' ? last.text : `${last.who}：${last.text}`)
+      const presented = rt.presentRoom?.({ ...room, log }, actor) ?? room
+      const pending = rt.listRoomApprovals?.(presented, actor) ?? []
+      return {
+        ...presented,
+        log: undefined,
+        parts,
+        pendingApprovals: pending,
+        pendingCount: pending.length,
+        ...(last ? { preview: previewWho } : {}),
+      }
     }),
+    humans: rt.publicHumans?.() ?? [],
+    self: actor ? { memberId: actor.memberId, displayName: actor.displayName } : null,
     exchangeTurns: state.exchangeTurns,
     questions: state.questions,
     // FlyBot: friends' remote Bots, chat members with a remote badge (not team Bots).
@@ -70,17 +83,9 @@ export function install(rt) {
     // Set while another dsh host holds the team (store.js): why this one cannot change it.
     readOnly: rt.readOnly() ?? null,
     })
-    if (!(rt.authzEnforced() && actor)) return full
-    return {
-      ...full,
-      bots: full.bots.filter(b => b.ownerId === actor.memberId),
-      rooms: full.rooms.filter(r => rt.roomOwnedBy(actor, r.id)),
-      agents: [],
-      questions: {},
-      exchangeTurns: {},
-      secrets: [],
-      secretRequests: {},
-    }
+    // authz.js narrows to the actor; per-session entries keep the actor's own, and
+    // deployment-wide surfaces follow the same single-member rule as the writes.
+    return rt.ownedView(full, actor)
   }
   // What changes without a new revision, sent with every state answer. `memoryNews`:
   // per Bot, its latest memory change; `memoryReviews`: memory reviews waiting or
@@ -95,26 +100,12 @@ export function install(rt) {
       connectors: rt.connectorsView(),
       capabilityStatuses: rt.capabilityStatusesView(),
     }
-    if (!(rt.authzEnforced() && actor)) return full
-    const mine = id => state.bots[id]?.ownerId === actor.memberId
-    const pick = obj => Object.fromEntries(Object.entries(obj ?? {}).filter(([id]) => mine(id)))
-    return {
-      activity: pick(full.activity),
-      work: {
-        bots: pick(full.work.bots),
-        rooms: Object.fromEntries(Object.entries(full.work.rooms ?? {}).filter(([id]) => rt.roomOwnedBy(actor, id))),
-        approvals: full.work.approvals.filter(a => mine(a.botId)),
-      },
-      memoryNews: pick(full.memoryNews),
-      memoryReviews: 0,
-      connectors: [],
-      capabilityStatuses: pick(full.capabilityStatuses),
-    }
+    return rt.ownedLive(full, actor)
   }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
   // auth-whoami is a read of the already-resolved actor; invite/redeem/revoke/remove-member write.
-  const READS = new Set(['state', 'models', 'efforts', 'earlier', 'room-progress', 'exchange', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'auth-whoami'])
+  const READS = new Set(['state', 'models', 'efforts', 'earlier', 'room-progress', 'room-history', 'exchange', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'auth-whoami'])
 
   function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -198,9 +189,19 @@ export function install(rt) {
             replace: typeof body.replace === 'string' ? body.replace : undefined,
           })
           return ok(view())
+        case 'set-published':
+          // The owner's choice (#51): true, false, or null for the default (the Chief only).
+          await rt.load()
+          await rt.setPublished(String(body.id ?? body.botId ?? ''), body.published === undefined ? true : body.published)
+          return ok(view(actor))
         case 'create-room': {
           await rt.load()
-          const room = await rt.createRoom({ members: Array.isArray(body.members) ? body.members : [], name: body.name, ...(typeof body.admin === 'string' ? { admin: body.admin } : {}) })
+          const room = await rt.createRoom({
+            members: Array.isArray(body.members) ? body.members : [],
+            name: body.name,
+            ...(typeof body.admin === 'string' ? { admin: body.admin } : {}),
+            ...(Array.isArray(body.participants) ? { participants: body.participants, actor } : {}),
+          })
           if (body.greet === true) await rt.greetRoom(room.id).catch(error => rt.warn('ds-bot: greeting in %s failed: %s', room.name, error))
           return ok(room)
         }
@@ -215,8 +216,24 @@ export function install(rt) {
             add: Array.isArray(body.add) ? body.add : undefined,
             remove: Array.isArray(body.remove) ? body.remove : undefined,
             workDir: body.workDir,
-          })
-          return ok({ room: view().rooms.find(entry => entry.id === room.id), changes })
+            addParticipants: Array.isArray(body.addParticipants) ? body.addParticipants : undefined,
+            removeParticipants: Array.isArray(body.removeParticipants) ? body.removeParticipants : undefined,
+          }, undefined, actor)
+          return ok({ room: view(actor).rooms.find(entry => entry.id === room.id), changes })
+        }
+        case 'room-history': {
+          await rt.load()
+          return ok(rt.roomHistory(String(body.roomId ?? body.id ?? ''), actor))
+        }
+        case 'room-post': {
+          await rt.load()
+          const line = await rt.postRoomMessage(String(body.roomId ?? body.id ?? ''), {
+            text: body.text,
+            authorId: body.authorId,
+            authorKind: body.authorKind,
+            displayName: body.displayName,
+          }, actor)
+          return ok(line)
         }
         case 'folders':
         case 'folder-pick':
@@ -321,6 +338,18 @@ export function install(rt) {
           // A Bot id or an earlier part of its own chat means the current part.
           const past = rt.pastOwners.get(body.sessionId)
           const sessionId = rt.botOf(body.sessionId) ? rt.chatOf(body.sessionId) : past && past.roomId === undefined ? rt.chatOf(past.botId) : body.sessionId
+          const room = rt.roomOf(sessionId)
+          if (room && actor) {
+            if (rt.authzEnforced() && !rt.roomMemberOf(actor, room.id)) return fail('You are not a member of that room', 'bot/forbidden')
+            await rt.postRoomMessage(room.id, { text, displayName: actor.displayName }, actor)
+            const agent = await rt.resolveAgent(sessionId)
+            agent.followup(createUserMessage({
+              content: [{ type: 'text', text }],
+              source: { kind: 'user', authorId: actor.memberId, authorKind: 'human', authorName: actor.displayName },
+            }))
+            await ctx.sessions.flush(agent.session)
+            return ok(true)
+          }
           await rt.ensureCapabilities(sessionId)
           await ctx.sessionController.prompt({
             requestId: randomUUID(),

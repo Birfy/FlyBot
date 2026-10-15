@@ -5,6 +5,7 @@
 // - on('change'|'bot.created'|'bot.removed', fn, { all? }); 'change' is own-plugin unless all.
 // - bot.create(spec) is async and resolves to the new id; systemPrompt is on the Bot record.
 // - bot.isRemote(ref): { kind: 'remote' } or '@handle'; local ids never.
+// - bot.isPublished(id) (#51): the Bot's explicit `published`, else true only for a Main Bot (the Chief).
 // - send targets: { remote: false, id } | { remote: true, handle, home }.
 // - tools.register drops JSON Schema keywords other than type/description/enum/items.
 const clone = v => (v === undefined ? undefined : structuredClone(v))
@@ -20,12 +21,13 @@ export function toParameterMap(p) {
 
 export function createMockFlybot() {
   const bots = new Map() // id -> { id, name, systemPrompt, fields: { [plugin]: {...} } }
-  const listeners = { 'change': new Set(), 'bot.created': new Set(), 'bot.removed': new Set() }
+  const listeners = { 'change': new Set(), 'bot.created': new Set(), 'bot.removed': new Set(), 'bot.published': new Set() }
   const middlewares = []
   const tools = new Map()
   const scopes = []
   let seq = 0
-  const view = b => b && { id: b.id, name: b.name, isMain: b.isMain === true, createdAt: b.createdAt, createdBy: null, systemPrompt: b.systemPrompt ?? '', fields: clone(b.fields) }
+  const published = b => (typeof b?.published === 'boolean' ? b.published : b?.isMain === true)
+  const view = b => b && { id: b.id, name: b.name, isMain: b.isMain === true, published: published(b), createdAt: b.createdAt, createdBy: null, systemPrompt: b.systemPrompt ?? '', fields: clone(b.fields) }
   const fire = (ev, payload) => { for (const fn of [...listeners[ev]]) fn({ ...payload }) }
   const onFor = plugin => (ev, fn, { all = false } = {}) => {
     if (!listeners[ev]) throw new Error(`flybot: unknown event ${ev}`)
@@ -80,6 +82,7 @@ export function createMockFlybot() {
         list: () => [...bots.values()].map(view),
         find: name => view([...bots.values()].find(b => b.name === name)),
         isRemote: ref => isRemote(ref) || remote.has(ref),
+        isPublished: id => published(bots.get(id)),
         create: async ({ name, systemPrompt, fields: f } = {}) => {
           await Promise.resolve() // really async, like the host
           const id = `bot${++seq}`
@@ -102,12 +105,13 @@ export function createMockFlybot() {
   const flybot = build('shared')
   // Test helpers (not part of the real API).
   // Like ds-bot's setup: the first Bot, 'Chief', is a Main Bot (state.mainBotIds). Fires bot.created.
-  const addBot = ({ name, isMain = false, systemPrompt = '', fields: f = {} } = {}) => {
+  const addBot = ({ name, isMain = false, published: pub, systemPrompt = '', fields: f = {} } = {}) => {
     const id = `bot${++seq}`
-    bots.set(id, { id, name, isMain, createdAt: seq, systemPrompt, fields: clone(f) })
+    bots.set(id, { id, name, isMain, ...(typeof pub === 'boolean' ? { published: pub } : {}), createdAt: seq, systemPrompt, fields: clone(f) })
     fire('bot.created', view(bots.get(id)))
     return id
   }
+  const setPublished = (id, value) => { const b = bots.get(id); const before = published(b); if (value === null) delete b.published; else b.published = value; if (before !== published(b)) fire('bot.published', view(b)) }
   const removeBot = id => { const last = view(bots.get(id)); bots.delete(id); fire('bot.removed', { ...last, botId: id, bot: last }) }
   const call = async (botId, name, args = {}) => {
     const t = tools.get(name)
@@ -116,5 +120,5 @@ export function createMockFlybot() {
     if (!t || !visible) throw new Error(`tool ${name} not visible to ${botId}`)
     return t.execute(args, { botId })
   }
-  return { flybot, bots, tools, middlewares, scopes, remote, removeBot, addBot, call }
+  return { flybot, bots, tools, middlewares, scopes, remote, removeBot, addBot, setPublished, call }
 }
