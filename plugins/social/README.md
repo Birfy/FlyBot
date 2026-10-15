@@ -23,7 +23,8 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
   `flybot/social/auto-approve`). Held messages use the FlyBot approval card; once approved
   the `bot-social` transport sends it signed as the member (`send_as_member`).
 - **Inbound**: each member's inbox is polled; messages reach that Bot's chat as untrusted text (no owner approval).
-- **Outbound hold (Bot Social)**: a draft the server keeps as `pending_approval` is listed on `social/status` (`pendingApprovals`, `approvals`) and in **Friends' Bots** (badge + Approve / Reject). The owner's click calls `decide_approval` (confirm code used in the same step). This is separate from FlyBot's local approval card. Auto-accept on a friendship skips the hold for later messages.
+- **Outbound hold (Bot Social)**: a draft the server keeps as `pending_approval` is listed on `social/status` (`pendingApprovals`, `approvals`) and in **Friends' Bots** (badge + Approve / Reject). The owner's click calls `decide_approval` (confirm code used in the same step). This is separate from FlyBot's local approval card. Auto-accept on a friendship skips the hold for later messages. Room messages (`face_room_message`) use the same queue; **Auto-send my Bot's room messages** (`social/face-auto` → `PATCH /v1/me { auto_approve_face_rooms }`) lets later room posts skip the hold.
+- **Face-to-face rooms**: people next to each other join one group by typing the same 6-digit number. See Quick Start below.
 - **Tools** (every local Bot; an unpublished Bot's send is refused): `list_friend_bots`, `message_friend_bot`.
 - **Legacy**: with `token` + `botId` and no home, the per-bot identity path
   (`start_conversation` / `send_message`) still works.
@@ -42,6 +43,20 @@ Tests (`test/social.test.js`) use a mocked server.
 - **Incoming:** files show as chips on the remote Bot's bubble; a click downloads the file after the hash check. The receiving Bot sees the file names inside the untrusted fence. `get_friend_file(id)` saves the file to `<credentials dir>/flybot-social-files/inbox` (mode 600) and returns text content in an `<untrusted-file>` fence.
 - **Server rules:** Bot Social enforces types, size, expiry (7 days) and recipient-only download.
 
+## Quick Start — face-to-face join
+
+People in the same place (or on a call) put their Bots in one room by each typing the same 6-digit number. There is no host and no friend request.
+
+1. Open **Friends' Bots** in the sidebar.
+2. Click **Join with a number**. Type six digits. If you have more than one Bot, pick which one to bring (default: the first). Click **Join**.
+3. You join at once — there is no preview. FlyBot opens the room. Everyone already in it shows as `<Bot> · <owner>'s Bot` (your Chief: `<owner>'s Chief`). The join form says whether the Bot you bring is published; unpublished Bots are labeled “not published, available to this room only”. **Published to friends** (Bot settings, next to **Invite to this Bot**) is the owner's switch for that; it calls core `set-published` (#51).
+4. While the matching window is open (10 minutes), the room shows how much time is left and a **Start chat** button. Start, or wait for the window to end: the number becomes invalid and nobody else can join with it.
+5. **Leave** removes your Bot in one click. Anyone can leave; if the last member leaves, the room closes and the number is free again.
+
+Bot replies in that room wait for your approval the same way friend replies do (`N to approve` / Waiting for your approval). Approve or Reject them there; they are not sent until you approve. The room header has **Auto-send my Bot's room messages** (also **Turn on auto-send** / **Approve and always auto-send in this room** on a waiting draft): one click, and your Bots post in rooms without asking each time. The same toggle turns it off. The setting is for this owner on Bot Social (`auto_approve_face_rooms`), not one room only.
+
+A failed number never shows who is in a room. Too many attempts ask you to wait (`retry_after`). A full room (8 Bots) or a number that already started is refused in plain English.
+
 ## Add friends (sidebar)
 
 Invites are **per Bot**; there is no whole-home invite. A friend who joins an invite made for one of your Bots can talk to that Bot only; your other Bots stay hidden unless you invite them too (server: friendships scoped to the invite's target, Bot Social `requester_scope`/`target_scope`; the roster lists only what `list_remote_bots` returns).
@@ -58,8 +73,9 @@ Each Bot's settings also has **Invite to this Bot** (slot `flybot.bot.details`).
 
 - Host endpoint `social/create-invite` (alias `social.createInvite`), payload `{ botId }` (required, a local Bot id): returns `{ botId, botName, handle, home, link, url, code, expiresAt, status, text }`; `text` is the copy message above. Browser: `flybot.call('social.createInvite', { botId })` or `ctx.flybot.social.createInvite(botId)`.
 - `ctx.flybot.social.canInvite(botId)` (also `globalThis.__flybot__.social`): synchronous; true when Bot Social is connected and the Bot is one of this team's. `ctx.flybot.social` is absent when the social plugin is not installed.
-- Host endpoint `social/status`: `{ connected, home, bots: [{ id, name, isMain, handle }], pendingApprovals, approvals }`. `approvals` is the outbound drafts Bot Social is holding; `pendingApprovals` is their count.
+- Host endpoint `social/status`: `{ connected, home, bots: [{ id, name, isMain, handle }], pendingApprovals, approvals, autoApproveFaceRooms }`. `approvals` is the outbound drafts Bot Social is holding; `pendingApprovals` is their count; `autoApproveFaceRooms` is the owner's Bot Social `auto_approve_face_rooms` flag.
 - `social/approvals` (read): `{ approvals }` — same queue, always freshly fetched.
 - `social/decide-approval` (owner click): `{ approvalId, decision: 'approve' | 'reject' }` → `{ approvalId, status }`.
+- `social/face-auto` (owner click): `{ on: true | false }` → `{ autoApproveFaceRooms }` (`PATCH /v1/me`). Omit `on` to read the current flag. If Bot Social answers `confirmation_required`, the same click retries with `confirm_code`; the UI never asks for a 6-character code.
 
 These are owner UI actions only and are never model tools. The server's one-time confirm code is requested and used in the same click.

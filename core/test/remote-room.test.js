@@ -10,6 +10,7 @@ import { install as installMemberAuth } from '../src/host/member-auth.js'
 import { install as installAuthz } from '../src/host/authz.js'
 import {
   install as installRooms,
+  isFaceRoom,
   linesVisibleTo,
   ownsInvitedBot,
   presentRoom,
@@ -232,6 +233,39 @@ test('inbound shared room is the remote-owner projection', async (t) => {
   const visible = linesVisibleTo(rt.state.rooms['from-alice'], actorB, rt.state)
   assert.deepEqual(visible.map(line => line.text), ['welcome', 'hello'])
   assert.equal(rt.roomHistory('from-alice', actorB).some(line => line.text === 'secret'), false)
+})
+
+test('face-to-face room hosts unpublished remotes and skips friend fanout', async (t) => {
+  const { rt, sent } = host(t, TEAM)
+  await rt.load()
+  const room = await rt.upsertFaceRoom({
+    roomId: 'frm_1',
+    localId: 'face-1',
+    status: 'candidate',
+    expiresAt: '2026-10-15T10:10:00.000Z',
+    members: [
+      { handle: '@writer.alice.home', displayName: 'Writer', ownerName: 'Alice', published: false },
+      { handle: '@coder.bob.home', displayName: 'Coder', ownerName: 'Bob', published: false },
+    ],
+    localBots: [{ id: 'spec-a', handle: '@writer.alice.home', name: 'Writer A' }],
+  })
+  assert.equal(isFaceRoom(room), true)
+  assert.equal(room.origin, 'face-to-face')
+  const live = room.participants.filter(p => p.leftSeq === undefined)
+  assert.equal(live.some(p => p.id === 'spec-a' && !p.remote), true)
+  const remote = live.find(p => p.handle === '@coder.bob.home')
+  assert.equal(remote.remote, true)
+  assert.equal(remote.published, false)
+  const shown = presentRoom(room, { memberId: 'owner-1' }, rt.state)
+  assert.equal(shown.viewerRole, 'member')
+  assert.doesNotMatch(shown.displayName || '', /Shared room/)
+  assert.ok(shown.presentedParticipants.some(p => /Coder/.test(p.label) && /Bob/.test(p.label)))
+  assert.ok(shown.presentedParticipants.some(p => /Writer A/.test(p.label) && /Alice/.test(p.label)))
+  await rt.postRoomMessage('face-1', { text: 'hello', authorId: 'spec-a', authorKind: 'bot' })
+  assert.equal(sent.length, 0)
+  const line = rt.applyFaceRoomLine(room, { kind: 'joined', who: 'Room', text: "Bob's Coder joined; not published, available to this room only", eventId: 'fev_1', eventCursor: 1 })
+  assert.equal(line.kind, 'joined')
+  assert.equal(rt.applyFaceRoomLine(room, { eventId: 'fev_1', text: 'dup' }), undefined)
 })
 
 test('fanout to remotes fences peer text and never names unpublished specialists', async (t) => {

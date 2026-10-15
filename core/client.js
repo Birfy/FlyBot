@@ -536,6 +536,9 @@ var ZH = {
   "{first} and {second} are waiting for your approval": "{first}、{second} 等你批准",
   "{first}, {second} and {count} more are waiting for your approval": "{first}、{second} 等 {total} 个等你批准",
   "Waiting for your approval": "等你批准",
+  "Your Bots post in rooms without asking each time. Use Auto-send in the room header to turn it off.": "你的 Bot 会在房间里直接发送，不再每次询问。要关掉，用房间标题里的自动发送。",
+  "Turn on auto-send": "打开自动发送",
+  "Approve and always auto-send in this room": "批准并在此房间始终自动发送",
   "in its own chat": "在自己的对话里",
   Reject: "拒绝",
   "Allow once": "允许一次",
@@ -1144,7 +1147,7 @@ var call = async (endpoint, payload, signal) => {
 };
 
 // src/client/flybot-registry.js
-var SLOTS = ["flybot.sidebar.section", "flybot.sidebar.structure", "flybot.composer.mention", "flybot.bot.details", "flybot.approvals"];
+var SLOTS = ["flybot.sidebar.section", "flybot.sidebar.structure", "flybot.composer.mention", "flybot.bot.details", "flybot.approvals", "flybot.room.overview"];
 function createRegistry() {
   const entries2 = new Map(SLOTS.map((name) => [name, []]));
   const listeners2 = /* @__PURE__ */ new Set();
@@ -1355,6 +1358,15 @@ function FlyBotSections({ roster, actions, renderBot }) {
     "div",
     { key: entry.id, className: "bt-flybot-section", "data-flybot": entry.id },
     (0, import_react.createElement)(Safe, { entry, props: { roster, actions, call: call2, renderBot, remoteChats } })
+  )));
+}
+function FlyBotRoomOverview({ room: room2, roster, actions }) {
+  const entries2 = useSlot("flybot.room.overview");
+  if (entries2.length === 0) return null;
+  return (0, import_react.createElement)(import_react.Fragment, null, entries2.map((entry) => (0, import_react.createElement)(
+    "div",
+    { key: entry.id, className: "bt-flybot-room-overview", "data-flybot": entry.id },
+    (0, import_react.createElement)(Safe, { entry, props: { room: room2, roster, actions, call: call2 } })
   )));
 }
 function FlyBotDetails({ bot, roster }) {
@@ -4628,6 +4640,7 @@ function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnClock, us
       if (source.role === "secret" || deferred) return null;
       if (source.role === "post") {
         if (source.failed !== void 0 || source.resumed === true || source.stopped === true) return null;
+        if (source.notice === true || source.senderSessionId === "face-notice") return null;
         const room2 = roster.roomsById[sessionId];
         const poster = roster.byId[source.senderSessionId] ?? { id: source.senderSessionId, name: source.senderName ?? t("a Bot"), color: "gray" };
         return (0, import_react7.createElement)(GroupMessage, { bot: poster, text: stripHeader(contentText(data.content)), room: room2, roster, actions, msgKey: `${sessionId}:${data.turn}:post`, useUi });
@@ -4906,6 +4919,22 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
       }
       if (reply.kind === "stopped") {
         return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("You stopped {name}'s work", { name: bot.name }));
+      }
+      if (reply.kind === "notice" || reply.kind === "joined" || reply.kind === "left" || reply.kind === "started") {
+        return (0, import_react7.createElement)("div", { key: `notice-${index}`, className: "bt-event", "data-flybot": "face-notice" }, reply.text);
+      }
+      const remote = reply.remote || reply.handle && !roster.byId[reply.botId];
+      if (remote) {
+        return (0, import_react7.createElement)(RemoteMessage, {
+          key: `${reply.botId || reply.handle}-${index}`,
+          source: { remote: { handle: reply.handle || reply.botId }, senderName: reply.name || reply.who, senderSessionId: reply.botId },
+          text: reply.text,
+          roster,
+          actions,
+          sessionId,
+          msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0,
+          useUi
+        });
       }
       return (0, import_react7.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi });
     }),
@@ -9502,8 +9531,9 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
     const timer = setTimeout(() => setConfirming(false), 4e3);
     return () => clearTimeout(timer);
   }, [confirming]);
-  const humans = (room2.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0);
-  const remotes = (room2.participants ?? []).filter((p) => p.remote && p.leftSeq === void 0);
+  const live = room2.presentedParticipants ?? room2.participants ?? [];
+  const humans = live.filter((p) => p.kind === "human" && p.leftSeq === void 0);
+  const remotes = live.filter((p) => p.remote && p.leftSeq === void 0);
   const members = room2.members.map((id) => roster.byId[id]).filter(Boolean);
   const shared2 = humans.length > 1;
   const chiefs = new Set((roster.humans ?? []).map((person) => person.designatedChiefId).filter(Boolean));
@@ -9627,12 +9657,12 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
         (0, import_react24.createElement)(
           "span",
           { className: "bt-gs-who" },
-          (0, import_react24.createElement)("span", { className: "bt-row-title" }, remoteBotTitle(person)),
-          (0, import_react24.createElement)("span", { className: "bt-tag" }, t("Friend's Bot"))
+          (0, import_react24.createElement)("span", { className: "bt-row-title" }, person.label || remoteBotTitle(person)),
+          room2.origin === "face-to-face" ? null : (0, import_react24.createElement)("span", { className: "bt-tag" }, t("Friend's Bot"))
         ),
-        members.length + remotes.length > 2 ? (0, import_react24.createElement)("button", { type: "button", className: "bt-x", "aria-label": t("Remove {name} from the group", { name: remoteBotTitle(person) }), title: t("Remove from group"), onClick: () => update({ removeParticipants: [{ kind: "bot", id: person.handle || person.id, remote: true }] }) }, "×") : null
+        room2.origin === "face-to-face" || members.length + remotes.length <= 2 ? null : (0, import_react24.createElement)("button", { type: "button", className: "bt-x", "aria-label": t("Remove {name} from the group", { name: remoteBotTitle(person) }), title: t("Remove from group"), onClick: () => update({ removeParticipants: [{ kind: "bot", id: person.handle || person.id, remote: true }] }) }, "×")
       )),
-      adding ? [
+      room2.origin === "face-to-face" ? null : adding ? [
         ...outsidePeople.map((person) => (0, import_react24.createElement)(
           "button",
           { key: person.id, type: "button", className: "bt-set-row bt-bs-row bt-gs-pick", onClick: () => {
@@ -12017,23 +12047,26 @@ function About({ text, title = "About" }) {
 function SharedRoomApprovals({ room: room2 }) {
   const [items, setItems] = (0, import_react32.useState)(room2.pendingApprovals ?? []);
   const [busy, setBusy] = (0, import_react32.useState)("");
+  const [autoSend, setAutoSend] = (0, import_react32.useState)(false);
+  const face = room2.origin === "face-to-face";
   (0, import_react32.useEffect)(() => {
-    if (room2.viewerRole !== "invited-owner") return void 0;
-    if (Array.isArray(room2.pendingApprovals) && room2.pendingApprovals.length) {
-      setItems(room2.pendingApprovals);
-      return void 0;
-    }
+    const haveItems = Array.isArray(room2.pendingApprovals) && room2.pendingApprovals.length;
+    if (haveItems) setItems(room2.pendingApprovals);
+    if (room2.viewerRole !== "invited-owner" && !face) return void 0;
     let alive = true;
     call("social/status", {}).then((value) => {
       if (!alive) return;
-      setItems(Array.isArray(value?.approvals) ? value.approvals : []);
+      if (room2.viewerRole === "invited-owner" && !haveItems) {
+        setItems(Array.isArray(value?.approvals) ? value.approvals : []);
+      }
+      if (typeof value?.autoApproveFaceRooms === "boolean") setAutoSend(value.autoApproveFaceRooms);
     }, () => {
     });
     return () => {
       alive = false;
     };
-  }, [room2.id, room2.viewerRole, room2.pendingCount]);
-  if (room2.viewerRole !== "invited-owner" || !items.length) return null;
+  }, [room2.id, room2.viewerRole, room2.pendingCount, face]);
+  if (room2.viewerRole !== "invited-owner" && !face || !items.length) return null;
   const decide = async (item, decision) => {
     setBusy(item.id);
     try {
@@ -12043,22 +12076,46 @@ function SharedRoomApprovals({ room: room2 }) {
       setBusy("");
     }
   };
+  const setAuto = async (on) => {
+    setBusy("auto");
+    try {
+      const result = await call("social/face-auto", { on });
+      setAutoSend(result?.autoApproveFaceRooms === true);
+    } finally {
+      setBusy("");
+    }
+  };
+  const approveAndAuto = async (item) => {
+    setBusy(item.id);
+    try {
+      const result = await call("social/face-auto", { on: true });
+      setAutoSend(result?.autoApproveFaceRooms === true);
+      await call("social/decide-approval", { approvalId: item.id, decision: "approve" });
+      setItems((list) => list.filter((entry) => entry.id !== item.id));
+    } finally {
+      setBusy("");
+    }
+  };
   return (0, import_react32.createElement)(
     "div",
     { key: "approvals", className: "bt-shared-wait", "data-flybot": "room-pending-approvals" },
     (0, import_react32.createElement)("div", { className: "bt-section-title" }, t("Waiting for your approval"), (0, import_react32.createElement)("span", { className: "bt-chip" }, t("{count} to approve", { count: items.length }))),
+    face && autoSend ? (0, import_react32.createElement)("div", { className: "bt-set-hint" }, t("Your Bots post in rooms without asking each time. Use Auto-send in the room header to turn it off.")) : null,
+    face && !autoSend ? (0, import_react32.createElement)("button", { type: "button", className: "bt-more", "data-flybot": "face-auto-send-on", disabled: !!busy, onClick: () => setAuto(true) }, t("Turn on auto-send")) : null,
     items.map((item) => (0, import_react32.createElement)(
       "div",
       { key: item.id, className: "bt-set-row" },
       (0, import_react32.createElement)("span", { className: "bt-set-copy" }, item.text || item.summary || item.to || t("Outbound reply")),
-      (0, import_react32.createElement)("button", { type: "button", className: "bt-mini", disabled: busy === item.id, onClick: () => decide(item, "approve") }, t("Approve")),
-      (0, import_react32.createElement)("button", { type: "button", className: "bt-mini", disabled: busy === item.id, onClick: () => decide(item, "reject") }, t("Reject"))
+      (0, import_react32.createElement)("button", { type: "button", className: "bt-mini", disabled: busy === item.id || busy === "auto", onClick: () => decide(item, "approve") }, t("Approve")),
+      (0, import_react32.createElement)("button", { type: "button", className: "bt-mini", disabled: busy === item.id || busy === "auto", onClick: () => decide(item, "reject") }, t("Reject")),
+      face && !autoSend ? (0, import_react32.createElement)("button", { type: "button", className: "bt-mini", "data-flybot": "face-approve-auto", disabled: busy === item.id || busy === "auto", onClick: () => approveAndAuto(item) }, t("Approve and always auto-send in this room")) : null
     ))
   );
 }
 function GroupOverview({ room: room2, roster, actions, usage, useWork, openSettings }) {
-  const humans = (room2.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0);
-  const remotes = (room2.participants ?? []).filter((p) => p.remote && p.leftSeq === void 0);
+  const live = room2.presentedParticipants ?? room2.participants ?? [];
+  const humans = live.filter((p) => p.kind === "human" && p.leftSeq === void 0);
+  const remotes = live.filter((p) => p.remote && p.leftSeq === void 0);
   const members = room2.members.map((id) => roster.byId[id]).filter(Boolean);
   const { entries: entries2, now } = useMemberWork(room2, useWork);
   const invited = room2.viewerRole === "invited-owner";
@@ -12067,15 +12124,17 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
     const mine = remotes.find((p) => p.ownerId === roster.self?.memberId) || members.find((member) => member.ownerId === roster.self?.memberId);
     if (mine) void actions.updateRoom(room2.id, { removeParticipants: [{ kind: "bot", id: mine.handle || mine.id, remote: Boolean(mine.handle) }] });
   };
+  const face = room2.origin === "face-to-face";
   return [
-    invited && room2.sharedFrom ? (0, import_react32.createElement)(
+    (0, import_react32.createElement)(FlyBotRoomOverview, { key: "plugin-overview", room: room2, roster, actions }),
+    invited && room2.sharedFrom && !face ? (0, import_react32.createElement)(
       "div",
       { key: "from", className: "bt-shared-from" },
       (0, import_react32.createElement)("div", { className: "bt-section-title" }, title),
       (0, import_react32.createElement)("div", { className: "bt-set-hint" }, t("Your Bot was invited to this room by {name}", { name: room2.sharedFrom.inviterName })),
       room2.sharedFrom.invitedAt ? (0, import_react32.createElement)("div", { className: "bt-set-hint" }, t("Invited {when}", { when: new Date(room2.sharedFrom.invitedAt).toLocaleString() })) : null,
       (0, import_react32.createElement)("button", { type: "button", className: "bt-more", onClick: leaveMine }, t("Remove my Bot"))
-    ) : room2.notice ? (0, import_react32.createElement)(About, { key: "notice", title: "Notice", text: room2.notice }) : (0, import_react32.createElement)("button", { key: "notice", type: "button", className: "bt-more", onClick: openSettings }, t("Add a notice in group settings")),
+    ) : face ? null : room2.notice ? (0, import_react32.createElement)(About, { key: "notice", title: "Notice", text: room2.notice }) : (0, import_react32.createElement)("button", { key: "notice", type: "button", className: "bt-more", onClick: openSettings }, t("Add a notice in group settings")),
     (0, import_react32.createElement)(SharedRoomApprovals, { key: "approvals", room: room2 }),
     (0, import_react32.createElement)(
       "div",
@@ -12099,8 +12158,8 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
           (0, import_react32.createElement)(
             "div",
             { className: "bt-member" },
-            (0, import_react32.createElement)("span", { className: "bt-member-name" }, (0, import_react32.createElement)("span", null, remoteBotTitle(person))),
-            (0, import_react32.createElement)("span", { className: "bt-chip" }, t("Friend's Bot"))
+            (0, import_react32.createElement)("span", { className: "bt-member-name" }, (0, import_react32.createElement)("span", null, person.label || remoteBotTitle(person))),
+            face ? null : (0, import_react32.createElement)("span", { className: "bt-chip" }, t("Friend's Bot"))
           )
         )),
         ...members.map((member) => {

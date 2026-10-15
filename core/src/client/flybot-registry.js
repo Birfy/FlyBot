@@ -1,6 +1,6 @@
 // The FlyBot slot registry, free of React so the "@" menu and tests can use it.
 // See flybot-slots.js for what each slot carries.
-export const SLOTS = ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals']
+export const SLOTS = ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals', 'flybot.room.overview']
 
 export function createRegistry() {
   const entries = new Map(SLOTS.map(name => [name, []]))

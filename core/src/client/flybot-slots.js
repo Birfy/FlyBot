@@ -11,6 +11,7 @@
 //   flybot.composer.mention { id, order, candidates(query, { sessionId, roster, call }) → rows }   rows in the "@" menu
 //   flybot.bot.details      { id, order, component({ bot, roster, call }) }        in a Bot's settings
 //   flybot.approvals        { id, order, component({ approval, decide, call }) }   custom card for a held send
+//   flybot.room.overview    { id, order, component({ room, roster, actions, call }) }  top of a group's overview
 //
 // Types: ds-bot/types/flybot.d.ts (FlyBotClientRegistry).
 import { Component, createElement as h, Fragment, useEffect, useState } from 'react'
@@ -73,6 +74,13 @@ export function FlyBotSections({ roster, actions, renderBot }) {
   const remoteChats = (roster.bots ?? []).filter(bot => bot.remote)
   return h(Fragment, null, entries.map(entry => h('div', { key: entry.id, className: 'bt-flybot-section', 'data-flybot': entry.id },
     h(Safe, { entry, props: { roster, actions, call, renderBot, remoteChats } }))))
+}
+
+export function FlyBotRoomOverview({ room, roster, actions }) {
+  const entries = useSlot('flybot.room.overview')
+  if (entries.length === 0) return null
+  return h(Fragment, null, entries.map(entry => h('div', { key: entry.id, className: 'bt-flybot-room-overview', 'data-flybot': entry.id },
+    h(Safe, { entry, props: { room, roster, actions, call } }))))
 }
 
 export function FlyBotDetails({ bot, roster }) {

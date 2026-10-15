@@ -61,6 +61,9 @@ const lineText = (line) => {
   if (line.kind === 'resumed') return `[${line.who}'s work here was cut off when DeepSeek Harness restarted; it is picking it back up and posts when done]`
   if (line.kind === 'cut') return `[${line.who}'s work here was cut off by a restart again, so it stopped; ask it to go on if it still matters]`
   if (line.kind === 'stopped') return `[The user stopped ${line.who}'s work here]`
+  if (line.kind === 'joined' || line.kind === 'left' || line.kind === 'started' || line.kind === 'invited' || line.kind === 'notice') {
+    return line.text ? `[${line.text}]` : `[${line.who} ${line.kind}]`
+  }
   return `${line.who}: ${line.text}`
 }
 const transcript = lines => lines.map(lineText).join('\n')
@@ -404,7 +407,7 @@ export function install(rt) {
       // The opening greeting is a cue for the admin, not a line of the group; a member's
       // late failure, its work picked up after a restart, or its work the user stopped is
       // an event of the round.
-      const event = item => item.failed || item.resumed || item.stopped
+      const event = item => item.failed || item.resumed || item.stopped || item.notice || item.botId === 'face-notice'
       for (const post of posts.filter(item => !item.kickoff && !event(item))) {
         // Image readings go into the log only; `@` names are picked from what the user typed.
         const text = post.images === undefined ? post.text : [post.text, ...await rt.imagesForGroup(post.images, room.id)].filter(Boolean).join('\n')
@@ -456,6 +459,11 @@ export function install(rt) {
         const kind = post.stopped ? 'stopped' : post.again ? 'cut' : 'resumed'
         appendRoom(room, { who: name, botId: post.botId, kind, text: '' })
         round.replies.push({ kind, botId: post.botId, name, color: bot?.color, time: Date.now() })
+      }
+      for (const post of posts.filter(item => item.notice || item.botId === 'face-notice')) {
+        const text = String(post.text ?? '')
+        if (!text) continue
+        round.replies.push({ kind: 'notice', text, time: Date.now() })
       }
       if (posts.some(post => post.resumed || post.stopped)) await rt.save()
       rt.roomProgress.set(exec.callId, round)

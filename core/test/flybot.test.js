@@ -79,6 +79,8 @@ test('apply provides the flybot service with the agreed surface', async (t) => {
   assert.equal(typeof fb.on, 'function')
   assert.equal(typeof fb.warn, 'function')
   assert.equal(fb.fields, fb.bot.fields)
+  assert.equal(typeof fb.rooms.upsertFace, 'function')
+  assert.equal(typeof fb.rooms.onFaceLine, 'function')
 })
 
 test('flybot.warn writes to the host diagnostics log', async (t) => {

@@ -32,8 +32,9 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
     const timer = setTimeout(() => setConfirming(false), 4000)
     return () => clearTimeout(timer)
   }, [confirming])
-  const humans = (room.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
-  const remotes = (room.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
+  const live = room.presentedParticipants ?? room.participants ?? []
+  const humans = live.filter(p => p.kind === 'human' && p.leftSeq === undefined)
+  const remotes = live.filter(p => p.remote && p.leftSeq === undefined)
   const members = room.members.map(id => roster.byId[id]).filter(Boolean)
   const shared = humans.length > 1
   const chiefs = new Set((roster.humans ?? []).map(person => person.designatedChiefId).filter(Boolean))
@@ -101,12 +102,12 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
       }),
       remotes.map((person) => h('div', { key: person.handle || person.id, className: 'bt-set-row bt-bs-row bt-gs-member' },
         h('span', { className: 'bt-gs-who' },
-          h('span', { className: 'bt-row-title' }, remoteBotTitle(person)),
-          h('span', { className: 'bt-tag' }, t('Friend\'s Bot'))),
-        members.length + remotes.length > 2
-          ? h('button', { type: 'button', className: 'bt-x', 'aria-label': t('Remove {name} from the group', { name: remoteBotTitle(person) }), title: t('Remove from group'), onClick: () => update({ removeParticipants: [{ kind: 'bot', id: person.handle || person.id, remote: true }] }) }, '×')
-          : null)),
-      adding
+          h('span', { className: 'bt-row-title' }, person.label || remoteBotTitle(person)),
+          room.origin === 'face-to-face' ? null : h('span', { className: 'bt-tag' }, t('Friend\'s Bot'))),
+        room.origin === 'face-to-face' || members.length + remotes.length <= 2
+          ? null
+          : h('button', { type: 'button', className: 'bt-x', 'aria-label': t('Remove {name} from the group', { name: remoteBotTitle(person) }), title: t('Remove from group'), onClick: () => update({ removeParticipants: [{ kind: 'bot', id: person.handle || person.id, remote: true }] }) }, '×'))),
+      room.origin === 'face-to-face' ? null : adding
         ? [...outsidePeople.map(person => h('button', { key: person.id, type: 'button', className: 'bt-set-row bt-bs-row bt-gs-pick', onClick: () => { setAdding(false); void update({ addParticipants: [{ kind: 'human', id: person.id, displayName: person.displayName }] }) } },
             h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, person.displayName || person.id)),
             h('span', { className: 'bt-set-hint' }, t('Add person')))),

@@ -18,6 +18,7 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
   const members = new Map()
   let seq = 0
   let onboarded = 0
+  const me = { autoApproveFaceRooms: false, confirm: false }
   const uploads = new Map()
   const tools = {
     create_invite: a => ({ code: 'INV123', url: 'https://s/i/INV123', status: 'active', expires_at: '2026-10-21T00:00:00Z', bot: a.bot_id, auto_accept: a.auto_accept }),
@@ -62,6 +63,24 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
       onboarded += 1
       return new Response(JSON.stringify({ owner_id: 'o1', connector: { token }, home: { bot_id: 'h1', handle: '@danyang.home' }, bot: { bot_id: 'h1' }, webhook: null }), { status: 201 })
     }
+    if (String(url).includes('/v1/face-rooms')) {
+      return new Response(JSON.stringify({ rooms: [] }), { status: 200 })
+    }
+    if (String(url).includes('/v1/me')) {
+      const meBody = init.body ? JSON.parse(init.body) : {}
+      calls.push({ url, name: `REST ${init.method} /v1/me`, args: meBody })
+      if (init.headers.authorization !== `Bearer ${token}`) return new Response(JSON.stringify({ error: { code: 'unauthorized' } }), { status: 401 })
+      if (init.method === 'GET') {
+        return new Response(JSON.stringify({ auto_approve_face_rooms: me.autoApproveFaceRooms }), { status: 200 })
+      }
+      if (init.method === 'PATCH') {
+        if (me.confirm && meBody.confirm_code === undefined) {
+          return new Response(JSON.stringify({ status: 'confirmation_required', confirm_code: 'MECODE' }), { status: 200 })
+        }
+        if (typeof meBody.auto_approve_face_rooms === 'boolean') me.autoApproveFaceRooms = meBody.auto_approve_face_rooms
+        return new Response(JSON.stringify({ auto_approve_face_rooms: me.autoApproveFaceRooms }), { status: 200 })
+      }
+    }
     if (init.headers.authorization !== `Bearer ${token}`) return new Response('{}', { status: 401 })
     const body = JSON.parse(init.body)
     calls.push({ url, name: body.params.name, args: body.params.arguments })
@@ -69,7 +88,7 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
     const result = tool ? { content: [{ type: 'text', text: JSON.stringify(tool(body.params.arguments)) }] } : { isError: true, content: [{ type: 'text', text: '{"code":"unknown","message":"no tool"}' }] }
     return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }), { status: 200 })
   }
-  return { fetch, calls, events, members, uploads, tools, onboarded: () => onboarded }
+  return { fetch, calls, events, members, uploads, tools, me, onboarded: () => onboarded }
 }
 
 // The Writer is published (#51: only published Bots get an outside identity) unless a test says otherwise.
@@ -436,7 +455,7 @@ test('client.js registers a sidebar section and @ rows into the FlyBot registry'
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
   const plugin = registered[0].factory(() => ({ createElement: () => null, useEffect() {}, useState: v => [v, () => {}] }))
   plugin.apply({})
-  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.composer.mention#social', 'flybot.bot.details#social-invite'])
+  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.composer.mention#social', 'flybot.bot.details#social-invite', 'flybot.room.overview#social-face'])
   // Transport errors are worded in English from their code, never the localized host text.
   assert.match(plugin.errorText(Object.assign(new Error('请求失败（HTTP 404）'), { code: 'HTTP_404' })), /^The FlyBot host did not answer \(HTTP 404\)/)
   assert.equal(plugin.errorText(Object.assign(new Error('x'), { code: 'bot/refused' })), 'x')
@@ -1012,3 +1031,369 @@ test('a paused conversation explains the pause and names the console, without re
   // The same for a Bot's send through the transport (message_friend_bot).
   await assert.rejects(ctx.flybot.bot.send({ from: 'a', to: '@coder.bob.home', text: 'hello from chief' }), /paused this conversation/)
 })
+
+function withFaceRooms(server) {
+  const rooms = new Map()
+  const codes = new Map()
+  const base = server.fetch
+  server.face = { rooms, codes }
+  server.fetch = async (url, init) => {
+    if (String(url).includes('/v1/face-rooms')) {
+      const auth = init.headers.authorization
+      if (auth !== `Bearer ${'owner-token'}` && auth !== 'Bearer owner-token') {
+        return new Response(JSON.stringify({ error: { code: 'unauthorized' } }), { status: 401 })
+      }
+      const path = String(url).replace(/^https:\/\/s\/v1\/face-rooms/, '')
+      const body = init.body ? JSON.parse(init.body) : undefined
+      server.calls.push({ url, name: `REST ${init.method} ${path}`, args: body })
+      if (init.method === 'POST' && path === '/join') {
+        if (body.code === '999999') return new Response(JSON.stringify({ error: { code: 'room_full' } }), { status: 409 })
+        if (body.code === '000000') return new Response(JSON.stringify({ error: { code: 'code_void' } }), { status: 409 })
+        if (body.code === '111111') return new Response(JSON.stringify({ error: { code: 'rate_limited', retry_after: 30, scope: 'ip' } }), { status: 429 })
+        let room = codes.get(body.code)
+        if (!room) {
+          room = { room_id: `frm_${body.code}`, status: 'candidate', expires_at: '2026-10-15T10:10:00.000Z', members: [], events: [], event_cursor: 0 }
+          rooms.set(room.room_id, room)
+          codes.set(body.code, room)
+        }
+        const handle = body.bots?.[0] || '@chief.danyang.home'
+        const member = { bot_id: 'bot_local', handle, display_name: 'Chief', owner_name: 'Danyang', published: false, label: 'Chief · Danyang' }
+        if (!room.members.some(m => m.handle === handle)) {
+          room.members.push(member)
+          room.event_cursor += 1
+          room.events.push({
+            event_id: `fev_${room.event_cursor}`, event_cursor: room.event_cursor, type: 'member.joined',
+            text: "Danyang's Chief joined; not published, available to this room only", member, trust: 'platform',
+          })
+        }
+        return new Response(JSON.stringify({ ...room, events: room.events.slice(-1) }), { status: 200 })
+      }
+      if (init.method === 'GET' && (path === '' || path === '/')) {
+        return new Response(JSON.stringify({ rooms: [...rooms.values()].map(r => ({ room_id: r.room_id, status: r.status, expires_at: r.expires_at, member_count: r.members.length })) }), { status: 200 })
+      }
+      const id = decodeURIComponent((path.split('?')[0] || '').replace(/^\//, '').split('/')[0])
+      const room = rooms.get(id)
+      if (!room) return new Response(JSON.stringify({ error: { code: 'face_room_not_found' } }), { status: 404 })
+      if (init.method === 'GET') {
+        const after = Number(new URL(url).searchParams.get('after') || 0)
+        return new Response(JSON.stringify({ ...room, events: room.events.filter(e => e.event_cursor > after) }), { status: 200 })
+      }
+      if (init.method === 'POST' && path.endsWith('/start')) {
+        room.status = 'open'
+        room.event_cursor += 1
+        room.events.push({ event_id: `fev_${room.event_cursor}`, event_cursor: room.event_cursor, type: 'room.started', reason: 'start', text: 'The room is now open. The number is no longer valid.', trust: 'platform' })
+        return new Response(JSON.stringify(room), { status: 200 })
+      }
+      if (init.method === 'POST' && path.endsWith('/leave')) {
+        room.status = 'closed'
+        return new Response(JSON.stringify(room), { status: 200 })
+      }
+      if (init.method === 'POST' && path.endsWith('/messages')) {
+        if (body.text === 'hold me') {
+          return new Response(JSON.stringify({ message_id: 'fmd_h', status: 'pending_approval', approval_id: 'apr-face-1', from: room.members[0] }), { status: 202 })
+        }
+        room.event_cursor += 1
+        room.events.push({
+          event_id: `fev_${room.event_cursor}`, event_cursor: room.event_cursor, type: 'room.message',
+          from: { handle: '@coder.bob.home', display_name: 'Coder', owner_name: 'Bob', published: false, label: 'Coder · Bob' },
+          trust: 'peer_untrusted', untrusted_content: { text: body.text },
+        })
+        return new Response(JSON.stringify({ message_id: 'fmd_ok', status: 'delivered', event_cursor: room.event_cursor }), { status: 202 })
+      }
+      return new Response(JSON.stringify({ error: { code: 'invalid_request' } }), { status: 400 })
+    }
+    return base(url, init)
+  }
+  return server
+}
+
+test('face-to-face join hosts a native room, maps errors, starts and leaves', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const joined = (await call('flybot/social/face-join', { code: '123456' })).value
+  assert.equal(joined.faceRoomId, 'frm_123456')
+  assert.ok(joined.roomId)
+  assert.equal(ctx.flybot.rooms.ofFace('frm_123456').origin, 'face-to-face')
+  assert.ok((joined.members ?? []).some(m => /Chief/.test(m.label || m.displayName) && /Danyang/.test(m.label || '')))
+  assert.equal((await call('flybot/social/face-join', { code: '12ab56' })).ok, false)
+  assert.match((await call('flybot/social/face-join', { code: '12ab56' })).error.message, /6-digit/)
+  assert.match((await call('flybot/social/face-join', { code: '999999' })).error.message, /8 Bots/)
+  assert.match((await call('flybot/social/face-join', { code: '000000' })).error.message, /no longer valid/)
+  assert.match((await call('flybot/social/face-join', { code: '111111' })).error.message, /30 seconds/)
+  const started = (await call('flybot/social/face-start', { faceRoomId: 'frm_123456' })).value
+  assert.equal(started.status, 'open')
+  const listed = (await call('flybot/social/face-rooms', {})).value
+  assert.equal(listed.rooms.length, 1)
+  const left = (await call('flybot/social/face-leave', { faceRoomId: 'frm_123456' })).value
+  assert.equal(left.status, 'closed')
+  assert.equal(ctx.flybot.rooms.ofFace('frm_123456'), undefined)
+})
+
+test('face-to-face send pending_approval uses decide_approval', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  let queue = [{
+    approval_id: 'apr-face-1',
+    kind: 'face_room_message',
+    status: 'pending',
+    bot_id: 'm1',
+    room_id: 'frm_123456',
+    message: { payload: { text: 'hold me' } },
+    summary: 'To the room: hold me',
+  }]
+  server.tools.list_approvals = () => ({ approvals: queue })
+  server.tools.decide_approval = a => {
+    if (a.confirm_code === undefined) return { status: 'confirmation_required', confirm_code: 'C0DE02' }
+    queue = queue.filter(item => item.approval_id !== a.approval_id)
+    return { approval_id: a.approval_id, decision: a.decision }
+  }
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  await call('flybot/social/face-join', { code: '123456' })
+  const sent = (await call('flybot/social/face-send', { faceRoomId: 'frm_123456', text: 'hold me' })).value
+  assert.equal(sent.status, 'pending_approval')
+  assert.equal(sent.approvalId, 'apr-face-1')
+  const status = (await call('flybot/social/status', {})).value
+  assert.equal(status.pendingApprovals, 1)
+  assert.equal(status.approvals[0].kind, 'face_room_message')
+  assert.equal(status.approvals[0].toName, 'the room')
+  const decided = (await call('flybot/social/decide-approval', { approvalId: 'apr-face-1', decision: 'approve' })).value
+  assert.equal(decided.status, 'approved')
+  assert.equal((await call('flybot/social/status', {})).value.pendingApprovals, 0)
+})
+
+test('Friends\' Bots (#83): Join with a number is in the panel', () => {
+  const registered = []
+  const entries = []
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = { slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } }, call: async () => ({ connected: true, bots: [{ id: 'a', name: 'Chief', isMain: true }], homes: [], rooms: [] }) }
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const data = { homes: [] }
+  const initial = [data, '', true, false, {}, {}, '', []]
+  let i = 0
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+  plugin.apply({})
+  const tree = entries[0][1].component({})
+  const all = []
+  const walk = node => {
+    if (!node || typeof node !== 'object') return
+    if (typeof node.type === 'function') { walk(node.type(node.props)); return }
+    all.push(node)
+    ;(node.children ?? []).forEach(walk)
+  }
+  walk(tree)
+  assert.ok(all.some(n => n.props['data-flybot'] === 'face-join'))
+  assert.ok(all.some(n => n.type === 'button' && n.children.includes('Join with a number')))
+  assert.ok(entries.some(([slot, entry]) => slot === 'flybot.room.overview' && entry.id === 'social-face'))
+})
+
+test('face-to-face auto-send maps to PATCH /v1/me and swallows confirmation', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  server.me.autoApproveFaceRooms = false
+  server.me.confirm = true
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const status = (await call('flybot/social/status', {})).value
+  assert.equal(status.autoApproveFaceRooms, false)
+  const on = (await call('flybot/social/face-auto', { on: true })).value
+  assert.equal(on.autoApproveFaceRooms, true)
+  const patches = server.calls.filter(c => c.name === 'REST PATCH /v1/me')
+  assert.equal(patches[0].args.auto_approve_face_rooms, true)
+  assert.equal(patches[0].args.confirm_code, undefined)
+  assert.equal(patches[1].args.confirm_code, 'MECODE')
+  assert.equal((await call('flybot/social/status', {})).value.autoApproveFaceRooms, true)
+  server.me.confirm = false
+  const off = (await call('flybot/social/face-auto', { on: false })).value
+  assert.equal(off.autoApproveFaceRooms, false)
+  const listed = (await call('flybot/social/face-rooms', {})).value
+  assert.equal(listed.autoApproveFaceRooms, false)
+})
+
+test('Friends\' Bots (#83): auto-send toggle in the room header and pending-approval state', async () => {
+  const registered = []
+  const entries = []
+  const toggled = []
+  const decided = []
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = {
+    slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } },
+    call: async (endpoint, payload) => {
+      if (endpoint === 'social/face-auto') {
+        toggled.push(payload)
+        return { autoApproveFaceRooms: payload.on !== false }
+      }
+      if (endpoint === 'social/status') return { autoApproveFaceRooms: false, approvals: [] }
+      return {}
+    },
+  }
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+  plugin.apply({})
+  const walk = (node, all = []) => {
+    if (!node || typeof node !== 'object') return all
+    if (typeof node.type === 'function') return walk(node.type(node.props), all)
+    all.push(node)
+    for (const child of node.children ?? []) walk(child, all)
+    return all
+  }
+  const overview = plugin.FaceRoomOverview({ room: { id: 'g1', origin: 'face-to-face', face: { roomId: 'frm_1', status: 'open' } } })
+  const header = walk(overview)
+  assert.ok(header.some(n => n.props['data-flybot'] === 'face-overview'))
+  const auto = header.find(n => n.props['data-flybot'] === 'face-auto-send')
+  assert.ok(auto)
+  assert.ok(header.some(n => n.type === 'label' && n.children.includes("Auto-send my Bot's room messages")))
+  assert.ok(header.some(n => typeof n.children?.[0] === 'string' && /without asking each time/.test(n.children[0])))
+  const box = header.find(n => n.type === 'input' && n.props.type === 'checkbox')
+  assert.equal(box.props.checked, false)
+  await box.props.onChange({ target: { checked: true } })
+  assert.equal(toggled.length, 1)
+  assert.equal(toggled[0].on, true)
+  await box.props.onChange({ target: { checked: false } })
+  assert.equal(toggled.length, 2)
+  assert.equal(toggled[1].on, false)
+
+  const card = plugin.PendingApprovals({
+    items: [{ id: 'apr-face-1', kind: 'face_room_message', from: 'Chief', toName: 'the room', text: 'hello there' }],
+    busy: '',
+    onDecide: (item, decision) => decided.push([item.id, decision]),
+  })
+  const pending = walk(card)
+  assert.ok(pending.some(n => n.props['data-flybot'] === 'face-auto-send'))
+  const turnOn = pending.find(n => n.type === 'button' && n.children.includes('Turn on auto-send'))
+  const always = pending.find(n => n.type === 'button' && n.children.includes('Approve and always auto-send in this room'))
+  assert.ok(turnOn && always)
+  await turnOn.props.onClick()
+  assert.equal(toggled.at(-1).on, true)
+  await always.props.onClick()
+  assert.equal(toggled.at(-1).on, true)
+  assert.deepEqual(decided, [['apr-face-1', 'approve']])
+})
+
+test('Bot settings: Published to friends always shows and calls set-published', async () => {
+  const registered = []
+  const publishedCalls = []
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = {
+    slots: { register: () => () => {} },
+    call: async (endpoint, payload) => {
+      publishedCalls.push([endpoint, payload])
+      if (endpoint === 'set-published' && payload.id === 'fail') {
+        throw Object.assign(new Error('published must be true, false or null'), { code: 'bot/invalid' })
+      }
+      return { bots: [{ id: payload.id, published: payload.published }] }
+    },
+  }
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const walk = (node, all = []) => {
+    if (!node || typeof node !== 'object') return all
+    if (typeof node.type === 'function') return walk(node.type(node.props), all)
+    all.push(node)
+    for (const child of node.children ?? []) walk(child, all)
+    return all
+  }
+  const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+  assert.equal(plugin.PublishedToFriends({ bot: {} }), null)
+  const chief = walk(plugin.PublishedToFriends({ bot: { id: 'a', name: 'Chief', published: true } }))
+  assert.ok(chief.some(n => n.props['data-flybot'] === 'published-to-friends'))
+  assert.equal(chief.find(n => n.type === 'input' && n.props.type === 'checkbox').props.checked, true)
+  const tree = plugin.PublishedToFriends({ bot: { id: 'b', name: 'Writer', published: false } })
+  const nodes = walk(tree)
+  assert.ok(nodes.some(n => n.type === 'label' && n.children.includes('Published to friends')))
+  assert.ok(nodes.some(n => typeof n.children?.[0] === 'string' && /unpublished Bots stay private/.test(n.children[0])))
+  const box = nodes.find(n => n.type === 'input' && n.props.type === 'checkbox')
+  assert.equal(box.props.checked, false)
+  await box.props.onChange({ target: { checked: true } })
+  assert.equal(publishedCalls[0][0], 'set-published')
+  assert.equal(publishedCalls[0][1].id, 'b')
+  assert.equal(publishedCalls[0][1].published, true)
+
+  const store = []
+  let cursor = 0
+  const failing = registered[0].factory(() => ({
+    createElement: h, Fragment: 'F', useEffect() {},
+    useState: v => {
+      const i = cursor++
+      if (store[i] === undefined) store[i] = v
+      return [store[i], n => { store[i] = typeof n === 'function' ? n(store[i]) : n }]
+    },
+    useRef: v => ({ current: v }), useMemo: f => f(),
+  }))
+  const first = walk(failing.PublishedToFriends({ bot: { id: 'fail', name: 'Writer', published: true } }))
+  assert.ok(first.some(n => n.props['data-flybot'] === 'published-to-friends'))
+  await first.find(n => n.type === 'input' && n.props.type === 'checkbox').props.onChange({ target: { checked: false } })
+  cursor = 0
+  const after = walk(failing.PublishedToFriends({ bot: { id: 'fail', name: 'Writer', published: true } }))
+  assert.ok(after.some(n => n.props['data-flybot'] === 'published-to-friends'))
+  assert.ok(after.some(n => n.props['data-tone'] === 'error'))
+})
+
+test('Join with a number names whether the brought Bot is published', () => {
+  const registered = []
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = { slots: { register: () => () => {} }, call: async () => ({}) }
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const walk = (node, all = []) => {
+    if (!node || typeof node !== 'object') return all
+    if (typeof node.type === 'function') return walk(node.type(node.props), all)
+    all.push(node)
+    for (const child of node.children ?? []) walk(child, all)
+    return all
+  }
+  const render = (initial) => {
+    let i = 0
+    const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+    return walk(plugin.JoinWithNumber({}))
+  }
+  const unpublished = render(['', [{ id: 'a', name: 'Writer', published: false }], 'a', false, null, true])
+  const hint = unpublished.find(n => n.props['data-flybot'] === 'face-join-published')
+  assert.ok(hint)
+  assert.match(hint.children.join(''), /not published, available to this room only/)
+  const published = render(['', [{ id: 'a', name: 'Chief', published: true }], 'a', false, null, true])
+  assert.match(published.find(n => n.props['data-flybot'] === 'face-join-published').children.join(''), /Published to friends/)
+})
+
+test('face-to-face join uses core isPublished (Chief published, others not)', async (t) => {
+  const { ctx, call, stop } = await team({ writerPublished: false })
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const status = (await call('flybot/social/status', {})).value
+  assert.equal(status.bots.find(b => b.id === 'a').published, true)
+  assert.equal(status.bots.find(b => b.id === 'b').published, false)
+  const listed = (await call('flybot/social/face-join', { code: '123456', botId: 'a' })).value
+  assert.equal(listed.joinedAs.botId, 'a')
+  assert.equal((await call('set-published', { id: 'b', published: true })).ok, true)
+  assert.equal((await call('flybot/social/status', {})).value.bots.find(b => b.id === 'b').published, true)
+})
+
