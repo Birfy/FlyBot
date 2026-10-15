@@ -17,7 +17,7 @@ Grok Bot is the single entry point for humans; it schedules OpenCode (implements
 1. **Issue.** Work one issue per session and per git worktree. Skim LESSONS and code-standards first. Security debt first: [#9](https://github.com/ThinkFlowLab/FlyBot/issues/9) → [#10](https://github.com/ThinkFlowLab/FlyBot/issues/10) → [#8](https://github.com/ThinkFlowLab/FlyBot/issues/8).
 2. **Branch** from latest `origin/main`. Write a test that fails without the change, then fix the class of bug.
 3. **Verify locally:** `npm run verify` at the repo root (Node 22+, see Commands).
-4. **PR** to `main`. Imperative English title, `Fixes #N` in the body, and what you ran and did **not** run at the tip SHA. Squash is the only merge method; the PR title and body become the commit message, so keep the body short.
+4. **PR** to `main`. Imperative English title, `Fixes #N` in the body, and what you ran and did **not** run at the tip SHA. A user-visible change adds one fragment `changelog.d/<issue-or-slug>.<kind>.md` ([changelog.d/README.md](changelog.d/README.md)); never edit `CHANGELOG.md` in a feature PR. Squash is the only merge method; the PR title and body become the commit message, so keep the body short.
 5. **CI.** The required check is `tests-ok`. It is green only when `test`, `plugins (tree)`, `plugins (social)` and `package` all pass. Never merge around a red check.
 6. **Review and merge.** Review the **tip SHA** with [`review-pr`](.claude/skills/review-pr/SKILL.md) (PASS / FAIL / INC); a tip move voids the PASS. Once the tip has its PASS and the maintainer has delegated the merge, enable auto-merge with `gh pr merge --auto --squash --match-head-commit <sha>`. Without that delegation, the maintainer merges. [`fix-issue`](.claude/skills/fix-issue/SKILL.md) walks all of this, with the environment gotchas.
 7. **Stop** and hand over to the maintainer on a security-sensitive change, an open decision such as #16, or when you cannot get a green tip.
@@ -26,12 +26,12 @@ When a class of bug repeats, date a lesson in LESSONS.md (`Seen N×`); after **�
 
 ### Conflict recipe (generated files)
 
-`core/` is the source of truth; `patches/ds-bot/*.patch` and `core/client.js` are generated from it. Never hand-merge them.
+`core/` is the source of truth; `patches/ds-bot/` (`*.patch` and `files/`) and `core/client.js` are generated from it. Never hand-merge them. The patch format is merge-friendly (no `index` lines, no counts that depend on other edits, new files stored whole in `files/`), so two PRs that touch different parts of one core file usually merge without a conflict in `patches/`; the steps below are for when they do not.
 
 ```sh
 git fetch origin && git merge origin/main        # or rebase
 # 1. Resolve conflicts in real sources by hand (core/src/**, core/index.js, tests, docs).
-# 2. Take main's version of the generated patch files:
+# 2. Take main's version of the generated patch files (generate rewrites patches/ds-bot/ entirely):
 git checkout origin/main -- patches/ds-bot
 # 3. Regenerate from the merged core/, then check:
 (cd core && npm run build)                       # client.js, carried by patch 0008
@@ -40,7 +40,7 @@ node scripts/ds-bot-patches.mjs check
 npm run verify
 ```
 
-If `topics.json` conflicts, keep both sides' entries (one patch per file).
+If `topics.json` conflicts, keep both sides' entries (one patch per edited upstream file; a new file needs none).
 
 ## What this project is
 
