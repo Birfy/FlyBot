@@ -63,7 +63,28 @@ Central authorization in `core/src/host/authz.js`, installed after member-auth:
 - When enforced, every Bot / room / session an endpoint touches must belong to the signed-in actor (`bot/forbidden` otherwise). `body.actorId` still grants nothing.
 - Shared resources that cannot yet be isolated per owner (secrets, connectors, folder picks, browser bridge, update-install, diagnostics, set-prefs, capability library writes) are **explicitly blocked** with `bot/blocked-shared` while more than one member exists — not hidden only in the UI.
 - `create-bot` stamps `ownerId` from the actor; `view()` and `live()` filter to that owner's bots/rooms.
-- **Not done here:** cross-owner messaging, filesystem sandbox redesign, Chief-to-Chief routing (#51), human/Chief room membership (#50). Team mode stays disabled; #16 stays open.
+- **Not done here:** cross-owner task execution, filesystem sandbox redesign, Chief-to-Chief routing (#51). Team mode stays disabled; #16 stays open.
+
+## Room membership foundation (landed, #50)
+
+Typed participants on a native room, in `core/src/host/room-membership.js`, installed after groups:
+
+- A room may carry `participants`: `{ kind: 'human'|'bot', id, role: 'admin'|'member', displayName, joinedSeq, joinedAt, leftSeq?, leftAt?, invitedBy? }`. A **published remote Bot** is the same kind with `remote: true`, `handle`, `ownerHome`, `ownerName`, `isChief?`. `room.members` stays the current *local* bot ids so existing single-owner groups keep their shape. Rooms without `participants` stay legacy: the owner is implicit and `who: 'User'` is that owner.
+- Across owners, the only legal *local* agent is each human's designated Chief. A specialist that was **not** published to friends cannot be added (enforced on the host, not only hidden in the UI). A friend's Bot listed by `@flybot/social` `social/remote-bots` (the `cleanRemote` records) may be added; unpublished specialists stay owner-private.
+- Every posted line carries `authorId` + `authorKind` + a display snapshot (`who`). The signed-in actor wins; `body.authorId` grants nothing. Peer names are sanitized (`cleanPeerName` / `cleanRemote`).
+- **History-visibility rule (membership window):** only a *current* participant — or the owner of an invited Bot — may read a room. They see lines with `seq >=` the `joinedSeq` of their open interval (for an invited owner, their Bot's interval). Leaving closes the interval and withdraws all history access. Rejoining opens a new interval at the then-current seq; prior intervals do not come back. Non-members cannot read or inject.
+- Endpoints: `room-history`, `room-post`; `create-room` / `update-room` accept `participants` / `addParticipants` / `removeParticipants`. `view()` presents each viewer under the table below. Inbound projections (`origin: 'inbound-share'`, `rt.recordInboundSharedRoom`) are the remote owner's copy of a friend's room that invited their published Bot.
+- Replies that leave through Bot Social still follow that plugin's outbound hold (`pending_approval` / Friends' Bots “N to approve”). The shared-room view surfaces those items; nothing is auto-sent.
+- **Not team mode:** no flag/config/env. Cross-owner *task* execution and Chief-to-Chief routing stay #51. The gates below remain unsatisfied.
+
+### Per-viewer display (native room)
+
+| Viewer | How the room appears | What they see | What they may do |
+| --- | --- | --- | --- |
+| Inviter (human participant who added the Bot) | Their own room, usual name | Humans, local Bots, remotes as `<Bot> · <owner>'s Bot` (Chief: `<owner>'s Chief`), owner badge, attributed lines from their join seq | Manage participants they are allowed to; post; history in their window |
+| Other human in the room | Same room | Same labels and badges; attributed lines from *their* join seq | Speak; leave; no extra private context |
+| Remote owner (owns an invited Bot, not a human member) / inbound share | Sidebar **Shared room from \<inviter\>** | Current participants with owner badges; who invited their Bot and when; lines from the Bot's `joinedSeq`; pending social approvals in this view | Remove their Bot (leave closes the interval); approve/reject held replies; cannot inject as themselves |
+| Remote Bot | Only the room lines fenced as untrusted data, from its join seq | No inviter private rooms, no unpublished specialists | Reply through Bot Social (held unless the owner auto-approves) |
 
 ## Identity model
 
@@ -75,7 +96,7 @@ Central authorization in `core/src/host/authz.js`, installed after member-auth:
 | Authority follows the human | Ownership is an assignment to a person, not to a Bot name. Renaming, replacing or disabling a Bot never transfers authority by itself. |
 | Chief ↔ Chief | The only legal cross-owner hop. Each Chief remains accountable to its own owner. |
 
-## Room visibility (planned)
+## Room visibility (membership window landed, #50; published remotes follow-up)
 
 | Room | Who may see it |
 | --- | --- |
@@ -182,5 +203,7 @@ Planned rules (fail closed by default):
 **Member auth foundation (#48)** has tests in `core/test/member-auth.test.js`: two members get distinct identities via invite→redeem, forged strings never authenticate (only a live session token does), invitation replay and expiry fail, `removeMember` / `revokeSession` invalidate sessions, the last owner cannot be removed, and tokens are stored only as hashes. These cover the sign-in surface only — no owner scoping or cross-owner behavior.
 
 Owner-scoped access (#49) tests in `core/test/authz.test.js`.
+
+**Room membership foundation (#50)** has tests in `core/test/room-membership.test.js`: Alice, Bob and both Chiefs keep distinct authorship; concurrent posts keep order and identity; unauthorized history reads fail; join/leave follows the membership-window rule; non-members cannot inject (forged `authorId` is ignored); existing single-owner groups still display and accept posts; a specialist cannot join a cross-owner room.
 
 The routing-matrix rows above remain untested because the behavior is not shipped. When enforcement work starts (#48+), each row becomes a test first, per [fail-without-change](../code-standards.md): same-owner delegation allowed (a), Chief-to-Chief allowed (b), cross-owner specialist denied (c), team-admin vs private-owner denied (d), forwarded approval rejected (e). Each must fail on the unbroken tip before implementation lands.

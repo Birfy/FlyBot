@@ -661,7 +661,12 @@ export function install(rt) {
     // Resolves once ds-bot's saved team is loaded, so bot.list() has every Bot.
     ready: () => rt.load().then(() => undefined),
     on: onFor(plugin),
+    // Same log as Settings → Feedback. Plugins must not depend on ctx.logger (DSH may export none).
+    warn: (...args) => rt.warn?.(...args),
     transports: { add: addTransport },
+    roomApprovals: {
+      setProvider(fn) { rt.listRoomApprovals = typeof fn === 'function' ? fn : undefined },
+    },
     remote: {
       publish: list => remoteMembers.publish(plugin, list),
       list: remoteMembers.list,

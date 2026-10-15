@@ -90,6 +90,43 @@ export const slug = (name, id = '') => {
 }
 const serverKey = url => String(url ?? '').trim().replace(/\/+$/, '').toLowerCase()
 
+// Home handle Bot Social derives from displayName (Danyang → @danyang.home).
+export const homeHandleOf = (displayName) => {
+  const part = String(displayName ?? 'FlyBot').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 32) || 'flybot'
+  return `@${part}.home`
+}
+
+function isHandleTaken(body) {
+  if (!body || typeof body !== 'object') return false
+  const code = String(body.error ?? body.code ?? body.reason ?? '')
+  const message = String(body.message ?? '')
+  return code === 'handle_taken' || /handle[_ ]taken/i.test(code) || /handle[_ ]taken/i.test(message)
+}
+
+function handleFromOnboardError(body, displayName) {
+  const raw = body && typeof body === 'object'
+    ? (body.handle ?? body.home?.handle ?? body.details?.handle)
+    : undefined
+  return typeof raw === 'string' && raw.trim() ? norm(raw) : homeHandleOf(displayName)
+}
+
+async function onboardError(response, displayName) {
+  const status = response.status
+  let body
+  try { body = await response.json() } catch { body = undefined }
+  if (status === 409 || isHandleTaken(body)) {
+    const handle = handleFromOnboardError(body, displayName)
+    return Object.assign(
+      new Error(`Bot Social onboarding failed: HTTP ${status} (handle ${handle} is taken). Change displayName in the flybot-social config so a new home is created, then restart.`),
+      { code: 'handle_taken', handle },
+    )
+  }
+  const detail = typeof body?.message === 'string' && body.message.trim()
+    ? `: ${String(body.message).replace(/\s+/g, ' ').trim().slice(0, 200)}`
+    : (typeof body?.error === 'string' ? `: ${body.error}` : '')
+  return new Error(`Bot Social onboarding failed: HTTP ${status}${detail}`)
+}
+
 // One call to the server's FlyBot onboarding; returns { token, home } to keep.
 export async function onboard({ server, displayName, webhookUrl, fetch: fetchImpl = globalThis.fetch }) {
   const response = await fetchImpl(`${server.replace(/\/+$/, '')}/v1/onboard/flybot`, {
@@ -97,9 +134,39 @@ export async function onboard({ server, displayName, webhookUrl, fetch: fetchImp
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ display_name: displayName, ...(webhookUrl ? { webhook_url: webhookUrl } : {}) }),
   })
-  if (!response.ok) throw new Error(`Bot Social onboarding failed: HTTP ${response.status}`)
+  if (!response.ok) throw await onboardError(response, displayName)
   const body = await response.json()
   return { token: body.connector.token, home: { id: body.home.bot_id, handle: body.home.handle }, ownerId: body.owner_id, webhook: body.webhook ?? null }
+}
+
+export const startFailureReason = (error) => String(error?.message ?? error ?? 'the plugin did not start').replace(/\s+/g, ' ').trim() || 'the plugin did not start'
+
+export function unavailableMessage(reason) {
+  const text = startFailureReason(reason)
+  return text.startsWith('Social is not running:') ? text : `Social is not running: ${text}`
+}
+
+export function unavailableError(reason) {
+  return Object.assign(new Error(unavailableMessage(reason)), { code: 'bot/refused' })
+}
+
+// UI endpoints the browser calls. Registered after a failed start so the dispatcher
+// never throws "Unknown FlyBot endpoint social/…" for a plugin that is enabled but down.
+export const SOCIAL_UI_ENDPOINTS = [
+  'social/remote-bots', 'social/settings', 'social/status', 'social/overview', 'social/friends',
+  'social/create-invite', 'social.createInvite', 'social/join-invite', 'social/respond', 'social/send',
+  'social/auto-approve', 'social/auto-accept', 'social/poll', 'social/approvals', 'social/decide-approval',
+  'social/attachment',
+]
+
+export function registerUnavailable(service, reason) {
+  const flybot = typeof service.scope === 'function' ? service.scope(NS) : service
+  const fail = async () => { throw unavailableError(reason) }
+  const offs = []
+  for (const name of SOCIAL_UI_ENDPOINTS) {
+    try { offs.push(flybot.api.handle(name, fail, { read: true })) } catch { /* already registered */ }
+  }
+  return () => { for (const off of offs.splice(0).reverse()) off?.() }
 }
 
 export const readCredentials = (path) => {
@@ -767,6 +834,19 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     return { approvalId: result?.approval_id ?? id, status: result?.decision ?? mapped }
   }))
 
+  flybot.roomApprovals?.setProvider?.((room) => {
+    const handles = new Set()
+    for (const p of room?.participants ?? []) {
+      if (p?.remote && p.handle) handles.add(norm(p.handle))
+      if (p?.kind === 'bot' && !p.remote) {
+        const member = memberOf(p.id)
+        if (member?.handle) handles.add(norm(member.handle))
+      }
+    }
+    if (room?.sharedFrom?.invitedHandle) handles.add(norm(room.sharedFrom.invitedHandle))
+    return pendingCache.items.filter(item => handles.has(norm(item.from)) || handles.has(norm(item.to)))
+  })
+
   return {
     home,
     registerAll,
@@ -777,6 +857,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     sendChat,
     setAutoAccept,
     dispose() {
+      flybot.roomApprovals?.setProvider?.(undefined)
       for (const dispose of disposers.splice(0).reverse()) dispose?.()
     },
   }

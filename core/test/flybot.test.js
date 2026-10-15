@@ -74,7 +74,21 @@ test('apply provides the flybot service with the agreed surface', async (t) => {
   assert.equal(fb.bot.of('a').name, 'Chief')
   assert.equal(fb.scope('tree').plugin, 'tree')
   assert.equal(typeof fb.on, 'function')
+  assert.equal(typeof fb.warn, 'function')
   assert.equal(fb.fields, fb.bot.fields)
+})
+
+test('flybot.warn writes to the host diagnostics log', async (t) => {
+  const { fb, home, stop } = await start()
+  t.after(stop)
+  fb.warn('flybot-social: start failed: %s', new Error('HTTP 409 handle taken'))
+  let text = ''
+  for (let i = 0; i < 40; i++) {
+    try { text = readFileSync(join(home, 'logs', 'diagnostics.jsonl'), 'utf8') } catch {}
+    if (text.includes('flybot-social: start failed')) break
+    await delay(25)
+  }
+  assert.match(text, /flybot-social: start failed: HTTP 409 handle taken/)
 })
 
 test('fields are synchronous, namespaced per plugin, persisted, and emit change', async (t) => {

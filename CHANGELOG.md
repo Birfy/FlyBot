@@ -6,12 +6,15 @@ All notable changes to FlyBot (earlier: DS Bot) are listed here. The format foll
 
 ### Added
 
+- **Native rooms take human, Chief, and published friend Bots.** A room can list people (Alice, Bob), each side’s designated Chief, and a friend’s Bot that was published to friends (`social/remote-bots`). Remotes show as `<Bot> · <owner>'s Bot` (Chief: `<owner>'s Chief`) with an owner badge. The owner of an invited Bot sees **Shared room from \<inviter\>**, only lines from that Bot’s join seq, and can remove their Bot. Unpublished specialists stay private (host-enforced). Replies still go through Bot Social’s outbound hold. Team mode stays disabled. ([#50](https://github.com/ThinkFlowLab/FlyBot/issues/50))
 - **Friends' Bots pending approvals:** outbound drafts Bot Social holds (`pending_approval`) show a persistent badge and Approve / Reject in Friends' Bots. Inbound messages still arrive immediately; Auto-accept still skips the hold. (#69)
+- Plugins can write to the host diagnostics log with `flybot.warn` (Settings → Feedback). `@flybot/social` uses this when start fails. ([#68](https://github.com/ThinkFlowLab/FlyBot/issues/68))
 
 ### Fixed
 
 - Peer-published Bot labels (`name`, `homeName`, `owner`) are sanitized at `cleanRemote`: `@` and control characters/newlines are stripped, then the 60-character cap still applies, so a display name cannot impersonate another member's handle. ([#75](https://github.com/ThinkFlowLab/FlyBot/issues/75))
 - A chat with a friend's Bot that Bot Social has paused (turn budget reached, loop suspicion, emergency stop) now says so and points at the Bot Social console, instead of failing with a bare "Not sent: …" card. A paused conversation is no longer retried with the friendship's other Bots. ([#72](https://github.com/ThinkFlowLab/FlyBot/issues/72))
+- Friends' Bots no longer shows the raw host error `Unknown FlyBot endpoint social/remote-bots` when `@flybot/social` failed to start. The section shows `Social is not running: <reason>` instead, a 409 `handle_taken` names the taken home handle and says to change `displayName`, and the start failure is written to host diagnostics (Settings → Feedback). ([#68](https://github.com/ThinkFlowLab/FlyBot/issues/68))
 
 ## [0.1.0] - 2026-10-14
 

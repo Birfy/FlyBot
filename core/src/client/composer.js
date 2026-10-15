@@ -53,6 +53,20 @@ export function useDictation(onText) {
   return { listening, note, start, stop }
 }
 
+export function ComposerIdentity({ sessionId, useRoster }) {
+  const roster = useRoster(value => value)
+  const room = roster.roomsById?.[sessionId]
+  const self = roster.self
+  const humans = (room?.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
+  if (room?.viewerRole === 'invited-owner') {
+    return h('span', { className: 'bt-composer-as', title: t('You can remove your Bot from this room') },
+      t('Shared room from {name}', { name: room.sharedFrom?.inviterName || t('a friend') }))
+  }
+  if (!self || !room || humans.length < 2) return null
+  return h('span', { className: 'bt-composer-as', title: t('Messages in this room are attributed to you') },
+    t('Sending as {name}', { name: self.displayName || self.memberId }))
+}
+
 export function ComposerVoice({ sessionId, inputActions, actions, useUi }) {
   const dictation = useDictation((text, final) => {
     if (final && inputActions) inputActions.insertText(text, inputActions.captureInsertion())

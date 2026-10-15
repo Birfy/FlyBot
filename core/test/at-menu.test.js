@@ -22,6 +22,25 @@ test('a session mention is the one DSH writes and reads back', () => {
   }
 })
 
+test('"@" in a shared room lists humans and Chiefs', () => {
+  const shared = indexRoster({
+    bots: [
+      { id: 'chief-a', name: 'Chief A', sessionId: 'chief-a' },
+      { id: 'chief-b', name: 'Chief B', sessionId: 'chief-b' },
+    ],
+    rooms: [{
+      id: 'shared',
+      name: 'War room',
+      members: ['chief-a', 'chief-b'],
+      participants: [
+        { kind: 'human', id: 'owner-1', displayName: 'Alice', role: 'admin' },
+        { kind: 'human', id: 'owner-2', displayName: 'Bob', role: 'member' },
+      ],
+    }],
+  })
+  assert.deepEqual(names(mentionRows(shared, 'shared')), ['Chief A', 'Chief B', 'Alice', 'Bob', 'everyone'])
+})
+
 test('"@" offers a group\'s members and everyone, or every other Bot in a Bot\'s chat', () => {
   assert.deepEqual(names(mentionRows(roster, 'room')), ['Chief', 'King', 'everyone'])
   assert.deepEqual(names(mentionRows(roster, 'chief-2')), ['King', 'Writer'])

@@ -366,7 +366,11 @@ export function install(rt) {
           if (rt.roomOf(id) && source.kind === 'user') {
             const images = (Array.isArray(event.data.content) ? event.data.content : [])
               .filter(block => block?.type === 'image' && !block.offloaded).map(block => block.attachment)
-            queueRoomMessage(id, { text: textOf(event.data.content), ...(images.length > 0 ? { images } : {}) })
+            queueRoomMessage(id, {
+              text: textOf(event.data.content),
+              ...(images.length > 0 ? { images } : {}),
+              ...(source.authorId ? { authorId: source.authorId, authorKind: source.authorKind || 'human', authorName: source.authorName } : {}),
+            })
           }
           const own = rt.chatOwners.get(id)
           if (own !== undefined) rt.dropKickoff(own)

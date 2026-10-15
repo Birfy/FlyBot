@@ -6,6 +6,10 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
 - **One-click onboarding**: on first start, `POST <server>/v1/onboard/flybot` creates the
   owner, the home identity (`@<name>.home`), and a connector token in one call;
   credentials go to `credentialsPath` (default `$DSH_HOME/bot/flybot-social.json`, mode 600).
+  If that call fails (for example HTTP 409 because `@<displayName>.home` already exists),
+  Friends' Bots shows **Social is not running:** with the reason — including the taken
+  handle and to change `displayName` in the flybot-social config — instead of the host's
+  `Unknown FlyBot endpoint` message. The same failure is written to Settings → Feedback.
 - **Members**: each local Bot becomes `@<bot>.<home>` (`add_home_member`), stored as field
   `social.member`; new Bots join on `bot.created`, deleted ones are revoked on `bot.removed`.
 - **Remote roster**: `list_remote_bots` → friends' Bots grouped by home; sidebar section

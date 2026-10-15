@@ -18,10 +18,32 @@ index 05a42205df8a96369ec30f5c80ff86a109eb5646..f0a0442bd2a50af8de45b56400c0bfc6
  }
  
 diff --git a/src/client/i18n.js b/src/client/i18n.js
-index 6cf2df850b742d4f47b119bbedbf4f5dd4ec4b22..43ad1c56d7608e5f878bc2ba2677709f51f58d11 100644
+index 6cf2df850b742d4f47b119bbedbf4f5dd4ec4b22..a486adfe3225e7b97e31b581290c5a4f52aa4460 100644
 --- a/src/client/i18n.js
 +++ b/src/client/i18n.js
-@@ -53,9 +53,20 @@ const ZH = {
+@@ -26,6 +26,21 @@ const ZH = {
+   Duplicate: '复制一份',
+   Hidden: '已隐藏',
+   Admin: '管理员',
++  Human: '人',
++  Chief: 'Chief',
++  Shared: '共享',
++  'Add person': '添加成员',
++  'Add friend\'s Bot': '添加好友的 Bot',
++  'Sending as {name}': '以 {name} 的身份发送',
++  'Messages in this room are attributed to you': '这个房间里的消息会记在你的名下',
++  'You can remove your Bot from this room': '你可以从这个房间移走自己的 Bot',
++  'Shared room from {name}': '来自 {name} 的共享房间',
++  'a friend': '一位朋友',
++  'Your Bot was invited to this room by {name}': '{name} 邀请了你的 Bot 加入这个房间',
++  'Invited {when}': '邀请于 {when}',
++  'Remove my Bot': '移走我的 Bot',
++  '{count} to approve': '{count} 条待批准',
++  'Outbound reply': '待发出的回复',
+   Add: '添加',
+   Close: '关闭',
+   Copy: '复制',
+@@ -53,9 +68,20 @@ const ZH = {
  
    // Sidebar and account menu
    'Bot list': 'Bot 列表',
@@ -43,7 +65,7 @@ index 6cf2df850b742d4f47b119bbedbf4f5dd4ec4b22..43ad1c56d7608e5f878bc2ba2677709f
    'Automation tasks': '自动化任务',
    Connectors: '连接器',
    'Search connectors': '搜索连接器',
-@@ -109,6 +120,7 @@ const ZH = {
+@@ -109,6 +135,7 @@ const ZH = {
    'Switch': '切换',
    'Switch to classic Agent mode': '切换经典 Agent 模式',
    '{model} is not available anymore. Pick another model for me.': '{model} 已经不可用了。给我换一个模型吧。',
@@ -51,6 +73,26 @@ index 6cf2df850b742d4f47b119bbedbf4f5dd4ec4b22..43ad1c56d7608e5f878bc2ba2677709f
    "Hi, I'm {name}. I don't have a model yet. How do you want to set one up?": '你好，我是 {name}。我还没有可用的模型。你想怎么配置？',
    "Hi, I'm {name}. Pick a model for me first. You can change it later in my details.": '你好，我是 {name}。先给我选一个模型吧，以后可以在我的详情里换。',
    'Mode': '模式',
+@@ -883,6 +910,19 @@ const HOST_ZH = {
+   'Unknown Bot': '找不到这个 Bot',
+   'Unknown conversation': '找不到这个对话',
+   'A group chat needs at least two Bots': '群聊至少要两个 Bot',
++  'You are not a member of that room': '你不是这个房间的成员',
++  'Only a room admin can add participants': '只有房间管理员可以添加成员',
++  'Only a room admin can remove participants': '只有房间管理员可以移除成员',
++  'Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief': '专员只待在其主人的私有房间里；跨主人房间只接受各方的 Chief',
++  'Only a designated Chief of a room member may join a shared room': '只有房间成员的指定 Chief 可以加入共享房间',
++  'Only a Chief or a Bot published to friends may join a shared room': '只有 Chief 或主人已向好友公开的 Bot 可以加入共享房间',
++  'Participant kind must be human or bot': '成员类型只能是 human 或 bot',
++  'A participant needs an id': '成员需要 id',
++  'Room role must be admin or member': '房间角色只能是 admin 或 member',
++  'That participant is already in the room': '这个成员已经在房间里',
++  'Unknown team member': '找不到这个团队成员',
++  'That participant is not in the room': '这个成员不在房间里',
++  'Each participant needs a kind (human or bot) and an id': '每个成员都需要类型（human 或 bot）和 id',
+   'The admin must be a member of the group': '管理员必须是群成员',
+   'Unknown group chat': '找不到这个群聊',
+   'Hand the admin role to another member instead of leaving the group without one': '请把管理员交给其他成员，不要让群聊没有管理员',
 diff --git a/src/client/model-menu.js b/src/client/model-menu.js
 index 28cd67da0010775b593175fc61404750e4730f21..778ff0445d3a194e0663c2bbbe6a6bb2f2471762 100644
 --- a/src/client/model-menu.js
@@ -234,7 +276,7 @@ index 4aef4d72efda5198abc28e3314358f149c3f03e7..6da78f82e799c90362f14960ed81a82e
      // after this one (a reload reorders them), so its presence is read from its
      // projection, not from the messages added so far.
 diff --git a/src/host/turns.js b/src/host/turns.js
-index 450191e9171b42daf9c9186aabfd2b1850d55714..8de150f57f1f129f3a021b89b1f8099d60b52221 100644
+index 450191e9171b42daf9c9186aabfd2b1850d55714..46d72371b58bb493a39e700727d9911e84fd96fc 100644
 --- a/src/host/turns.js
 +++ b/src/host/turns.js
 @@ -162,6 +162,9 @@ export function install(rt) {
@@ -256,7 +298,20 @@ index 450191e9171b42daf9c9186aabfd2b1850d55714..8de150f57f1f129f3a021b89b1f8099d
        markExchangeTurn(sessionId, entry.turn)
      }
    }
-@@ -419,6 +422,13 @@ export function install(rt) {
+@@ -363,7 +366,11 @@ export function install(rt) {
+           if (rt.roomOf(id) && source.kind === 'user') {
+             const images = (Array.isArray(event.data.content) ? event.data.content : [])
+               .filter(block => block?.type === 'image' && !block.offloaded).map(block => block.attachment)
+-            queueRoomMessage(id, { text: textOf(event.data.content), ...(images.length > 0 ? { images } : {}) })
++            queueRoomMessage(id, {
++              text: textOf(event.data.content),
++              ...(images.length > 0 ? { images } : {}),
++              ...(source.authorId ? { authorId: source.authorId, authorKind: source.authorKind || 'human', authorName: source.authorName } : {}),
++            })
+           }
+           const own = rt.chatOwners.get(id)
+           if (own !== undefined) rt.dropKickoff(own)
+@@ -419,6 +426,13 @@ export function install(rt) {
          // Whoever the turn answers gets the same three-way rule: a failure notice,
          // the turn's text (or a stopped-before-answer line), or nothing.
          const answer = (source, reply) => {

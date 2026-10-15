@@ -184,6 +184,8 @@ export interface FlyBot {
   /** True while another dsh holds the team: no polling, no writes. */
   readOnly(): boolean
   on: On
+  /** Writes a warning to the host diagnostics log (Settings → Feedback). */
+  warn(template: string, ...args: unknown[]): void
   fields: BotFields
   bot: {
     get(id: BotId): BotView | undefined
@@ -212,6 +214,10 @@ export interface FlyBot {
     publish(list: Array<{ handle: string; name?: string; home?: string; homeName?: string; owner?: string }>): void
     list(): RemoteMember[]
     get(handle: string): RemoteMember | undefined
+  }
+  /** Optional: pending Bot Social approvals for a shared room the invited owner is viewing. */
+  roomApprovals: {
+    setProvider(fn: ((room: { id?: string; participants?: unknown[]; sharedFrom?: unknown; viewerRole?: string }, actor?: { memberId?: string }) => unknown[]) | undefined): void
   }
   approvals: {
     list(filter?: { status?: Approval['status'] | 'all' }): Approval[]
