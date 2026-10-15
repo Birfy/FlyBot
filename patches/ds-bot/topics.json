@@ -75,5 +75,10 @@
     "src/host/channel.js",
     "src/host/store.js",
     "test/member-auth.test.js"
+  ],
+  "0011-owner-scoped-access": [
+    "src/host/authz.js",
+    "src/host/roster.js",
+    "test/authz.test.js"
   ]
 }

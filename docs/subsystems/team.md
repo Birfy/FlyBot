@@ -55,6 +55,16 @@ A thin invitation-and-session layer on top of the #47 identity schema, in `core/
 - `removeMember` revokes that member's sessions and drops the record; the **last owner cannot be removed**, and a member that still **owns a Bot** cannot be removed (`has_bots`) — reassign or delete the Bots first. `revokeSession` kills one session; `revokeInvitation` kills an unredeemed invitation (`auth-revoke-invite`, redeemed or already-revoked invitations refused), and redeeming a revoked invitation fails with `revoked`. Auth mutations run one at a time (an in-process lock), so concurrent `removeMember` calls cannot both pass the last-owner check. Only hashes live in `state.json`; plaintext tokens never reach disk.
 - This is still **not team mode**: no owner scoping, no cross-owner routing, no flag/config/env for any of them. The gates below remain unsatisfied; this is the sign-in surface those gates will need.
 
+## Owner-scoped access foundation (landed, #49)
+
+Central authorization in `core/src/host/authz.js`, installed after member-auth:
+
+- **Enforced only once a member session exists** (`authzEnforced`). With no sessions the shipped single-human product is unchanged.
+- When enforced, every Bot / room / session an endpoint touches must belong to the signed-in actor (`bot/forbidden` otherwise). `body.actorId` still grants nothing.
+- Shared resources that cannot yet be isolated per owner (secrets, connectors, folder picks, browser bridge, update-install, diagnostics, set-prefs, capability library writes) are **explicitly blocked** with `bot/blocked-shared` while more than one member exists — not hidden only in the UI.
+- `create-bot` stamps `ownerId` from the actor; `view()` and `live()` filter to that owner's bots/rooms.
+- **Not done here:** cross-owner messaging, filesystem sandbox redesign, Chief-to-Chief routing (#51), human/Chief room membership (#50). Team mode stays disabled; #16 stays open.
+
 ## Identity model
 
 | Relation | Rule |
@@ -170,5 +180,7 @@ Planned rules (fail closed by default):
 **Schema foundation (#47)** has store-level tests in `core/test/identity.test.js`: a fresh team and a representative legacy team load, migration idempotence and restart-safety, the `state.json.v1` backup (created once; a directory or a truncated/unusable file in its place fails closed), and malformed-ownership fail-closed cases (unknown owner, duplicate member ids, bad Chief references, version-1 files carrying ownership fields). They assert data records only — no routing, scoping or approvals, and no multi-human behavior.
 
 **Member auth foundation (#48)** has tests in `core/test/member-auth.test.js`: two members get distinct identities via invite→redeem, forged strings never authenticate (only a live session token does), invitation replay and expiry fail, `removeMember` / `revokeSession` invalidate sessions, the last owner cannot be removed, and tokens are stored only as hashes. These cover the sign-in surface only — no owner scoping or cross-owner behavior.
+
+Owner-scoped access (#49) tests in `core/test/authz.test.js`.
 
 The routing-matrix rows above remain untested because the behavior is not shipped. When enforcement work starts (#48+), each row becomes a test first, per [fail-without-change](../code-standards.md): same-owner delegation allowed (a), Chief-to-Chief allowed (b), cross-owner specialist denied (c), team-admin vs private-owner denied (d), forwarded approval rejected (e). Each must fail on the unbroken tip before implementation lands.
