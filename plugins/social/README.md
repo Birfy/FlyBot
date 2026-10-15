@@ -57,11 +57,11 @@ Tests (`test/social.test.js`) use a mocked server.
 
 People in the same place (or on a call) put their Bots in one room by each typing the same 6-digit number. There is no host and no friend request.
 
-1. Open **Friends' Bots** in the sidebar.
-2. Click **Join with a number**. Type six digits. If you have more than one Bot, pick which one to bring (default: the first). Click **Join**.
-3. You join at once — there is no preview. FlyBot opens the room. Everyone already in it shows as `<Bot> · <owner>'s Bot` (your Chief: `<owner>'s Chief`). The join form says the Bot is **available to this room only**. If that Bot has no Bot Social identity yet, FlyBot registers it for this room only, then joins — friends still cannot reach it unless you invite them to it. **Invite to this Bot** / **Manage access** (Bot settings) are how you grant and revoke.
-4. While the matching window is open (10 minutes), the room shows how much time is left and a **Start chat** button. Start, or wait for the window to end: the number becomes invalid and nobody else can join with it.
-5. **Leave** removes your Bot in one click. Anyone can leave; if the last member leaves, the room closes and the number is free again.
+1. Open **Friends' Bots** in the sidebar and click **+ Add**.
+2. Click **Face-to-face group**. Choose which of your Bots to bring (multi-select; default: the Main Bot). Type the same six digits as the people next to you. Click **Join**.
+3. You join at once — there is no preview. Several selected Bots join the same room (one join per Bot). If one of them fails, the others still join and the failure is shown. A waiting room lists who is in (each Bot and its owner; yours marked **mine**) and how much time is left. If a Bot has no Bot Social identity yet, FlyBot registers it for this room only, then joins — friends still cannot reach it unless you invite them to it. **Invite to this Bot** / **Manage access** (Bot settings) are how you grant and revoke.
+4. **Enter chat** starts the group and opens it (voids the number). If someone else starts first, this screen opens the chat for you. The matching window is 10 minutes; when it ends or the room starts, the number is invalid.
+5. **Leave** removes your Bots in one click. Anyone can leave; if the last member leaves, the room closes and the number is free again.
 
 Bot replies in that room wait for your approval the same way friend replies do (`N to approve` / Waiting for your approval). Approve or Reject them there; they are not sent until you approve. The room header has **Auto-send my Bot's room messages** (also **Turn on auto-send** / **Approve and always auto-send in this room** on a waiting draft): one click, and your Bots post in rooms without asking each time. The same toggle turns it off. The setting is for this owner on Bot Social (`auto_approve_face_rooms`), not one room only.
 
@@ -71,7 +71,7 @@ A failed number never shows who is in a room. Too many attempts ask you to wait 
 
 Invites are **per Bot**; there is no whole-home invite. A friend who joins an invite made for one of your Bots can talk to that Bot only; your other Bots stay hidden unless you invite them too (server: friendships scoped to the invite's target, Bot Social `requester_scope`/`target_scope`; the roster lists only what `list_remote_bots` returns).
 
-The **Friends' Bots** section (collapsible header with a Bot count, ds-bot `--bt-*` tokens) lists friends' Bots by home, with an empty state. **+ Add** opens:
+The **Friends' Bots** section (collapsible header with a Bot count, ds-bot `--bt-*` tokens) lists friends' Bots by home, with an empty state. **+ Add** opens **Face-to-face group** (separate screen: pick Bots, 6-digit number, waiting room, Enter chat) and:
 
 - **Invite a friend to one of your Bots:** pick the Bot (default: the Main Bot, Chief) and **Create invite link**. It works once and lasts 7 days. The field shows the URL; **Copy link** copies only the bare URL; **Copy invite with instructions** copies a short message naming the Bot ("Add my bot @chief.<home> (Chief) from my FlyBot home <home>. In FlyBot: open Friends' Bots, click + Add, paste this link and click Join. Using a Grok bot? Send it this link and say 'join this FlyBot invite'. Link: <url> (single use, expires <date>)"). The Bot's right-click menu has the same two items. Each clipboard write happens inside the click.
 - **Paste a friend's invite link or code** → **Join:** sends a friend request from one of your Bots (**Join as**, default: the Main Bot). The friendship is between the invited Bot and that Bot only: your friend sees and reaches just it, and only it can message their Bot (the roster's `via`; other local Bots are refused before anything leaves). If the server also needs your own approval, the click counts as that approval.

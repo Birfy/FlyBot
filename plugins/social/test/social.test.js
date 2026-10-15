@@ -1114,7 +1114,9 @@ function withFaceRooms(server) {
           codes.set(body.code, room)
         }
         const handle = body.bots?.[0] || '@chief.danyang.home'
-        const member = { bot_id: 'bot_local', handle, display_name: 'Chief', owner_name: 'Danyang', published: false, label: 'Chief · Danyang' }
+        const slug = String(handle).replace(/^@/, '').split('.')[0]
+        const display = slug === 'chief' ? 'Chief' : slug === 'writer' ? 'Writer' : slug
+        const member = { bot_id: `bot_${slug}`, handle, display_name: display, owner_name: 'Danyang', published: false, label: `${display} · Danyang` }
         if (!room.members.some(m => m.handle === handle)) {
           room.members.push(member)
           room.event_cursor += 1
@@ -1233,31 +1235,55 @@ test('face-to-face send pending_approval uses decide_approval', async (t) => {
   assert.equal((await call('flybot/social/status', {})).value.pendingApprovals, 0)
 })
 
-test('Friends\' Bots (#83): Join with a number is in the panel', () => {
+function loadSocialClient(callImpl) {
   const registered = []
   const entries = []
   const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
   sandbox.globalThis = sandbox
-  sandbox.__flybot__ = { slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } }, call: async () => ({ connected: true, bots: [{ id: 'a', name: 'Chief', isMain: true }], homes: [], rooms: [] }) }
-  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
-  const data = { homes: [] }
-  const initial = [data, '', true, false, {}, {}, '', []]
-  let i = 0
-  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
-  const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
-  plugin.apply({})
-  const tree = entries[0][1].component({})
-  const all = []
-  const walk = node => {
-    if (!node || typeof node !== 'object') return
-    if (typeof node.type === 'function') { walk(node.type(node.props)); return }
-    all.push(node)
-    ;(node.children ?? []).forEach(walk)
+  sandbox.__flybot__ = {
+    slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } },
+    call: callImpl || (async () => ({})),
   }
-  walk(tree)
-  assert.ok(all.some(n => n.props['data-flybot'] === 'face-join'))
-  assert.ok(all.some(n => n.type === 'button' && n.children.includes('Join with a number')))
-  assert.ok(entries.some(([slot, entry]) => slot === 'flybot.room.overview' && entry.id === 'social-face'))
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const walk = (node, all = []) => {
+    if (!node || typeof node !== 'object') return all
+    if (typeof node.type === 'function') return walk(node.type(node.props), all)
+    all.push(node)
+    for (const child of node.children ?? []) walk(child, all)
+    return all
+  }
+  const pluginOf = (states, effects = false) => {
+    let i = 0
+    return registered[0].factory(() => ({
+      createElement: h, Fragment: 'F',
+      useEffect: effects ? (fn => { fn?.() }) : () => {},
+      useState: v => [i < states.length ? states[i++] : v, () => {}],
+      useRef: v => ({ current: v }),
+      useMemo: f => f(),
+    }))
+  }
+  return { registered, entries, walk, pluginOf, h }
+}
+
+test('Friends\' Bots (#92): Face-to-face group is under + Add; the inline join form is gone', () => {
+  const sidebar = (adding) => {
+    const { entries, walk, pluginOf } = loadSocialClient(async () => ({ connected: true, bots: [{ id: 'a', name: 'Chief', isMain: true }], homes: [], rooms: [] }))
+    const plugin = pluginOf([{ homes: [] }, '', true, adding, {}, {}, '', [], '', false])
+    plugin.apply({})
+    const entry = entries.find(([slot]) => slot === 'flybot.sidebar.section')
+    return { nodes: walk(entry[1].component({})), entries }
+  }
+  const closed = sidebar(false)
+  assert.equal(closed.nodes.some(n => n.type === 'button' && n.children.includes('Join with a number')), false)
+  assert.equal(closed.nodes.some(n => n.props['data-flybot'] === 'face-join' || n.props['data-flybot'] === 'face-group-entry'), false)
+  assert.ok(closed.entries.some(([slot, entry]) => slot === 'flybot.room.overview' && entry.id === 'social-face'))
+
+  const opened = sidebar(true)
+  assert.ok(opened.nodes.some(n => n.props['data-flybot'] === 'face-group-entry'))
+  assert.ok(opened.nodes.some(n => n.type === 'button' && n.props['data-flybot'] === 'face-group-open' && n.children.includes('Face-to-face group')))
+  assert.equal(opened.nodes.some(n => n.type === 'button' && n.children.includes('Join with a number')), false)
+  assert.equal(opened.nodes.some(n => n.props['data-flybot'] === 'face-join'), false)
 })
 
 test('face-to-face auto-send maps to PATCH /v1/me and swallows confirmation', async (t) => {
@@ -1410,29 +1436,165 @@ test('Bot settings: Manage access lists grants and revokes one', async () => {
   assert.ok(calls.some(([endpoint]) => endpoint === 'social/revoke-grant'))
 })
 
-test('Join with a number says the brought Bot is available to this room only', () => {
-  const registered = []
-  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
-  sandbox.globalThis = sandbox
-  sandbox.__flybot__ = { slots: { register: () => () => {} }, call: async () => ({}) }
-  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
-  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
-  const walk = (node, all = []) => {
-    if (!node || typeof node !== 'object') return all
-    if (typeof node.type === 'function') return walk(node.type(node.props), all)
-    all.push(node)
-    for (const child of node.children ?? []) walk(child, all)
-    return all
-  }
-  const render = (initial) => {
-    let i = 0
-    const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
-    return walk(plugin.JoinWithNumber({}))
-  }
-  const nodes = render(['', [{ id: 'a', name: 'Writer' }], 'a', false, null, true])
-  const hint = nodes.find(n => n.props['data-flybot'] === 'face-join-room')
+test('Face-to-face group (#92): pick Bots, join each once, live roster, Enter chat, errors', async () => {
+  const calls = []
+  const opened = []
+  const { walk, pluginOf } = loadSocialClient(async (endpoint, payload) => {
+    calls.push([endpoint, payload])
+    if (endpoint === 'social/face-join') {
+      if (payload.code === '999999') throw Object.assign(new Error('This room already has 8 Bots. Nobody else can join with this number.'), { code: 'room_full' })
+      if (payload.code === '000000') throw Object.assign(new Error('This number is no longer valid. The room already started.'), { code: 'code_void' })
+      if (payload.botId === 'b' && payload.code === '123456') throw Object.assign(new Error('This Bot cannot join that room.'), { code: 'forbidden' })
+      return {
+        roomId: 'g1', faceRoomId: 'frm_1', status: 'candidate', expiresAt: '2099-01-01T00:00:00.000Z',
+        members: [{ handle: `@${payload.botId}.me.home`, displayName: payload.botId === 'a' ? 'Chief' : 'Writer', ownerName: 'Me' }],
+        joinedAs: { botId: payload.botId, botName: payload.botId === 'a' ? 'Chief' : 'Writer', handle: `@${payload.botId}.me.home` },
+      }
+    }
+    if (endpoint === 'social/face-start') return { roomId: 'g1', faceRoomId: 'frm_1', status: 'open' }
+    if (endpoint === 'social/face-leave') return { roomId: 'g1', faceRoomId: 'frm_1', status: 'left' }
+    if (endpoint === 'social/face-rooms') return { rooms: [] }
+    if (endpoint === 'social/status') return { bots: [{ id: 'a', name: 'Chief', isMain: true }, { id: 'b', name: 'Writer' }] }
+    return {}
+  })
+  const bots = [{ id: 'a', name: 'Chief', isMain: true, handle: '@a.me.home' }, { id: 'b', name: 'Writer', handle: '@b.me.home' }]
+  const setup = (states) => walk(pluginOf(states).FaceToFaceGroup({ actions: { openSession: id => opened.push(id) } }))
+
+  const picker = setup(['setup', bots, ['a'], '', false, null, [], null, 0])
+  assert.ok(picker.some(n => n.props['data-flybot'] === 'face-group'))
+  assert.ok(picker.some(n => n.props['data-flybot'] === 'face-pick'))
+  assert.ok(picker.some(n => n.props['data-flybot'] === 'face-join'))
+  const hint = picker.find(n => n.props['data-flybot'] === 'face-join-room')
   assert.ok(hint)
   assert.match(hint.children.join(''), /Available to this room only/)
+  assert.equal(picker.some(n => /published/i.test(String(n.children ?? ''))), false)
+  assert.ok(picker.some(n => n.type === 'input' && n.props.type === 'checkbox' && n.props['aria-label'] === 'Chief' && n.props.checked === true))
+  assert.ok(picker.some(n => n.type === 'input' && n.props.type === 'checkbox' && n.props['aria-label'] === 'Writer' && n.props.checked === false))
+
+  const short = setup(['setup', bots, ['a'], '12ab', false, null, [], null, 0])
+  await short.find(n => n.type === 'form' && n.props['data-flybot'] === 'face-join').props.onSubmit({ preventDefault() {} })
+  assert.equal(calls.some(([endpoint]) => endpoint === 'social/face-join'), false)
+
+  calls.length = 0
+  const joinBoth = setup(['setup', bots, ['a', 'b'], '123456', false, null, [], null, 0])
+  await joinBoth.find(n => n.type === 'form' && n.props['data-flybot'] === 'face-join').props.onSubmit({ preventDefault() {} })
+  assert.deepEqual(
+    calls.filter(([endpoint]) => endpoint === 'social/face-join').map(([, payload]) => [payload.code, payload.botId]),
+    [['123456', 'a'], ['123456', 'b']],
+  )
+
+  calls.length = 0
+  const full = setup(['setup', bots, ['a'], '999999', false, { tone: 'error', text: 'This room already has 8 Bots. Nobody else can join with this number.' }, [], null, 0])
+  assert.match(full.find(n => n.props['data-tone'] === 'error').children.join(''), /8 Bots/)
+  await full.find(n => n.type === 'form').props.onSubmit({ preventDefault() {} })
+  assert.equal(calls[0][0], 'social/face-join')
+  const voided = setup(['setup', bots, ['a'], '000000', false, { tone: 'error', text: 'This number is no longer valid. The room already started.' }, [], null, 0])
+  assert.match(voided.find(n => n.props['data-tone'] === 'error').children.join(''), /no longer valid/)
+
+  const room = {
+    roomId: 'g1', faceRoomId: 'frm_1', status: 'candidate', expiresAt: '2099-01-01T00:00:00.000Z',
+    mineHandles: ['@a.me.home'],
+    members: [
+      { handle: '@a.me.home', displayName: 'Chief', ownerName: 'Me' },
+      { handle: '@coder.bob.home', displayName: 'Coder', ownerName: 'Bob' },
+    ],
+  }
+  const wait = setup(['waiting', bots, ['a'], '123456', false, null, [{ botId: 'b', name: 'Writer', text: 'This Bot cannot join that room.' }], room, 0])
+  assert.ok(wait.some(n => n.props['data-flybot'] === 'face-wait'))
+  const mine = wait.find(n => n.props['data-flybot'] === 'face-member' && n.props['data-handle'] === '@a.me.home')
+  const peer = wait.find(n => n.props['data-flybot'] === 'face-member' && n.props['data-handle'] === '@coder.bob.home')
+  assert.equal(mine.props['data-mine'], true)
+  assert.ok(wait.some(n => n.props['data-flybot'] === 'face-mine' && n.children.includes('mine')))
+  assert.equal(peer.props['data-mine'], undefined)
+  assert.ok(wait.some(n => n.children.includes('Me')))
+  assert.ok(wait.some(n => n.children.includes('Bob')))
+  assert.match(wait.find(n => n.props['data-flybot'] === 'face-join-fail').children.join(''), /Writer:/)
+  assert.equal(wait.some(n => /published/i.test(String(n.children ?? ''))), false)
+  const enter = wait.find(n => n.props['data-flybot'] === 'face-enter')
+  assert.ok(enter && enter.children.includes('Enter chat'))
+  calls.length = 0
+  opened.length = 0
+  await enter.props.onClick()
+  assert.deepEqual(
+    calls.filter(([endpoint]) => endpoint === 'social/face-start').map(([, payload]) => [payload.roomId, payload.faceRoomId]),
+    [['g1', 'frm_1']],
+  )
+  assert.deepEqual(opened, ['g1'])
+
+  const liveRooms = [{
+    roomId: 'g1', faceRoomId: 'frm_1', status: 'candidate', expiresAt: room.expiresAt,
+    members: room.members.concat([{ handle: '@writer.alice.home', displayName: 'Writer', ownerName: 'Alice' }]),
+  }]
+  const liveCalls = []
+  const liveClient = loadSocialClient(async (endpoint, payload) => {
+    liveCalls.push([endpoint, payload])
+    if (endpoint === 'social/face-rooms') return { rooms: liveRooms }
+    return {}
+  })
+  const store = ['waiting', bots, ['a'], '123456', false, null, [], { ...room }, 0]
+  let cursor = 0
+  const livePlugin = liveClient.registered[0].factory(() => ({
+    createElement: liveClient.h, Fragment: 'F',
+    useEffect: fn => { fn?.() },
+    useState: v => {
+      const i = cursor++
+      if (store[i] === undefined) store[i] = v
+      return [store[i], n => { store[i] = typeof n === 'function' ? n(store[i]) : n }]
+    },
+    useRef: v => ({ current: v }),
+    useMemo: f => f(),
+  }))
+  cursor = 0
+  livePlugin.FaceToFaceGroup({ actions: {} })
+  assert.ok(liveCalls.some(([endpoint]) => endpoint === 'social/face-rooms'))
+  for (let n = 0; n < 10 && !store[7]?.members?.some(m => m.handle === '@writer.alice.home'); n++) {
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  assert.ok((store[7].members ?? []).some(m => m.handle === '@writer.alice.home'))
+  cursor = 0
+  const liveNodes = liveClient.walk(livePlugin.FaceToFaceGroup({ actions: {} }))
+  assert.ok(liveNodes.some(n => n.props['data-flybot'] === 'face-member' && n.props['data-handle'] === '@writer.alice.home'))
+  assert.ok(liveNodes.some(n => n.children.includes('Alice')))
+
+  const autoOpened = []
+  const autoPlugin = pluginOf(['waiting', bots, ['a'], '123456', false, null, [], { ...room, status: 'open' }, 0], true)
+  autoPlugin.FaceToFaceGroup({ actions: { openSession: id => autoOpened.push(id) }, onClose() { autoOpened.push('close') } })
+  assert.deepEqual(autoOpened, ['g1', 'close'])
+})
+
+test('face-to-face: several local Bots join the same number and leave together', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const first = (await call('flybot/social/face-join', { code: '123456', botId: 'a' })).value
+  const second = (await call('flybot/social/face-join', { code: '123456', botId: 'b' })).value
+  assert.equal(first.faceRoomId, second.faceRoomId)
+  assert.equal(first.roomId, second.roomId)
+  const listed = (await call('flybot/social/face-rooms', {})).value
+  assert.equal(listed.rooms.length, 1)
+  const handles = (listed.rooms[0].members ?? []).map(m => m.handle)
+  assert.ok(handles.includes('@chief.danyang.home'))
+  assert.ok(handles.includes('@writer.danyang.home'))
+  const scope = ctx.flybot.scope('social')
+  assert.equal(scope.fields.get('a', 'member').roomOnly, true)
+  assert.equal(scope.fields.get('b', 'member').roomOnly, true)
+  server.face.rooms.get('frm_123456').members.push({
+    bot_id: 'bot_peer', handle: '@coder.bob.home', display_name: 'Coder', owner_name: 'Bob', published: false, label: 'Coder · Bob',
+  })
+  const live = (await call('flybot/social/face-rooms', {})).value
+  assert.ok((live.rooms[0].members ?? []).some(m => m.handle === '@coder.bob.home' && /Bob/.test(m.label || m.ownerName || '')))
+  const left = (await call('flybot/social/face-leave', { faceRoomId: 'frm_123456' })).value
+  assert.equal(left.status, 'closed')
+  assert.equal(scope.fields.get('a', 'member'), undefined)
+  assert.equal(scope.fields.get('b', 'member'), undefined)
+  const removed = server.calls.filter(c => c.name === 'remove_home_member')
+  assert.equal(removed.length >= 2, true)
 })
 
 test('face-to-face join of an ungranted Bot is room-only', async (t) => {

@@ -3,7 +3,7 @@
 window.__ModuleLoader__.load({
   id: '@flybot/social',
   factory(require) {
-    const { createElement: h, useEffect, useState } = require('react')
+    const { createElement: h, useEffect, useState, useRef } = require('react')
     const slots = () => {
       // Same bootstrap as ds-bot's flybot-registry.js: whichever bundle loads first creates it.
       if (globalThis.__flybot__ === undefined) throw new Error('flybot-social needs ds-bot with FlyBot slots')
@@ -104,6 +104,17 @@ window.__ModuleLoader__.load({
 .fs-menu button{display:block;width:100%;text-align:left;height:28px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:13px;cursor:pointer}
 .fs-menu button:hover{background:var(--bt-hover,rgba(119,119,119,.09))}
 .fs-chat-approval{margin:4px 0 8px}
+.fs-dialog-back{position:fixed;inset:0;z-index:40;background:rgba(20,20,20,.4);display:flex;align-items:center;justify-content:center;padding:12px}
+.fs-dialog{width:min(420px,100%);max-height:min(640px,92vh);overflow:auto;margin:0;padding:14px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:14px;background:var(--bt-card,#fff);display:flex;flex-direction:column;gap:10px;box-shadow:0 12px 40px rgba(0,0,0,.18)}
+.fs-dialog-head{display:flex;align-items:center;gap:8px}
+.fs-dialog-head .fs-name{flex:1 1 auto}
+.fs-pick{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:2px;max-height:220px;overflow:auto}
+.fs-pick li{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px}
+.fs-pick li:hover{background:var(--bt-hover,rgba(119,119,119,.09))}
+.fs-pick label{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;cursor:pointer;font:inherit}
+.fs-wait-roster{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;max-height:280px;overflow:auto}
+.fs-wait-roster li{display:flex;align-items:center;gap:8px;padding:6px 4px;border-radius:8px}
+.fs-fail{padding:0}
 `
     function useStyles() {
       useEffect(() => {
@@ -208,22 +219,74 @@ window.__ModuleLoader__.load({
               : null))))
     }
 
-    // Friends' Bots grouped by their home (one collapsible group each). Each Bot is drawn by
-    // ds-bot's own Bot row (renderBot: avatar, preview, unread, click opens its chat).
-    function JoinWithNumber({ actions } = {}) {
-      const [code, setCode] = useState('')
+    const STOP_JOIN = /6-digit|no longer valid|Too many (failed )?attempts|signed you out/i
+    function shouldStopJoin(e) {
+      const code = String(e?.code ?? '')
+      if (['invalid_code', 'code_void', 'locked_out', 'unauthorized', 'rate_limited'].includes(code)) return true
+      return STOP_JOIN.test(String(e?.message ?? e ?? ''))
+    }
+    function memberIsMine(member, bots, room) {
+      if (member?.remote === false) return true
+      const handle = String(member?.handle ?? '')
+      if (!handle) return false
+      if ((room?.mineHandles ?? []).includes(handle)) return true
+      return (bots ?? []).some(bot => bot.handle === handle)
+    }
+
+    // Separate Face-to-face group screen (#92): pick Bots, join by number, live waiting room.
+    function FaceToFaceGroup({ actions, onClose } = {}) {
+      const [step, setStep] = useState('setup')
       const [bots, setBots] = useState([])
-      const [joiner, setJoiner] = useState('')
+      const [selected, setSelected] = useState([])
+      const [code, setCode] = useState('')
       const [busy, setBusy] = useState(false)
       const [status, setStatus] = useState(null)
-      const [open, setOpen] = useState(false)
+      const [failures, setFailures] = useState([])
+      const [room, setRoom] = useState(null)
+      const [tick, setTick] = useState(0)
+      const opened = useRef(false)
       useEffect(() => {
         call('social/status', {}).then(value => {
           const list = value?.bots ?? []
           setBots(list)
-          setJoiner(current => current || list[0]?.id || '')
+          setSelected(current => {
+            if (current.length) return current
+            const main = list.find(bot => bot.isMain) ?? list[0]
+            return main ? [main.id] : []
+          })
         }, () => {})
       }, [])
+      useEffect(() => {
+        if (step !== 'waiting' || !(room?.faceRoomId || room?.roomId)) return undefined
+        const faceId = room.faceRoomId
+        const localId = room.roomId
+        const load = () => call('social/face-rooms', {}).then(value => {
+          const list = Array.isArray(value?.rooms) ? value.rooms : []
+          const next = list.find(item => (faceId && item.faceRoomId === faceId) || (localId && item.roomId === localId))
+          if (next) setRoom(current => current ? { ...current, ...next } : next)
+        }, () => {})
+        load()
+        if (typeof setInterval !== 'function') return undefined
+        const timer = setInterval(load, 2000)
+        timer?.unref?.()
+        return () => clearInterval(timer)
+      }, [step, room?.faceRoomId, room?.roomId])
+      useEffect(() => {
+        if (step !== 'waiting' || room?.status !== 'candidate' || !room?.expiresAt) return undefined
+        if (typeof setInterval !== 'function') return undefined
+        const timer = setInterval(() => setTick(n => n + 1), 1000)
+        timer?.unref?.()
+        return () => clearInterval(timer)
+      }, [step, room?.status, room?.expiresAt])
+      useEffect(() => {
+        if (step !== 'waiting' || room?.status !== 'open' || opened.current) return undefined
+        const id = room.roomId
+        if (!id || typeof actions?.openSession !== 'function') return undefined
+        opened.current = true
+        actions.openSession(id)
+        onClose?.()
+        return undefined
+      }, [step, room?.status, room?.roomId])
       const join = async (event) => {
         event?.preventDefault?.()
         const digits = String(code).replace(/\D/g, '').slice(0, 6)
@@ -231,37 +294,137 @@ window.__ModuleLoader__.load({
           setStatus({ tone: 'error', text: 'Enter a 6-digit number.' })
           return
         }
+        if (!selected.length) {
+          setStatus({ tone: 'error', text: 'Choose which of your Bots join.' })
+          return
+        }
+        setBusy(true)
+        setStatus(null)
+        setFailures([])
+        const mine = []
+        const failed = []
+        let last
+        for (const botId of selected) {
+          const bot = bots.find(item => item.id === botId)
+          try {
+            const result = await call('social/face-join', { code: digits, botId })
+            last = result
+            if (result?.joinedAs?.handle) mine.push(result.joinedAs.handle)
+          } catch (e) {
+            failed.push({ botId, name: bot?.name || 'Bot', text: errorText(e) })
+            if (shouldStopJoin(e) && !last) {
+              setStatus({ tone: 'error', text: errorText(e) })
+              setFailures(failed)
+              setBusy(false)
+              return
+            }
+            if (shouldStopJoin(e)) break
+          }
+        }
+        setFailures(failed)
+        if (!last) {
+          setStatus({ tone: 'error', text: failed[0]?.text || 'Could not join that room. Try another number.' })
+          setBusy(false)
+          return
+        }
+        setRoom({ ...last, mineHandles: mine })
+        setStep('waiting')
+        setBusy(false)
+      }
+      const enter = async () => {
+        if (!room || opened.current) return
         setBusy(true)
         setStatus(null)
         try {
-          const result = await call('social/face-join', { code: digits, ...(joiner ? { botId: joiner } : {}) })
-          setCode('')
-          const n = result?.members?.length ?? 0
-          setStatus({ tone: 'ok', text: n ? `Joined. ${n} ${n === 1 ? 'Bot' : 'Bots'} in the room.` : 'Joined.' })
-          if (result?.roomId && typeof actions?.openSession === 'function') actions.openSession(result.roomId)
+          let next = room
+          if (room.status === 'candidate') {
+            next = await call('social/face-start', { roomId: room.roomId, faceRoomId: room.faceRoomId })
+            setRoom(current => current ? { ...current, ...next, status: 'open' } : { ...next, status: 'open' })
+          }
+          const id = next?.roomId || room.roomId
+          opened.current = true
+          if (id && typeof actions?.openSession === 'function') actions.openSession(id)
+          onClose?.()
         } catch (e) {
           setStatus({ tone: 'error', text: errorText(e) })
         } finally { setBusy(false) }
       }
-      const chosen = bots.find(bot => bot.id === joiner) ?? bots[0]
-      return h('div', { className: 'bt-social-face-join', 'data-flybot': 'face-join' },
-        h('button', { type: 'button', className: 'fs-icon', style: { margin: '2px 4px', width: 'auto' }, 'aria-expanded': open, onClick: () => setOpen(value => !value) }, open ? 'Close number' : 'Join with a number'),
-        open ? h('form', { onSubmit: join, className: 'fs-card' },
-          h('div', { className: 'fs-hint' }, 'Type the same 6-digit number as the people next to you. You join at once — there is no preview.'),
-          h('div', { className: 'fs-line' },
-            h('input', {
-              className: 'fs-digits', value: code, inputMode: 'numeric', autoComplete: 'off', maxLength: 6,
-              placeholder: '000000', 'aria-label': '6-digit room number',
-              onChange: e => setCode(String(e.target.value).replace(/\D/g, '').slice(0, 6)),
-            }),
-            h('button', { type: 'submit', className: 'fs-btn', disabled: busy || String(code).replace(/\D/g, '').length !== 6 }, 'Join')),
-          bots.length > 1 ? h('label', { className: 'fs-line fs-hint', 'data-flybot': 'face-join-as' }, 'Bring ',
-            h('select', { className: 'fs-input', value: joiner, 'aria-label': 'Which of your Bots joins', onChange: e => setJoiner(e.target.value) },
-              bots.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name))),
-            ' (default: first)') : null,
-          chosen ? h('div', { className: 'fs-hint', 'data-flybot': 'face-join-room' },
-            'Available to this room only. Friends cannot see this Bot unless you invite them to it.') : null,
-          status ? h('div', { className: 'fs-status', role: 'status', 'data-tone': status.tone }, status.text) : null) : null)
+      const leave = async () => {
+        setBusy(true)
+        setStatus(null)
+        try {
+          if (room?.faceRoomId || room?.roomId) {
+            await call('social/face-leave', { roomId: room.roomId, faceRoomId: room.faceRoomId })
+          }
+          onClose?.()
+        } catch (e) {
+          setStatus({ tone: 'error', text: errorText(e) })
+        } finally { setBusy(false) }
+      }
+      const toggle = (id) => {
+        setSelected(list => list.includes(id) ? list.filter(item => item !== id) : [...list, id])
+      }
+      const members = room?.members ?? []
+      const candidate = room?.status === 'candidate'
+      const waiting = step === 'waiting' && room
+      return h('div', { className: 'fs-dialog-back', 'data-flybot': 'face-group', role: 'dialog', 'aria-label': 'Face-to-face group' },
+        h('div', { className: 'fs-dialog' },
+          h('div', { className: 'fs-dialog-head' },
+            h('div', { className: 'fs-name' }, 'Face-to-face group'),
+            h('button', { type: 'button', className: 'fs-btn fs-btn-sm', onClick: () => onClose?.() }, 'Close')),
+          waiting ? h('div', { 'data-flybot': 'face-wait' },
+            h('div', { className: 'fs-hint', 'data-tick': tick }, candidate
+              ? (room.expiresAt ? countdown(room.expiresAt) : 'Matching window open. Anyone with the number can still join.')
+              : 'The room is open. The number is no longer valid.'),
+            h('ul', { className: 'fs-wait-roster', 'aria-label': 'Who has joined' },
+              members.map(member => {
+                const mine = memberIsMine(member, bots, room)
+                return h('li', { key: member.handle || member.id, 'data-flybot': 'face-member', 'data-mine': mine || undefined, 'data-handle': member.handle },
+                  h('span', { className: 'fs-avatar', 'aria-hidden': true }, initial(member.displayName || member.label || member.handle)),
+                  h('span', { className: 'fs-text' },
+                    h('span', { className: 'fs-name' }, member.displayName || member.label || member.handle),
+                    member.ownerName ? h('span', { className: 'fs-sub' }, member.ownerName) : null),
+                  mine ? h('span', { className: 'fs-tag', 'data-flybot': 'face-mine' }, 'mine') : null)
+              })),
+            members.length === 0 ? h('div', { className: 'fs-hint' }, 'Waiting for others to join…') : null,
+            failures.length ? h('div', { className: 'fs-status', 'data-tone': 'error', 'data-flybot': 'face-join-fail', role: 'status' },
+              failures.map(item => `${item.name}: ${item.text}`).join(' ')) : null,
+            status ? h('div', { className: 'fs-status', 'data-tone': status.tone, role: 'status' }, status.text) : null,
+            h('div', { className: 'fs-face-actions' },
+              h('button', {
+                type: 'button', className: 'fs-btn fs-btn-primary', 'data-flybot': 'face-enter',
+                disabled: !!busy || !room.roomId, onClick: enter,
+              }, 'Enter chat'),
+              h('button', { type: 'button', className: 'fs-btn', 'data-flybot': 'face-leave', disabled: !!busy, onClick: leave }, 'Leave'))) : h('form', { onSubmit: join, 'data-flybot': 'face-join' },
+            h('div', { className: 'fs-hint' }, 'Choose which of your Bots to bring, then type the same 6-digit number as the people next to you. You join at once — there is no preview.'),
+            h('ul', { className: 'fs-pick', 'data-flybot': 'face-pick', 'aria-label': 'Your Bots' },
+              bots.map(bot => h('li', { key: bot.id },
+                h('label', null,
+                  h('input', {
+                    type: 'checkbox', checked: selected.includes(bot.id),
+                    'aria-label': bot.name,
+                    onChange: () => toggle(bot.id),
+                  }),
+                  h('span', { className: 'fs-avatar', 'aria-hidden': true }, initial(bot.name)),
+                  h('span', { className: 'fs-text' },
+                    h('span', { className: 'fs-name' }, bot.name),
+                    bot.isMain ? h('span', { className: 'fs-sub' }, 'Main Bot') : null))))),
+            bots.length === 0 ? h('div', { className: 'fs-hint' }, 'Loading your Bots…') : null,
+            h('div', { className: 'fs-hint', 'data-flybot': 'face-join-room' },
+              'Available to this room only. Friends cannot see these Bots unless you invite them.'),
+            h('div', { className: 'fs-line' },
+              h('input', {
+                className: 'fs-digits', value: code, inputMode: 'numeric', autoComplete: 'off', maxLength: 6,
+                placeholder: '000000', 'aria-label': '6-digit room number',
+                onChange: e => setCode(String(e.target.value).replace(/\D/g, '').slice(0, 6)),
+              }),
+              h('button', {
+                type: 'submit', className: 'fs-btn',
+                disabled: busy || String(code).replace(/\D/g, '').length !== 6 || !selected.length,
+              }, 'Join')),
+            failures.length ? h('div', { className: 'fs-status fs-fail', 'data-tone': 'error', 'data-flybot': 'face-join-fail', role: 'status' },
+              failures.map(item => `${item.name}: ${item.text}`).join(' ')) : null,
+            status ? h('div', { className: 'fs-status', role: 'status', 'data-tone': status.tone }, status.text) : null)))
     }
 
     function FaceRoomCard({ room, actions, onChange, autoSend, autoBusy, autoError, onAutoSend }) {
@@ -498,6 +661,7 @@ window.__ModuleLoader__.load({
       const [saving, setSaving] = useState('')
       const [pending, setPending] = useState([])
       const [hiding, setHiding] = useState(() => new Set())
+      const [faceOpen, setFaceOpen] = useState(false)
       const load = () => call('social/remote-bots', { fresh: true }).then(value => { setData(value); setError('') }, e => setError(errorText(e)))
       const loadSettings = () => call('social/settings', {}).then(value => setAuto(value?.autoAccept ?? {}), () => {})
       const loadApprovals = () => call('social/status', {}).then(value => {
@@ -567,9 +731,12 @@ window.__ModuleLoader__.load({
           unavailable ? null : h('button', { type: 'button', className: 'fs-icon', 'aria-expanded': adding, title: 'Add a friend', onClick: () => { setAdding(!adding); setOpen(true) } }, adding ? 'Done' : '+ Add')),
         open ? h('div', { className: 'fs-body' },
           h(PendingApprovals, { items: pending, busy: saving, onDecide: decide }),
-          unavailable ? null : h(JoinWithNumber, { actions }),
           unavailable ? null : h(FaceRooms, { actions }),
+          adding && !unavailable ? h('div', { className: 'fs-card', 'data-flybot': 'face-group-entry' },
+            h('button', { type: 'button', className: 'fs-btn fs-btn-primary', 'data-flybot': 'face-group-open', onClick: () => setFaceOpen(true) }, 'Face-to-face group'),
+            h('div', { className: 'fs-hint' }, 'Meet the people next to you. Pick your Bots and type the same 6-digit number.')) : null,
           adding && !unavailable ? h(AddFriend, { onChange: () => load().then(loadSettings) }) : null,
+          faceOpen && !unavailable ? h(FaceToFaceGroup, { actions, onClose: () => setFaceOpen(false) }) : null,
           unavailable ? h('div', { className: 'fs-empty', 'data-flybot': 'social-unavailable' }, error) : error ? h('div', { className: 'fs-status', 'data-tone': 'error', style: { padding: '4px 10px' } }, error) : null,
           data === null && !error ? h('div', { className: 'fs-hint' }, 'Loading…') : null,
           homes.map(entry => {
@@ -796,7 +963,7 @@ window.__ModuleLoader__.load({
       ChatApproval,
       ChatApprovalDock,
       FriendBotRow,
-      JoinWithNumber,
+      FaceToFaceGroup,
       FaceRoomOverview,
       FaceAutoSend,
       apply(ctx) {
