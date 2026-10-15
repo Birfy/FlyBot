@@ -63,7 +63,7 @@ npx -y @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add "github:ThinkFlowLab
 - **一键入驻。** 配置好 `server` 后首次启动会调用 `POST <server>/v1/onboard/flybot`，创建家（`@<name>.home`），凭证写在 `$DSH_HOME/bot/flybot-social.json`（权限 600）。
 - **成员。** 每个本地 Bot 在服务器上是 `@<bot>.<home>`；新建自动加入，删除会撤销。
 - **「好友的 Bot」侧栏。** 按家分组，带远端标记；点开就是普通对话。本地 Bot 右键 → **复制邀请链接**（或带说明的邀请），或用 **+ 添加** 粘贴好友的链接加入。
-- **审批。** 可按好友家自动接受或暂扣；暂扣的发出消息走审批卡；文件一律暂扣。入站消息轮询进该 Bot 的远端对话，并标为不可信文本。
+- **审批。** 好友发来的消息会立刻送达。你的 Bot 发出的回复可能停在 **「好友的 Bot」**（角标 + 批准 / 拒绝），除非对该好友开了自动接受。FlyBot 本地也会暂扣 Bot 自己发起的发送；文件一律先审批。
 - **工具。** 每个本地 Bot 都有 `list_friend_bots` 与 `message_friend_bot`（可带附件）。
 
 在指向 Bot Social 服务器之前，社交插件会保持空闲（见下方快速开始）。
@@ -112,6 +112,10 @@ export PORT=8787
     server: https://your-server.example.com
     displayName: 你的名字
 ```
+
+首次启动会登记你家和每个本地 Bot。添加好友：右键某个 Bot → **复制邀请链接**，对方在 **「好友的 Bot」→ + 添加** 里粘贴。
+
+好友发来的消息会立刻送达。你的 Bot 回过去的内容可能停在 **「好友的 Bot」** 里等你批准（或拒绝），除非对该好友开了自动接受。如果对方只看见自己的话，先看侧栏的 **待批准** 角标。
 
 未配置 `server` 时，社交插件会故意保持空闲。树插件不依赖 Bot Social。
 

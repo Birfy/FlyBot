@@ -72,6 +72,10 @@ window.__ModuleLoader__.load({
 .fs-link:hover{text-decoration:underline}
 .fs-status{padding:0;font-size:12px;line-height:17px;color:var(--bt-ink-2,rgba(20,20,20,.6));overflow-wrap:anywhere}
 .fs-status[data-tone=error]{color:#e5484d}
+.fs-pending-tag{background:var(--bt-accent,#4d6bfe);color:#fff}
+.fs-pending{margin:4px 4px 6px;padding:8px 10px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:10px;background:var(--bt-card,#fff);display:flex;flex-direction:column;gap:6px}
+.fs-pending .fs-label{padding:0}
+.fs-draft{font-size:13px;line-height:18px;color:var(--bt-ink,#141414);white-space:pre-wrap;overflow-wrap:anywhere;max-height:96px;overflow:auto}
 `
     function useStyles() {
       useEffect(() => {
@@ -84,6 +88,23 @@ window.__ModuleLoader__.load({
     }
     const initial = name => (String(name ?? '?').replace(/^@/, '').trim()[0] ?? '?').toUpperCase()
 
+    // Outbound drafts Bot Social is holding: badge + Approve / Reject. Inbound does not wait.
+    function PendingApprovals({ items, busy, onDecide }) {
+      if (!items?.length) return null
+      return h('div', { className: 'fs-pending', 'data-flybot': 'pending-approvals', role: 'region', 'aria-label': 'Messages waiting for your approval' },
+        h('div', { className: 'fs-label' }, 'Waiting for your approval', h('span', { className: 'fs-count' }, String(items.length))),
+        h('div', { className: 'fs-hint' }, 'A friend already sees their own message. These replies stay here until you Approve or Reject them. Turn on Auto-accept for that friend to skip the hold next time.'),
+        items.map(item => h('div', { key: item.id, className: 'fs-row', 'data-flybot': 'pending-item' },
+          h('span', { className: 'fs-avatar', 'aria-hidden': true }, initial(item.from ?? item.toName ?? item.to)),
+          h('span', { className: 'fs-text' },
+            h('span', { className: 'fs-name' }, item.from ? `${item.from} → ${item.toName || item.to || 'friend'}` : (item.toName || item.to || 'Outbound reply')),
+            item.text ? h('span', { className: 'fs-draft' }, item.text) : (item.summary ? h('span', { className: 'fs-sub fs-msg' }, item.summary) : null),
+            item.attachments?.length ? h('span', { className: 'fs-sub' }, item.attachments.map(file => file.name).join(', ')) : null),
+          h('span', { className: 'fs-actions' },
+            h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: busy === item.id, onClick: () => onDecide(item, 'approve') }, 'Approve'),
+            h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: busy === item.id, onClick: () => onDecide(item, 'reject') }, 'Reject')))))
+    }
+
     // Friends' Bots grouped by their home (one collapsible group each). Each Bot is drawn by
     // ds-bot's own Bot row (renderBot: avatar, preview, unread, click opens its chat).
     function FriendsBots({ renderBot, remoteChats } = {}) {
@@ -95,9 +116,22 @@ window.__ModuleLoader__.load({
       const [closed, setClosed] = useState({})
       const [auto, setAuto] = useState({})
       const [saving, setSaving] = useState('')
+      const [pending, setPending] = useState([])
       const load = () => call('social/remote-bots', { fresh: true }).then(value => { setData(value); setError('') }, e => setError(errorText(e)))
       const loadSettings = () => call('social/settings', {}).then(value => setAuto(value?.autoAccept ?? {}), () => {})
-      useEffect(() => { load().then(loadSettings) }, [])
+      const loadApprovals = () => call('social/status', {}).then(value => {
+        const items = Array.isArray(value?.approvals) ? value.approvals : []
+        setPending(items)
+        if (items.length) setOpen(true)
+      }, () => {})
+      useEffect(() => {
+        load().then(loadSettings)
+        loadApprovals()
+        if (typeof setInterval !== 'function') return undefined
+        const timer = setInterval(loadApprovals, 5000)
+        timer?.unref?.()
+        return () => clearInterval(timer)
+      }, [])
       const homes = data?.homes ?? []
       const count = homes.reduce((n, entry) => n + entry.bots.length, 0)
       const chats = remoteChats ?? []
@@ -105,14 +139,23 @@ window.__ModuleLoader__.load({
         setSaving(home)
         try { const r = await call('social/auto-accept', { home, on }); setAuto(value => ({ ...value, [home]: r.autoAccept })) } catch (e) { setError(errorText(e)) } finally { setSaving('') }
       }
+      const decide = async (item, decision) => {
+        setSaving(item.id)
+        try {
+          await call('social/decide-approval', { approvalId: item.id, decision })
+          await loadApprovals()
+        } catch (e) { setError(errorText(e)) } finally { setSaving('') }
+      }
       return h('section', { className: 'fs bt-social', 'aria-label': 'Friends\' Bots' },
         h('div', { className: 'fs-head' },
           h('button', { type: 'button', className: 'fs-head-main', 'aria-expanded': open, onClick: () => setOpen(!open) },
             h('span', { className: 'fs-chev', 'aria-hidden': true }, '▾'),
             h('span', { className: 'fs-title' }, 'Friends\' Bots'),
-            data ? h('span', { className: 'fs-count', title: `${count} ${count === 1 ? 'Bot' : 'Bots'}` }, String(count)) : null),
+            data ? h('span', { className: 'fs-count', title: `${count} ${count === 1 ? 'Bot' : 'Bots'}` }, String(count)) : null,
+            pending.length ? h('span', { className: 'fs-tag fs-pending-tag', 'data-flybot': 'pending-badge', title: `${pending.length} outbound ${pending.length === 1 ? 'reply' : 'replies'} waiting for your approval` }, `${pending.length} to approve`) : null),
           h('button', { type: 'button', className: 'fs-icon', 'aria-expanded': adding, title: 'Add a friend', onClick: () => { setAdding(!adding); setOpen(true) } }, adding ? 'Done' : '+ Add')),
         open ? h('div', { className: 'fs-body' },
+          h(PendingApprovals, { items: pending, busy: saving, onDecide: decide }),
           adding ? h(AddFriend, { onChange: () => load().then(loadSettings) }) : null,
           error ? h('div', { className: 'fs-status', 'data-tone': 'error', style: { padding: '4px 10px' } }, error) : null,
           data === null && !error ? h('div', { className: 'fs-hint' }, 'Loading…') : null,
@@ -282,6 +325,7 @@ window.__ModuleLoader__.load({
       errorText,
       canInvite,
       InviteToBot,
+      PendingApprovals,
       apply(ctx) {
         let offs = []
         let tries = 0

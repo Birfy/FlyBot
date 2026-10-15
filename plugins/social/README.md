@@ -16,7 +16,8 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
   overridden per local Bot by field `social.autoApprove[home]` (UI endpoint
   `flybot/social/auto-approve`). Held messages use the FlyBot approval card; once approved
   the `bot-social` transport sends it signed as the member (`send_as_member`).
-- **Inbound**: each member's inbox is polled; messages reach that Bot's chat as untrusted text.
+- **Inbound**: each member's inbox is polled; messages reach that Bot's chat as untrusted text (no owner approval).
+- **Outbound hold (Bot Social)**: a draft the server keeps as `pending_approval` is listed on `social/status` (`pendingApprovals`, `approvals`) and in **Friends' Bots** (badge + Approve / Reject). The owner's click calls `decide_approval` (confirm code used in the same step). This is separate from FlyBot's local approval card. Auto-accept on a friendship skips the hold for later messages.
 - **Tools** (every local Bot): `list_friend_bots`, `message_friend_bot`.
 - **Legacy**: with `token` + `botId` and no home, the per-bot identity path
   (`start_conversation` / `send_message`) still works.
@@ -51,6 +52,8 @@ Each Bot's settings also has **Invite to this Bot** (slot `flybot.bot.details`).
 
 - Host endpoint `social/create-invite` (alias `social.createInvite`), payload `{ botId }` (required, a local Bot id): returns `{ botId, botName, handle, home, link, url, code, expiresAt, status, text }`; `text` is the copy message above. Browser: `flybot.call('social.createInvite', { botId })` or `ctx.flybot.social.createInvite(botId)`.
 - `ctx.flybot.social.canInvite(botId)` (also `globalThis.__flybot__.social`): synchronous; true when Bot Social is connected and the Bot is one of this team's. `ctx.flybot.social` is absent when the social plugin is not installed.
-- Host endpoint `social/status`: `{ connected, home, bots: [{ id, name, isMain, handle }] }`.
+- Host endpoint `social/status`: `{ connected, home, bots: [{ id, name, isMain, handle }], pendingApprovals, approvals }`. `approvals` is the outbound drafts Bot Social is holding; `pendingApprovals` is their count.
+- `social/approvals` (read): `{ approvals }` — same queue, always freshly fetched.
+- `social/decide-approval` (owner click): `{ approvalId, decision: 'approve' | 'reject' }` → `{ approvalId, status }`.
 
 These are owner UI actions only and are never model tools. The server's one-time confirm code is requested and used in the same click.
