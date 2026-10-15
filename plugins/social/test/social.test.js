@@ -157,6 +157,14 @@ async function team() {
 }
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 30))
+async function waitUntil(check, { timeout = 1000, interval = 10 } = {}) {
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    if (check()) return
+    await new Promise(resolve => setTimeout(resolve, interval))
+  }
+  throw new Error('timed out')
+}
 
 test('first start onboards in one call, keeps the credentials file, and does not register Bots until invited', async (t) => {
   assert.equal(name, 'flybot-social')
@@ -738,7 +746,7 @@ test('Friends\' Bots (#21): one group per home, rows drawn by ds-bot\'s own Bot 
   sandbox.__flybot__ = flybot
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
   const data = { homes: [{ home: '@danyang.home', name: 'Danyang', bots: [{ handle: '@chief.danyang.home', name: 'Chief' }] }] }
-  const initial = [data, '', true, false, {}, {}, '', [], '']
+  const initial = [data, '', true, false, {}, {}, '', [], new Set()]
   let i = 0
   const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
   const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
@@ -979,7 +987,7 @@ test('Friends\' Bots (#69): a pending approval shows a badge and Approve / Rejec
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
   const data = { homes: [{ home: '@hsliu.home', name: 'hsliu', bots: [{ handle: '@hsliu.bot', name: 'hsliu' }] }] }
   const pending = [{ id: 'apr-hold-1', kind: 'outbound_message', from: '代码审查官', to: '@hsliu.bot', toName: 'hsliu', text: 'I can review that' }]
-  const initial = [data, '', true, false, {}, {}, '', pending]
+  const initial = [data, '', true, false, {}, {}, '', pending, new Set()]
   let i = 0
   const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
   const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
@@ -1595,12 +1603,95 @@ test('#90: hide a friend\'s Bot updates the list, leaves rooms, and does not unf
   assert.equal(hidden.homes[0].bots.some(b => b.handle === '@writer.bob.home'), true, 'the owner\'s other Bots stay')
   assert.equal(hidden.homes[0].home, '@bob.home', 'the friendship is unchanged')
   assert.ok(hidden.leftRooms.some(room => room.id === roomId))
-  const live = ctx.flybot.rooms.list().find(room => room.id === roomId)
-  assert.equal((live?.participants ?? []).some(p => p.handle === '@coder.bob.home' && p.leftSeq === undefined), false)
+  await waitUntil(() => {
+    const live = ctx.flybot.rooms.list().find(room => room.id === roomId)
+    return !(live?.participants ?? []).some(p => p.handle === '@coder.bob.home' && p.leftSeq === undefined)
+  })
   const saved = JSON.parse(readFileSync(settingsPath, 'utf8'))
   assert.ok(saved.hiddenRemotes['@coder.bob.home'])
   const again = (await call('flybot/social/remote-bots', { fresh: true })).value
   assert.equal(again.homes[0].bots.some(b => b.handle === '@coder.bob.home'), false, 'still hidden after refresh')
+})
+
+test('#90: hide-remote returns the filtered roster without waiting for a refresh', async (t) => {
+  const { ctx, call, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  let release
+  const held = new Promise(resolve => { release = resolve })
+  t.after(() => release?.())
+  let fetches = 0
+  const inner = server.fetch
+  server.fetch = async (url, init) => {
+    let name
+    try { name = JSON.parse(init?.body ?? '{}')?.params?.name } catch { name = undefined }
+    if (name === 'list_remote_bots') {
+      fetches += 1
+      if (fetches > 1) await held
+    }
+    return inner(url, init)
+  }
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0, settingsPath: join(home, 'flybot-social-settings.json') }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await call('flybot/social/remote-bots', { fresh: true })
+  assert.equal(fetches, 1)
+  const hidden = await Promise.race([
+    call('flybot/social/hide-remote', { handle: '@coder.bob.home' }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('hide-remote waited for the roster refresh')), 200)),
+  ])
+  assert.equal(hidden.ok, true, hidden.error?.message)
+  assert.equal(hidden.value.hidden, true)
+  assert.equal(hidden.value.homes[0].bots.some(b => b.handle === '@coder.bob.home'), false)
+  assert.equal(hidden.value.homes[0].bots.some(b => b.handle === '@writer.bob.home'), true)
+  release()
+})
+
+test('#90: hide-remote leaves independent rooms in parallel and does not wait for them', async (t) => {
+  const { ctx, call, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0, settingsPath: join(home, 'flybot-social-settings.json') }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await call('flybot/social/remote-bots', { fresh: true })
+  const first = await call('create-room', {
+    name: 'War',
+    members: ['a'],
+    participants: [
+      { kind: 'bot', id: 'a' },
+      { kind: 'bot', remote: true, handle: '@coder.bob.home' },
+    ],
+  })
+  const second = await call('create-room', {
+    name: 'Peace',
+    members: ['a'],
+    participants: [
+      { kind: 'bot', id: 'a' },
+      { kind: 'bot', remote: true, handle: '@coder.bob.home' },
+    ],
+  })
+  assert.equal(first.ok, true, first.error?.message)
+  assert.equal(second.ok, true, second.error?.message)
+  const started = Date.now()
+  const hidden = await Promise.race([
+    call('flybot/social/hide-remote', { handle: '@coder.bob.home' }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('hide-remote waited for room leave')), 60)),
+  ])
+  assert.equal(hidden.ok, true, hidden.error?.message)
+  assert.ok(Date.now() - started < 60)
+  assert.equal(hidden.value.homes[0].bots.some(b => b.handle === '@coder.bob.home'), false)
+  assert.ok(hidden.value.leftRooms.some(room => room.id === first.value.id))
+  assert.ok(hidden.value.leftRooms.some(room => room.id === second.value.id))
+  await waitUntil(() => ctx.flybot.rooms.list().every(room => !(room.participants ?? []).some(p => p.handle === '@coder.bob.home' && p.leftSeq === undefined)))
 })
 
 test('#90: a hidden Bot shows again only after the owner re-shares it', async (t) => {
@@ -1692,7 +1783,7 @@ test('#90: Friends\' Bots has Remove this Bot; ChatApproval is owner-only', () =
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
   const data = { homes: [{ home: '@hsliu.home', name: 'hsliu', bots: [{ handle: '@hsliu.bot', name: 'hsliu' }] }] }
   const pending = [{ id: 'apr-hold-1', kind: 'outbound_message', from: 'Chief', to: '@hsliu.bot', text: 'I can review that' }]
-  const initial = [data, '', true, false, {}, {}, '', pending, '']
+  const initial = [data, '', true, false, {}, {}, '', pending, new Set()]
   let i = 0
   const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
   const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
@@ -1707,9 +1798,18 @@ test('#90: Friends\' Bots has Remove this Bot; ChatApproval is owner-only', () =
     ;(node.children ?? []).forEach(walk)
   }
   walk(tree)
-  assert.ok(all.some(n => n.props['data-flybot'] === 'remove-friend-bot' && n.children.includes('Remove this Bot')))
-  assert.ok(all.some(n => n.props['data-flybot'] === 'friend-bot'))
   const remove = all.find(n => n.props['data-flybot'] === 'remove-friend-bot')
+  assert.ok(remove)
+  assert.equal(remove.props['aria-label'], 'Remove this Bot')
+  assert.ok(remove.props.title)
+  assert.ok(remove.children.includes('×'))
+  assert.equal(remove.children.includes('Remove this Bot'), false)
+  assert.equal(remove.props.className, 'fs-remove')
+  assert.ok(all.some(n => n.props['data-flybot'] === 'friend-bot'))
+  const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(src, /\.fs-row-wrap:hover \.fs-remove/)
+  assert.match(src, /\.fs-row-wrap:focus-within \.fs-remove/)
+  assert.match(src, /\.fs-remove\{[^}]*width:20px/)
   remove.props.onClick({ stopPropagation() {} })
   const owner = plugin.ChatApproval({ item: pending[0], canDecide: true, onDecide: (item, decision) => decided.push([item.id, decision]), autoSend: false, onAutoSend() {} })
   const other = plugin.ChatApproval({ item: pending[0], canDecide: false })
@@ -1727,6 +1827,102 @@ test('#90: Friends\' Bots has Remove this Bot; ChatApproval is owner-only', () =
   assert.equal(otherNodes.some(n => n.type === 'button' && n.children.includes('Approve')), false)
   ownerNodes.find(n => n.type === 'button' && n.children.includes('Reject')).props.onClick()
   assert.deepEqual(decided.at(-1), ['apr-hold-1', 'reject'])
+})
+
+test('#90: two Remove clicks keep independent pending state', async () => {
+  const registered = []
+  const blocked = new Map()
+  const flybot = {
+    slots: { register: (slot, entry) => { registered.push([slot, entry]); return () => {} } },
+    call: (endpoint, payload) => {
+      if (endpoint === 'social/hide-remote') {
+        return new Promise(resolve => { blocked.set(payload.handle, resolve) })
+      }
+      if (endpoint === 'social/status') return Promise.resolve({ connected: true, pendingApprovals: 0, approvals: [] })
+      if (endpoint === 'social/remote-bots') {
+        return Promise.resolve({
+          homes: [{
+            home: '@hsliu.home', name: 'hsliu',
+            bots: [{ handle: '@hsliu.bot', name: 'hsliu' }, { handle: '@coder.bob.home', name: 'Coder' }],
+          }],
+        })
+      }
+      if (endpoint === 'social/settings') return Promise.resolve({ autoAccept: {} })
+      return Promise.resolve({})
+    },
+  }
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, Promise, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = flybot
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const hooks = []
+  let hookI = 0
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const plugin = registered[0].factory(() => ({
+    createElement: h, Fragment: 'F', useEffect() {},
+    useState: (init) => {
+      const i = hookI++
+      if (hooks[i] === undefined) hooks[i] = typeof init === 'function' ? init() : init
+      return [hooks[i], (value) => { hooks[i] = typeof value === 'function' ? value(hooks[i]) : value }]
+    },
+    useRef: v => ({ current: v }), useMemo: f => f(),
+  }))
+  plugin.apply({})
+  const seed = {
+    homes: [{
+      home: '@hsliu.home', name: 'hsliu',
+      bots: [{ handle: '@hsliu.bot', name: 'hsliu' }, { handle: '@coder.bob.home', name: 'Coder' }],
+    }],
+  }
+  const snapshot = () => {
+    hookI = 0
+    const tree = registered.find(entry => Array.isArray(entry) && entry[0] === 'flybot.sidebar.section')[1].component({
+      renderBot: chat => h('BotRow', { handle: chat.remote?.handle }, chat.remote?.handle),
+      remoteChats: [{ remote: { handle: '@hsliu.bot' } }, { remote: { handle: '@coder.bob.home' } }],
+      actions: {},
+    })
+    const all = []
+    const walk = node => {
+      if (!node || typeof node !== 'object') return
+      if (typeof node.type === 'function') { walk(node.type(node.props)); return }
+      all.push(node)
+      ;(node.children ?? []).forEach(walk)
+    }
+    walk(tree)
+    return all
+  }
+  hookI = 0
+  hooks.length = 0
+  snapshot()
+  hooks[0] = seed
+  const rowButton = (nodes, handle) => {
+    const row = nodes.find(n => n.props['data-flybot'] === 'friend-bot' && n.props['data-handle'] === handle)
+    return (row?.children ?? []).find(n => n.props?.['data-flybot'] === 'remove-friend-bot')
+  }
+  rowButton(snapshot(), '@hsliu.bot').props.onClick({ stopPropagation() {} })
+  const afterFirst = snapshot()
+  const firstBtn = rowButton(afterFirst, '@hsliu.bot')
+  const otherBtn = rowButton(afterFirst, '@coder.bob.home')
+  assert.equal(firstBtn.props.disabled, true)
+  assert.equal(firstBtn.props['aria-label'], 'Removing…')
+  assert.ok(firstBtn.children.includes('…'))
+  assert.equal(otherBtn.props.disabled, false)
+  assert.equal(otherBtn.props['aria-label'], 'Remove this Bot')
+  otherBtn.props.onClick({ stopPropagation() {} })
+  const afterBoth = snapshot()
+  assert.equal(rowButton(afterBoth, '@hsliu.bot').props.disabled, true)
+  assert.equal(rowButton(afterBoth, '@hsliu.bot').props['aria-label'], 'Removing…')
+  assert.equal(rowButton(afterBoth, '@coder.bob.home').props.disabled, true)
+  assert.equal(rowButton(afterBoth, '@coder.bob.home').props['aria-label'], 'Removing…')
+  blocked.get('@hsliu.bot')({
+    handle: '@hsliu.bot', hidden: true,
+    homes: [{ home: '@hsliu.home', name: 'hsliu', bots: [{ handle: '@coder.bob.home', name: 'Coder' }] }],
+  })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const afterDone = snapshot()
+  assert.equal(rowButton(afterDone, '@hsliu.bot'), undefined)
+  assert.equal(rowButton(afterDone, '@coder.bob.home').props.disabled, true)
+  assert.equal(rowButton(afterDone, '@coder.bob.home').props['aria-label'], 'Removing…')
 })
 
 test('#90: social/access lists who has the Bot; revoke uses the isolated grant API', async (t) => {

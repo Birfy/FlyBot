@@ -94,9 +94,12 @@ window.__ModuleLoader__.load({
 .fs-face-auto{white-space:normal;font-size:13px;line-height:18px;color:var(--bt-ink,#141414);align-items:flex-start}
 .fs-face-auto input{margin-top:2px}
 .fs-face-note{padding:0}
-.fs-row-wrap{position:relative;display:flex;align-items:center;gap:4px;min-width:0}
+.fs-row-wrap{position:relative;display:flex;align-items:center;gap:2px;min-width:0}
 .fs-row-wrap .fs-row,.fs-row-wrap > :first-child{flex:1 1 auto;min-width:0}
-.fs-remove{flex:none}
+.fs-remove{flex:none;width:20px;height:20px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--bt-ink-3,rgba(20,20,20,.36));font:inherit;font-size:14px;line-height:1;cursor:pointer;opacity:0}
+.fs-row-wrap:hover .fs-remove,.fs-row-wrap:focus-within .fs-remove,.fs-remove:focus-visible,.fs-remove:disabled{opacity:1}
+.fs-remove:hover:not(:disabled),.fs-remove:focus-visible{background:var(--bt-hover,rgba(119,119,119,.09));color:var(--bt-ink,#141414)}
+.fs-remove:disabled{cursor:default;opacity:.55}
 .fs-menu{position:absolute;right:4px;top:100%;z-index:5;min-width:160px;padding:4px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:8px;background:var(--bt-card,#fff);box-shadow:0 4px 16px rgba(0,0,0,.12)}
 .fs-menu button{display:block;width:100%;text-align:left;height:28px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:13px;cursor:pointer}
 .fs-menu button:hover{background:var(--bt-hover,rgba(119,119,119,.09))}
@@ -384,6 +387,7 @@ window.__ModuleLoader__.load({
 
     function FriendBotRow({ bot, chat, renderBot, busy, onRemove }) {
       const [menu, setMenu] = useState(false)
+      const label = busy ? 'Removing…' : 'Remove this Bot'
       return h('div', {
         className: 'fs-row-wrap',
         'data-flybot': 'friend-bot',
@@ -395,12 +399,14 @@ window.__ModuleLoader__.load({
           : h('div', { className: 'fs-hint', title: bot.handle }, `${bot.name} · opening its chat…`),
         h('button', {
           type: 'button',
-          className: 'fs-btn fs-btn-sm fs-remove',
+          className: 'fs-remove',
           'data-flybot': 'remove-friend-bot',
           title: 'Remove this Bot from Friends\' Bots and from your groups. This does not unfriend the owner.',
+          'aria-label': label,
+          'aria-busy': busy || undefined,
           disabled: !!busy,
           onClick: (event) => { event?.stopPropagation?.(); onRemove?.(bot) },
-        }, 'Remove this Bot'),
+        }, busy ? '…' : '×'),
         menu ? h('div', { className: 'fs-menu', role: 'menu', 'data-flybot': 'friend-bot-menu' },
           h('button', { type: 'button', role: 'menuitem', onClick: () => { setMenu(false); onRemove?.(bot) } }, 'Remove this Bot')) : null)
     }
@@ -491,7 +497,7 @@ window.__ModuleLoader__.load({
       const [auto, setAuto] = useState({})
       const [saving, setSaving] = useState('')
       const [pending, setPending] = useState([])
-      const [hiding, setHiding] = useState('')
+      const [hiding, setHiding] = useState(() => new Set())
       const load = () => call('social/remote-bots', { fresh: true }).then(value => { setData(value); setError('') }, e => setError(errorText(e)))
       const loadSettings = () => call('social/settings', {}).then(value => setAuto(value?.autoAccept ?? {}), () => {})
       const loadApprovals = () => call('social/status', {}).then(value => {
@@ -522,20 +528,26 @@ window.__ModuleLoader__.load({
           await loadApprovals()
         } catch (e) { setError(errorText(e)) } finally { setSaving('') }
       }
+      const markHiding = (handle, on) => {
+        setHiding(current => {
+          const next = new Set(current)
+          if (on) next.add(handle)
+          else next.delete(handle)
+          return next
+        })
+      }
       const removeBot = async (bot) => {
-        setHiding(bot.handle)
+        markHiding(bot.handle, true)
         try {
           const result = await call('social/hide-remote', { handle: bot.handle })
           if (result?.homes) setData(result)
-          else await load()
-          const chat = chats.find(entry => entry.remote?.handle === bot.handle)
-          if (chat && typeof actions?.updateRoom === 'function') {
-            for (const room of actions.roster?.rooms ?? []) {
+          if (typeof actions?.updateRoom === 'function') {
+            void Promise.all((actions.roster?.rooms ?? []).flatMap(room => {
               const hit = (room.participants ?? []).find(p => p.remote && p.handle === bot.handle && p.leftSeq === undefined)
-              if (hit) void actions.updateRoom(room.id, { removeParticipants: [{ kind: 'bot', id: hit.handle || hit.id, remote: true }] })
-            }
+              return hit ? [actions.updateRoom(room.id, { removeParticipants: [{ kind: 'bot', id: hit.handle || hit.id, remote: true }] })] : []
+            })).catch(e => setError(errorText(e)))
           }
-        } catch (e) { setError(errorText(e)) } finally { setHiding('') }
+        } catch (e) { setError(errorText(e)) } finally { markHiding(bot.handle, false) }
       }
       const openPending = () => {
         const first = pending[0]
@@ -574,7 +586,7 @@ window.__ModuleLoader__.load({
                   'Auto-accept')),
               shut ? null : entry.bots.length === 0 ? h('div', { className: 'fs-hint' }, 'No Bots shared yet') : null,
               shut ? null : h('div', { className: 'bt-social-rows' }, rows.map(({ bot, chat }) => h(FriendBotRow, {
-                key: bot.handle, bot, chat, renderBot, busy: hiding === bot.handle, onRemove: removeBot,
+                key: bot.handle, bot, chat, renderBot, busy: hiding instanceof Set ? hiding.has(bot.handle) : hiding === bot.handle, onRemove: removeBot,
               }))))
           }),
           data && homes.length === 0 && !adding
