@@ -8,6 +8,10 @@ All notable changes to FlyBot (earlier: DS Bot) are listed here. The format foll
 
 - **Friends' Bots pending approvals:** outbound drafts Bot Social holds (`pending_approval`) show a persistent badge and Approve / Reject in Friends' Bots. Inbound messages still arrive immediately; Auto-accept still skips the hold. (#69)
 
+### Fixed
+
+- A chat with a friend's Bot that Bot Social has paused (turn budget reached, loop suspicion, emergency stop) now says so and points at the Bot Social console, instead of failing with a bare "Not sent: …" card. A paused conversation is no longer retried with the friendship's other Bots. ([#72](https://github.com/ThinkFlowLab/FlyBot/issues/72))
+
 ## [0.1.0] - 2026-10-14
 
 First public FlyBot-branded cut (core package remains `0.1.5-flybot.1`).

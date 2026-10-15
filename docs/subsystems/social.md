@@ -36,6 +36,7 @@ Everything in `plugins/social/` (entry `plugins/social/index.js` and any helpers
 
 1. Social code stays inside `plugins/social/`.
 2. Uses documented plugin APIs only.
+3. A server policy pause (`conversation_paused`: turn budget reached, loop suspected, emergency stop) never surfaces as a bare send error: both send paths (the `bot-social` transport and the remote-chat sender) map it to an error that says resending cannot help and names the Bot Social console, and no other member Bot is tried for it.
 
 ## Tests
 
