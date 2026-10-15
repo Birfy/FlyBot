@@ -7,8 +7,8 @@ import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { apply as applyDsBot } from 'ds-bot'
 import { fakeContext } from './fake-ctx.js'
-import { inject, name } from '../index.js'
-import { approvalView, createSocial, draftText, startSocial } from '../src/social.js'
+import { apply as applySocial, inject, name } from '../index.js'
+import { approvalView, createSocial, draftText, homeHandleOf, onboard, registerUnavailable, startSocial, unavailableMessage } from '../src/social.js'
 import { createMcpClient, untrustedText } from '../src/mcp-client.js'
 
 // A mocked Bot Social server: the FlyBot onboarding route and the owner MCP tools.
@@ -394,6 +394,9 @@ test('client.js registers a sidebar section and @ rows into the FlyBot registry'
   // Transport errors are worded in English from their code, never the localized host text.
   assert.match(plugin.errorText(Object.assign(new Error('请求失败（HTTP 404）'), { code: 'HTTP_404' })), /^The FlyBot host did not answer \(HTTP 404\)/)
   assert.equal(plugin.errorText(Object.assign(new Error('x'), { code: 'bot/refused' })), 'x')
+  // A missing host handler is never shown as "Unknown FlyBot endpoint".
+  assert.match(plugin.errorText(Object.assign(new Error('Unknown FlyBot endpoint social/remote-bots'), { code: 'bot/not-found' })), /^Social is not running:/)
+  assert.doesNotMatch(plugin.errorText(Object.assign(new Error('Unknown FlyBot endpoint social/remote-bots'), { code: 'bot/not-found' })), /Unknown FlyBot endpoint/)
   // The API other plugins use: canInvite is synchronous and false until Bot Social reports this Bot.
   assert.equal(typeof sandbox.__flybot__.social.canInvite, 'function')
   assert.equal(sandbox.__flybot__.social.canInvite('a'), false)
@@ -532,6 +535,76 @@ test('identity (#11): credentials bound to their server, Unicode names get disti
   let timers = 0
   await assert.rejects(startSocial(ctx.flybot, { server: 'https://down.test', credentialsPath: join(home, 'none.json'), fetch: async () => new Response('', { status: 500 }), inboxPollMs: 5, setInterval: () => { timers += 1 } }), /onboarding failed/)
   assert.equal(timers, 0)
+})
+
+test('onboarding HTTP 409 names the taken handle and how to fix it (#68)', async () => {
+  assert.equal(homeHandleOf('Danyang'), '@danyang.home')
+  await assert.rejects(
+    onboard({
+      server: 'https://social.test',
+      displayName: 'Danyang',
+      fetch: async () => new Response(JSON.stringify({ error: 'handle_taken', handle: 'danyang.home' }), { status: 409 }),
+    }),
+    (error) => {
+      assert.match(error.message, /HTTP 409/)
+      assert.match(error.message, /@danyang\.home is taken/)
+      assert.match(error.message, /displayName/)
+      assert.equal(error.code, 'handle_taken')
+      assert.equal(error.handle, '@danyang.home')
+      return true
+    },
+  )
+  await assert.rejects(
+    onboard({
+      server: 'https://social.test',
+      displayName: 'Danyang',
+      fetch: async () => new Response('', { status: 409 }),
+    }),
+    /@danyang\.home is taken.*displayName/,
+  )
+})
+
+test('start failure registers social endpoints instead of Unknown FlyBot endpoint (#68)', async (t) => {
+  const { ctx, call, home, stop } = await team()
+  t.after(stop)
+  const warned = []
+  const originalWarn = ctx.flybot.warn
+  ctx.flybot.warn = (...args) => { warned.push(args); originalWarn?.(...args) }
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith('/v1/onboard/flybot')) {
+      return new Response(JSON.stringify({ error: 'handle_taken' }), { status: 409 })
+    }
+    return new Response('{}', { status: 500 })
+  }
+  await applySocial(ctx, {
+    server: 'https://social.test',
+    credentialsPath: join(home, 'none.json'),
+    fetch: fetchImpl,
+    inboxPollMs: 0,
+    displayName: 'Danyang',
+  })
+  const result = await call('flybot/social/remote-bots', { fresh: true })
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'bot/refused')
+  assert.match(result.error.message, /^Social is not running:/)
+  assert.match(result.error.message, /@danyang\.home is taken/)
+  assert.match(result.error.message, /displayName/)
+  assert.doesNotMatch(result.error.message, /Unknown FlyBot endpoint/)
+  const status = await call('flybot/social/status', {})
+  assert.equal(status.ok, false)
+  assert.match(status.error.message, /^Social is not running:/)
+  assert.ok(warned.some(args => String(args[0]).includes('flybot-social: start failed')))
+})
+
+test('registerUnavailable answers every social UI endpoint with the same reason', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const off = registerUnavailable(ctx.flybot, 'Bot Social onboarding failed: HTTP 500')
+  t.after(() => off())
+  const result = await call('flybot/social/settings', {})
+  assert.equal(result.ok, false)
+  assert.equal(result.error.message, unavailableMessage('Bot Social onboarding failed: HTTP 500'))
+  assert.doesNotMatch(result.error.message, /Unknown FlyBot endpoint/)
 })
 
 test('read-only host (#14): no inbox polling, no member registration', async (t) => {
@@ -821,6 +894,30 @@ test('Friends\' Bots (#69): a pending approval shows a badge and Approve / Rejec
   buttons.find(n => n.type === 'button' && n.children.includes('Approve')).props.onClick()
   buttons.find(n => n.type === 'button' && n.children.includes('Reject')).props.onClick()
   assert.deepEqual(decided, [['apr-hold-1', 'approve'], ['apr-hold-1', 'reject']])
+})
+
+test('Friends\' Bots (#68): a start failure is an idle state, never Unknown FlyBot endpoint', () => {
+  const registered = []
+  const entries = []
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = { slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } }, call: async () => { throw Object.assign(new Error('Unknown FlyBot endpoint social/remote-bots'), { code: 'bot/not-found' }) } }
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const initial = [null, 'Social is not running: Bot Social onboarding failed: HTTP 409 (handle @danyang.home is taken). Change displayName in the flybot-social config so a new home is created, then restart.', true, false, {}, {}, '', []]
+  let i = 0
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+  plugin.apply({})
+  const tree = entries[0][1].component({})
+  const all = []
+  const walk = node => { if (node && typeof node === 'object') { all.push(node); (node.children ?? []).forEach(walk) } }
+  walk(tree)
+  const notice = all.find(n => n.props['data-flybot'] === 'social-unavailable')
+  assert.ok(notice)
+  assert.match(notice.children.join(''), /Social is not running:.*@danyang\.home/)
+  assert.doesNotMatch(notice.children.join(''), /Unknown FlyBot endpoint/)
+  assert.equal(all.some(n => n.props['data-tone'] === 'error'), false)
+  assert.equal(all.some(n => n.type === 'button' && n.children.includes('+ Add')), false)
 })
 
 test('Friends\' Bots (#69): no cue when status reports no pending approvals', () => {

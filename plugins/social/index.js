@@ -12,7 +12,7 @@
 //   inboxPollMs      poll members' inboxes this often; 0 = off (default 15000)
 //   token / botId    legacy per-bot identity (no home): owner connector token + bot id
 import { join } from 'node:path'
-import { startSocial } from './src/social.js'
+import { registerUnavailable, startFailureReason, startSocial } from './src/social.js'
 
 export const name = 'flybot-social'
 export const inject = ['flybot']
@@ -20,6 +20,7 @@ export const inject = ['flybot']
 export function apply(ctx, config = {}) {
   let social
   let stopped = false
+  let unavailableOff
   const dshHome = process.env.DSH_HOME ?? join(process.env.HOME ?? '.', '.dsh')
   const ready = startSocial(ctx.flybot, { inboxPollMs: 15_000, credentialsPath: join(dshHome, 'bot', 'flybot-social.json'), ...config })
     .then((value) => {
@@ -28,10 +29,16 @@ export function apply(ctx, config = {}) {
       return value
     })
     .catch((error) => {
-      console.warn('flybot-social: start failed:', error?.message ?? error)
+      const reason = startFailureReason(error)
+      console.warn('flybot-social: start failed:', reason)
+      try { ctx.logger?.warn?.('flybot-social: start failed: %s', reason) } catch {}
+      // Host diagnostics (Settings → Feedback). Optional on older cores without flybot.warn.
+      try { ctx.flybot?.warn?.('flybot-social: start failed: %s', error) } catch {}
+      if (!stopped) unavailableOff = registerUnavailable(ctx.flybot, reason)
     })
   ctx.effect(() => () => {
     stopped = true
+    unavailableOff?.()
     social?.dispose()
   }, 'flybot-social')
   return ready

@@ -2,10 +2,10 @@ FlyBot patch 0004-flybot-api-types on Fei2411/DeepSeek-Bot@2b10c70 (ds-bot/). Ge
 
 diff --git a/types/flybot.d.ts b/types/flybot.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..2a6ef45408ef3ac42bf335383aa155a8a70f8770
+index 0000000000000000000000000000000000000000..7324cdf1f27b2e16f6ee151169790cf0b3ab1b70
 --- /dev/null
 +++ b/types/flybot.d.ts
-@@ -0,0 +1,327 @@
+@@ -0,0 +1,329 @@
 +// FlyBot extension API (version 1). Implemented in src/host/hooks.js (host) and
 +// src/client/flybot-registry.js + flybot-slots.js (browser). Feature plugins declare
 +// `inject: ['flybot']` and use `ctx.flybot`.
@@ -192,6 +192,8 @@ index 0000000000000000000000000000000000000000..2a6ef45408ef3ac42bf335383aa155a8
 +  /** True while another dsh holds the team: no polling, no writes. */
 +  readOnly(): boolean
 +  on: On
++  /** Writes a warning to the host diagnostics log (Settings → Feedback). */
++  warn(template: string, ...args: unknown[]): void
 +  fields: BotFields
 +  bot: {
 +    get(id: BotId): BotView | undefined

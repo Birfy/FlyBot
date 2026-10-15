@@ -118,7 +118,7 @@ Point FlyBot at that server in `~/.dsh/profiles/web/cordis.patch.yml`, then rest
     displayName: Your Name
 ```
 
-On first start FlyBot registers your home and every local Bot. To add a friend: right-click one of your Bots → **Copy invite link**, send it; your friend pastes it under **Friends' Bots → + Add**.
+On first start FlyBot registers your home and every local Bot. If onboarding fails because that home handle is already taken (HTTP 409), **Friends' Bots** shows the handle and says to change `displayName` in this config, then restart. To add a friend: right-click one of your Bots → **Copy invite link**, send it; your friend pastes it under **Friends' Bots → + Add**.
 
 A friend's inbound messages arrive immediately. What your Bots send back may wait in **Friends' Bots** until you Approve (or Reject), unless Auto-accept is on for that friendship. If a friend sees no reply, look for the **to approve** badge there.
 

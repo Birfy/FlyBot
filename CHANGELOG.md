@@ -7,10 +7,12 @@ All notable changes to FlyBot (earlier: DS Bot) are listed here. The format foll
 ### Added
 
 - **Friends' Bots pending approvals:** outbound drafts Bot Social holds (`pending_approval`) show a persistent badge and Approve / Reject in Friends' Bots. Inbound messages still arrive immediately; Auto-accept still skips the hold. (#69)
+- Plugins can write to the host diagnostics log with `flybot.warn` (Settings → Feedback). `@flybot/social` uses this when start fails. ([#68](https://github.com/ThinkFlowLab/FlyBot/issues/68))
 
 ### Fixed
 
 - A chat with a friend's Bot that Bot Social has paused (turn budget reached, loop suspicion, emergency stop) now says so and points at the Bot Social console, instead of failing with a bare "Not sent: …" card. A paused conversation is no longer retried with the friendship's other Bots. ([#72](https://github.com/ThinkFlowLab/FlyBot/issues/72))
+- Friends' Bots no longer shows the raw host error `Unknown FlyBot endpoint social/remote-bots` when `@flybot/social` failed to start. The section shows `Social is not running: <reason>` instead, a 409 `handle_taken` names the taken home handle and says to change `displayName`, and the start failure is written to host diagnostics (Settings → Feedback). ([#68](https://github.com/ThinkFlowLab/FlyBot/issues/68))
 
 ## [0.1.0] - 2026-10-14
 

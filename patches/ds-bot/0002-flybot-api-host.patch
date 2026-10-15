@@ -57,10 +57,10 @@ index 9cdb56ac60dda8bb9f364eb0791908a867412210..8c761ace3750f6ab9e6e9458befcfb9d
  export function createRuntime(ctx, config = {}) {
 diff --git a/src/host/hooks.js b/src/host/hooks.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..6f1c6b4ed58224f6b77d6ebe97ce392dc5399044
+index 0000000000000000000000000000000000000000..06076a01902dca09ee9fe4a5a60d54195f4a2e50
 --- /dev/null
 +++ b/src/host/hooks.js
-@@ -0,0 +1,687 @@
+@@ -0,0 +1,689 @@
 +// FlyBot hooks: the `flybot` service feature plugins (plugins/social, plugins/tree)
 +// build on. Installed after resume.js, so its gate around rt.deliver is the outermost
 +// wrapper: every Bot-to-Bot message, including message_bot, stop_bot, and replies,
@@ -718,6 +718,8 @@ index 0000000000000000000000000000000000000000..6f1c6b4ed58224f6b77d6ebe97ce392d
 +    // Resolves once ds-bot's saved team is loaded, so bot.list() has every Bot.
 +    ready: () => rt.load().then(() => undefined),
 +    on: onFor(plugin),
++    // Same log as Settings → Feedback. Plugins must not depend on ctx.logger (DSH may export none).
++    warn: (...args) => rt.warn?.(...args),
 +    transports: { add: addTransport },
 +    remote: {
 +      publish: list => remoteMembers.publish(plugin, list),
@@ -1284,10 +1286,10 @@ index 62fed26b0f4449349b2a06e219c18324109c7993..58fcd80ea8ad0ec119377f728853a977
        const dispose = execute()
 diff --git a/test/flybot.test.js b/test/flybot.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..d028d0428526024667c25ad0e0d9b0b719f57f0b
+index 0000000000000000000000000000000000000000..6ea1fb56e10cc5f45009f085456afc9168230e1c
 --- /dev/null
 +++ b/test/flybot.test.js
-@@ -0,0 +1,418 @@
+@@ -0,0 +1,432 @@
 +import assert from 'node:assert/strict'
 +import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 +import { tmpdir } from 'node:os'
@@ -1364,7 +1366,21 @@ index 0000000000000000000000000000000000000000..d028d0428526024667c25ad0e0d9b0b7
 +  assert.equal(fb.bot.of('a').name, 'Chief')
 +  assert.equal(fb.scope('tree').plugin, 'tree')
 +  assert.equal(typeof fb.on, 'function')
++  assert.equal(typeof fb.warn, 'function')
 +  assert.equal(fb.fields, fb.bot.fields)
++})
++
++test('flybot.warn writes to the host diagnostics log', async (t) => {
++  const { fb, home, stop } = await start()
++  t.after(stop)
++  fb.warn('flybot-social: start failed: %s', new Error('HTTP 409 handle taken'))
++  let text = ''
++  for (let i = 0; i < 40; i++) {
++    try { text = readFileSync(join(home, 'logs', 'diagnostics.jsonl'), 'utf8') } catch {}
++    if (text.includes('flybot-social: start failed')) break
++    await delay(25)
++  }
++  assert.match(text, /flybot-social: start failed: HTTP 409 handle taken/)
 +})
 +
 +test('fields are synchronous, namespaced per plugin, persisted, and emit change', async (t) => {
