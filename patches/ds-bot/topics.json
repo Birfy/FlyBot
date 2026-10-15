@@ -96,5 +96,9 @@
     "test/room-membership.test.js",
     "test/at-menu.test.js",
     "test/remote-room.test.js"
+  ],
+  "0013-published-reach": [
+    "src/host/reach.js",
+    "test/reach-policy.test.js"
   ]
 }

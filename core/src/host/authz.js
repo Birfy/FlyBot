@@ -13,7 +13,8 @@
 // Install order matters: right after member-auth, so rt.authzEnforced sees the same
 // state.authSessions the sign-in surface writes, and before any module it gates.
 
-import { currentParticipants, isDesignatedChief, roomVisibleTo } from './room-membership.js'
+import { currentParticipants, roomVisibleTo } from './room-membership.js'
+import { isPublished } from './reach.js'
 
 // Endpoints a request without an actor may still reach. auth-invite keeps the
 // bootstrap rule in member-auth (first invite signs the installing human in).
@@ -37,7 +38,7 @@ const BOT_TARGETED = new Set([
   'memory-view', 'memory-ask', 'memory-forget',
   'schedules', 'schedule-create', 'schedule-delete',
   'add-agent', 'agent-session', 'agent-adopt', 'agent-archive', 'agent-rename', 'remove-agent',
-  'stop-member-work', 'set-main',
+  'stop-member-work', 'set-main', 'set-published',
 ])
 
 // Endpoints whose body names a room.
@@ -92,7 +93,8 @@ export function install(rt) {
     if (bot.ownerId === actor.memberId) return true
     const owners = new Set(humans)
     owners.add(actor.memberId)
-    return isDesignatedChief(state, botId) && owners.has(bot.ownerId)
+    // Another owner's Bot joins only if its owner published it (the Chief by default, #51).
+    return isPublished(state, botId) && owners.has(bot.ownerId)
   }
 
   // A sessionId may be a Bot's own chat, an earlier part, or a room Session: resolve

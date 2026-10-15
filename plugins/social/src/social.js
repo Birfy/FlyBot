@@ -285,10 +285,18 @@ export function createSocial(service, config = {}, { client: given, home: givenH
 
   // ------------------------------------------------------------ members
   const memberOf = botId => flybot.fields.get(botId, 'member')
+  // A Bot gets an outside identity only if its owner published it (#51): only published Bots
+  // are registered, polled and sign sends. A core without bot.isPublished has no such rule.
+  const published = botId => flybot.bot.isPublished?.(botId) !== false
+  // The identity a published Bot signs and polls with; an unpublished Bot has none to use
+  // (an identity it already holds is kept on the server, unused, so republishing needs no new handle).
+  const activeMember = botId => (published(botId) ? memberOf(botId) : undefined)
+  const unpublishedMessage = bot => `${bot.name} is not published: publish it before it can be invited, friend other Bots or be reached`
   // One registration per Bot at a time; a taken handle retries with the Bot's id suffix;
   // a Bot removed while it was registering has its new identity revoked.
   const registering = new Map()
   function register(bot) {
+    if (!bot || !published(bot.id)) return Promise.resolve(undefined)
     if (!home || memberOf(bot.id) || flybot.readOnly?.()) return Promise.resolve(memberOf(bot.id))
     if (!registering.has(bot.id)) {
       registering.set(bot.id, registerOnce(bot).finally(() => registering.delete(bot.id)))
@@ -333,7 +341,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
         flybot.fields.set(bot.id, 'member', undefined)
       } else owners.set(id, bot)
     }
-    for (const bot of flybot.bot.list()) {
+    for (const bot of flybot.bot.list().filter(item => published(item.id))) {
       try { await register(bot) } catch (error) {
         if (/401|403|token|unauthori[sz]ed/i.test(String(error?.message ?? error))) throw error
         warn(`${bot.name} not registered`, error)
@@ -341,6 +349,8 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     }
   }
   disposers.push(flybot.on('bot.created', bot => { void register(bot).catch(error => warn('register failed', error)) }))
+  // Publishing gives the Bot its identity; unpublishing only stops it being used.
+  disposers.push(flybot.on?.('bot.published', bot => { if (bot.published) void register(bot).catch(error => warn('register failed', error)) }) ?? (() => {}))
   disposers.push(flybot.on('bot.removed', ({ bot }) => {
     const member = bot?.fields?.[NS]?.member
     if (home && member) void client.callTool('remove_home_member', { home: home.id, member: member.bot_id }).catch(error => warn('revoke failed', error))
@@ -405,6 +415,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     priority: flybot.bot.send.priority?.APPROVAL ?? 900,
     async handle(msg) {
       if (msg.target?.remote !== true || (msg.to?.transport ?? 'bot-social') !== 'bot-social') return undefined
+      if (typeof msg.from === 'string' && !published(msg.from)) return { action: 'deny', reason: `${flybot.bot.get(msg.from)?.name ?? 'this Bot'} is not published, so it cannot message friends' Bots` }
       const bot = await remoteBot(msg.target.handle)
       if (bot === undefined) return { action: 'deny', reason: `${msg.target.handle} is not a Bot of a friend on Bot Social` }
       if (home && typeof msg.from === 'string' && !covered(await friendEntry(bot.home), msg.from)) {
@@ -439,8 +450,8 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       const bot = await remoteBot(msg.target.handle)
       if (bot === undefined) throw new Error(`${msg.target.handle} is no longer reachable`)
       if (home) {
-        const member = typeof msg.from === 'string' ? memberOf(msg.from) ?? await register(flybot.bot.get(msg.from)) : undefined
-        if (!member) throw new Error('the sending Bot has no Bot Social identity')
+        const member = typeof msg.from === 'string' ? activeMember(msg.from) ?? await register(flybot.bot.get(msg.from)) : undefined
+        if (!member) throw new Error(published(msg.from) ? 'the sending Bot has no Bot Social identity' : 'the sending Bot is not published')
         const attachments = await uploadAll(msg.attachments, member.bot_id)
         const sent = await client.callTool('send_as_member', { from_bot_id: member.bot_id, to: bot.handle, text: msg.text, ...(attachments.length ? { attachments } : {}) })
         if (sent?.message?.status === 'pending_approval') pendingCache.at = 0
@@ -476,13 +487,13 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     const team = flybot.bot.list()
     // Only the Bots the friendship covers can sign; the one used before goes first.
     const entry = (await remoteBots()).homes.find(item => item.bots.some(bot => bot.handle === target))
-    const order = [team.find(bot => bot.id === settings.via[target]), team.find(bot => bot.isMain), ...team].filter(bot => bot && covered(entry, bot.id))
+    const order = [team.find(bot => bot.id === settings.via[target]), team.find(bot => bot.isMain), ...team].filter(bot => bot && published(bot.id) && covered(entry, bot.id))
     const tried = new Set()
     let lastError
     for (const bot of order) {
       if (tried.has(bot.id)) continue
       tried.add(bot.id)
-      const member = memberOf(bot.id) ?? await register(bot).catch(() => undefined)
+      const member = activeMember(bot.id) ?? await register(bot).catch(() => undefined)
       if (!member) continue
       try {
         const sent = await client.callTool('send_as_member', { from_bot_id: member.bot_id, to: target, text })
@@ -526,11 +537,11 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   }
   async function pollOnce() {
     const targets = home
-      ? flybot.bot.list().filter(bot => memberOf(bot.id)).map(bot => ({ local: bot, botId: memberOf(bot.id).bot_id }))
+      ? flybot.bot.list().filter(bot => activeMember(bot.id)).map(bot => ({ local: bot, botId: memberOf(bot.id).bot_id }))
       : [{ local: (config.localBot ? flybot.bot.find(config.localBot) : undefined) ?? flybot.bot.list().find(bot => bot.isMain), botId: config.botId }]
     let delivered = 0
     for (const { local, botId } of targets) {
-      if (local === undefined) continue
+      if (local === undefined || !published(local.id)) continue
       const key = botId ?? 'default'
       const saved = settings.cursors[key]
       const result = await client.callTool('list_inbox', { peek: true, ...(saved !== undefined ? { since_cursor: saved } : {}), ...(botId ? { bot_id: botId } : {}) })
@@ -673,6 +684,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     if (!home) throw new Error('Bot Social is not connected: there is no FlyBot home yet')
     const bot = typeof botId === 'string' && botId ? flybot.bot.get(botId) : undefined
     if (!bot) throw new Error('Choose one of your Bots to invite a friend to')
+    if (!published(bot.id)) throw new Error(unpublishedMessage(bot))
     const member = await register(bot)
     if (!member) throw new Error(`${bot.name} has no Bot Social identity yet`)
     const invite = await client.callTool('create_invite', { bot_id: member.bot_id, max_uses: 1, expires_in_hours: 168, auto_accept: true, offered_capabilities: ['chat.public'], requested_capabilities: ['chat.public'], ...(message ? { message: String(message).slice(0, 280) } : {}) })
@@ -688,7 +700,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     return {
       connected: Boolean(home),
       home: home ? norm(home.handle) : undefined,
-      bots: home ? flybot.bot.list().map(bot => ({ id: bot.id, name: bot.name, isMain: bot.isMain === true, handle: memberOf(bot.id)?.handle ? norm(memberOf(bot.id).handle) : undefined })) : [],
+      bots: home ? flybot.bot.list().map(bot => ({ id: bot.id, name: bot.name, isMain: bot.isMain === true, published: published(bot.id), handle: activeMember(bot.id)?.handle ? norm(activeMember(bot.id).handle) : undefined })) : [],
       pendingApprovals: approvals.length,
       approvals,
     }
@@ -707,6 +719,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       const team = flybot.bot.list()
       const bot = typeof botId === 'string' && botId ? flybot.bot.get(botId) : team.find(item => item.isMain) ?? team[0]
       if (!bot) throw new Error('Choose which of your Bots joins')
+      if (!published(bot.id)) throw new Error(unpublishedMessage(bot))
       const member = await register(bot)
       if (!member) throw new Error(`${bot.name} has no Bot Social identity yet`)
       from = { from_bot_id: member.bot_id }

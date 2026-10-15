@@ -2,10 +2,10 @@ FlyBot patch 0011-owner-scoped-access on Fei2411/DeepSeek-Bot@2b10c70 (ds-bot/).
 
 diff --git a/src/host/authz.js b/src/host/authz.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..0d770e9b8d1c85007a0d9b05b3d9ee234917b655
+index 0000000000000000000000000000000000000000..90b1968a067749c69e7aa8116a8f62301917c993
 --- /dev/null
 +++ b/src/host/authz.js
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,255 @@
 +// Owner-scoped access (#49): default-deny authorization for the /api/bot channel.
 +// Once a member session exists on the host, every Bot, room and session an endpoint
 +// touches must belong to the signed-in actor; shared resources that cannot yet be
@@ -21,7 +21,8 @@ index 0000000000000000000000000000000000000000..0d770e9b8d1c85007a0d9b05b3d9ee23
 +// Install order matters: right after member-auth, so rt.authzEnforced sees the same
 +// state.authSessions the sign-in surface writes, and before any module it gates.
 +
-+import { currentParticipants, isDesignatedChief, roomVisibleTo } from './room-membership.js'
++import { currentParticipants, roomVisibleTo } from './room-membership.js'
++import { isPublished } from './reach.js'
 +
 +// Endpoints a request without an actor may still reach. auth-invite keeps the
 +// bootstrap rule in member-auth (first invite signs the installing human in).
@@ -45,7 +46,7 @@ index 0000000000000000000000000000000000000000..0d770e9b8d1c85007a0d9b05b3d9ee23
 +  'memory-view', 'memory-ask', 'memory-forget',
 +  'schedules', 'schedule-create', 'schedule-delete',
 +  'add-agent', 'agent-session', 'agent-adopt', 'agent-archive', 'agent-rename', 'remove-agent',
-+  'stop-member-work', 'set-main',
++  'stop-member-work', 'set-main', 'set-published',
 +])
 +
 +// Endpoints whose body names a room.
@@ -100,7 +101,8 @@ index 0000000000000000000000000000000000000000..0d770e9b8d1c85007a0d9b05b3d9ee23
 +    if (bot.ownerId === actor.memberId) return true
 +    const owners = new Set(humans)
 +    owners.add(actor.memberId)
-+    return isDesignatedChief(state, botId) && owners.has(bot.ownerId)
++    // Another owner's Bot joins only if its owner published it (the Chief by default, #51).
++    return isPublished(state, botId) && owners.has(bot.ownerId)
 +  }
 +
 +  // A sessionId may be a Bot's own chat, an earlier part, or a room Session: resolve
