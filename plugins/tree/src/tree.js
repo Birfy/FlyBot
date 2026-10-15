@@ -163,6 +163,19 @@ export function createTree(fb, { limits, rootName = 'Root', rootBotId, adoptExis
   const isMember = id => typeof id === 'string' && (fb.getField(id, 'treeRole') !== undefined || fb.getField(id, 'parent') !== undefined)
   const parentOf = id => fb.getField(id, 'parent') ?? null
   const isRoot = id => isMember(id) && (fb.getField(id, 'treeRole') === ROOT_ROLE || fb.getField(id, 'parent') == null)
+  // The root of the tree a member is in (itself for a root); undefined for a non-member. A cycle stops at the walk's end.
+  function rootOf(id) {
+    if (!isMember(id)) return undefined
+    const seen = new Set()
+    let at = id
+    while (!seen.has(at)) {
+      seen.add(at)
+      const parent = parentOf(at)
+      if (parent == null || !isMember(parent)) return at
+      at = parent
+    }
+    return at
+  }
   function isTreeEdge(from, to) {
     const fromIn = isMember(from), toIn = isMember(to)
     return { fromIn, toIn, inTree: fromIn && toIn, allowed: fromIn && toIn && (parentOf(to) === from || parentOf(from) === to) }
@@ -203,5 +216,5 @@ export function createTree(fb, { limits, rootName = 'Root', rootBotId, adoptExis
   }
   const subscribe = fn => { listeners.add(fn); return () => listeners.delete(fn) }
 
-  return { limits, forest, adoptUnattached, snapshot, childrenOf, depthOf, traceOf, ensureRoot, adoptChief, findChief, migrateLegacyRoots, promptFor, createChild, isMember, isRoot, isTreeEdge, onFieldChange, onBotRemoved, subscribe }
+  return { limits, forest, adoptUnattached, snapshot, childrenOf, depthOf, traceOf, ensureRoot, adoptChief, findChief, migrateLegacyRoots, promptFor, createChild, isMember, isRoot, rootOf, isTreeEdge, onFieldChange, onBotRemoved, subscribe }
 }

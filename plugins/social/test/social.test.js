@@ -72,11 +72,12 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
   return { fetch, calls, events, members, uploads, tools, onboarded: () => onboarded }
 }
 
-async function team() {
+// The Writer is published (#51: only published Bots get an outside identity) unless a test says otherwise.
+async function team({ writerPublished = true } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'flybot-social-'))
   writeFileSync(join(home, 'state.json'), JSON.stringify({
     version: 1, mainBotIds: ['a'],
-    bots: { a: { id: 'a', name: 'Chief', role: 'Boss', sessionId: 'a', createdAt: 1 }, b: { id: 'b', name: 'Writer', role: 'Write', sessionId: 'b', createdAt: 2 } },
+    bots: { a: { id: 'a', name: 'Chief', role: 'Boss', sessionId: 'a', createdAt: 1 }, b: { id: 'b', name: 'Writer', role: 'Write', sessionId: 'b', createdAt: 2, ...(writerPublished ? { published: true } : {}) } },
     rooms: {}, agents: {}, exchanges: [], exchangeTurns: {}, questions: {}, prefs: {}, revision: 0,
   }))
   const ctx = fakeContext()
@@ -145,19 +146,64 @@ test('first start onboards in one call, keeps the credentials file, and register
   assert.equal(server.calls.filter(c => c.name === 'add_home_member').length, 2)
 })
 
-test('new local Bots join the home and removed ones are revoked', async (t) => {
+test('new local Bots join the home once published, and removed ones are revoked', async (t) => {
   const { ctx, call, stop } = await team()
   t.after(stop)
   const server = mockServer()
   const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0 }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
   t.after(() => social.dispose())
   const id = await ctx.flybot.scope('tree').bot.create({ name: 'Child', fields: { parent: 'a' } })
+  // A new Bot is unpublished: no outside identity until its owner publishes it (#51).
+  await settle()
+  assert.equal(ctx.flybot.scope('social').fields.get(id, 'member'), undefined)
+  assert.equal(server.calls.some(c => c.name === 'add_home_member'), false)
+  assert.equal((await call('set-published', { id, published: true })).ok, true)
   for (let i = 0; i < 100 && !ctx.flybot.scope('social').fields.get(id, 'member'); i++) await settle()
   const member = ctx.flybot.scope('social').fields.get(id, 'member')
   assert.equal(member.handle, '@child.danyang.home')
   assert.equal((await call('delete-bot', { id })).ok, true)
   for (let i = 0; i < 100 && server.calls.at(-1).name !== 'remove_home_member'; i++) await settle()
   assert.deepEqual(server.calls.at(-1), { url: 'https://s/mcp', name: 'remove_home_member', args: { home: 'h1', member: member.bot_id } })
+})
+
+test('#51: an unpublished Bot is not registered, not polled and cannot sign or invite; unpublishing stops use at once', async (t) => {
+  const { ctx, tool, call, received, stop } = await team({ writerPublished: false })
+  t.after(stop)
+  const server = mockServer()
+  const polled = []
+  server.tools.list_inbox = (a) => { polled.push(a.bot_id); return { events: [], next_cursor: 1 } }
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0 }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const scope = ctx.flybot.scope('social')
+  assert.equal(scope.fields.get('a', 'member')?.handle, '@chief.danyang.home', 'the Chief is published by default')
+  assert.equal(scope.fields.get('b', 'member'), undefined, 'the unpublished Writer got no identity')
+  assert.deepEqual(server.calls.filter(c => c.name === 'add_home_member').map(c => c.args.name), ['chief'])
+  await social.pollInbox()
+  assert.deepEqual(polled, ['m1'], 'only the published Bot\'s inbox is read')
+  // It cannot message a friend's Bot or be invited.
+  await assert.rejects(tool('message_friend_bot', { to: '@coder.bob.home', message: 'hi' }, 'b'), /not published/)
+  assert.equal(ctx.flybot.approvals.list().length, 0)
+  assert.equal(server.calls.some(c => c.name === 'send_as_member'), false)
+  // The user's own chat with a friend's Bot is signed by a published Bot, never the unpublished one.
+  await social.sendChat({ handle: '@coder.bob.home', text: 'x' })
+  assert.equal(server.calls.filter(c => c.name === 'send_as_member').at(-1).args.from_bot_id, 'm1')
+  const status = (await call('flybot/social/status', {})).value
+  assert.deepEqual(status.bots.map(b => [b.id, b.published, b.handle]), [['a', true, '@chief.danyang.home'], ['b', false, undefined]])
+  assert.equal((await call('flybot/social/create-invite', { botId: 'b' })).ok, false)
+  // Publishing registers it; unpublishing keeps the identity but stops polling and signing.
+  assert.equal((await call('set-published', { id: 'b', published: true })).ok, true)
+  for (let i = 0; i < 100 && !scope.fields.get('b', 'member'); i++) await settle()
+  assert.equal(scope.fields.get('b', 'member').handle, '@writer.danyang.home')
+  polled.length = 0
+  await social.pollInbox()
+  assert.deepEqual(polled.sort(), ['m1', 'm2'])
+  assert.equal((await call('set-published', { id: 'b', published: false })).ok, true)
+  polled.length = 0
+  await social.pollInbox()
+  assert.deepEqual(polled, ['m1'])
+  assert.deepEqual(scope.fields.get('b', 'member'), { bot_id: 'm2', handle: '@writer.danyang.home' })
+  assert.deepEqual(received.get('b') ?? [], [])
 })
 
 test('any local Bot can message any Bot of a friend home; the send is held, then signed as the member', async (t) => {

@@ -2,10 +2,10 @@ FlyBot patch 0004-flybot-api-types on Fei2411/DeepSeek-Bot@2b10c70 (ds-bot/). Ge
 
 diff --git a/types/flybot.d.ts b/types/flybot.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..a60144306cfc08e649a38f734758af9e4fb1b0cf
+index 0000000000000000000000000000000000000000..4be408ae71ab2e4a79296fe0086165b507b4b39d
 --- /dev/null
 +++ b/types/flybot.d.ts
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,339 @@
 +// FlyBot extension API (version 1). Implemented in src/host/hooks.js (host) and
 +// src/client/flybot-registry.js + flybot-slots.js (browser). Feature plugins declare
 +// `inject: ['flybot']` and use `ctx.flybot`.
@@ -39,6 +39,8 @@ index 0000000000000000000000000000000000000000..a60144306cfc08e649a38f734758af9e
 +  name: string
 +  role?: string
 +  isMain: boolean
++  /** Reachable from other owners and friends (the owner's choice; the Chief by default). Others' unpublished Bots cannot be messaged. */
++  published: boolean
 +  createdBy: BotId | null
 +  /** Text prompt.js appends to this Bot's system prompt (bot.setSystemPrompt). */
 +  systemPrompt: string
@@ -68,6 +70,8 @@ index 0000000000000000000000000000000000000000..a60144306cfc08e649a38f734758af9e
 +  /** A new local Bot (UI, create_bot, or a plugin's bot.create); payload is its record. */
 +  'bot.created': BotView
 +  'bot.removed': BotRemoved
++  /** A Bot's effective published state flipped (set by its owner, or the Chief changed); payload is its record. */
++  'bot.published': BotView
 +}
 +export type On = <K extends keyof FlyBotEvents>(event: K, listener: (payload: FlyBotEvents[K]) => void, options?: { all?: boolean }) => () => void
 +
@@ -201,6 +205,8 @@ index 0000000000000000000000000000000000000000..a60144306cfc08e649a38f734758af9e
 +    find(name: string): BotView | undefined
 +    /** True for a remote address ({ kind: 'remote' } or '@handle'); local ids are never remote. */
 +    isRemote(ref: unknown): boolean
++    /** Whether the Bot is published (reachable from outside its owner). false for remote or unknown ids. */
++    isPublished(id: BotId): boolean
 +    /** The Bot a Session (own chat, group, or earlier part) belongs to. */
 +    of(sessionId: string): BotView | undefined
 +    /** Returns the new Bot's id. */

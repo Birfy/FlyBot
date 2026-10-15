@@ -38,7 +38,8 @@ export function install(rt) {
     // `sessionId` is the Bot's current own-chat part; `parts` its earlier ones.
     // `waiting`: the Bot holds its greeting until the user picks its model.
     bots: Object.values(state.bots).map(({ segments, kickoff, ...bot }) => ({
-      ...bot, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
+      // `published`: whether other owners and friends can reach it (#51), the effective value.
+      ...bot, published: rt.isPublished?.(bot.id) === true, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
     })),
     // `parts`: the members' hidden group Sessions and their earlier segments, for usage.
     rooms: Object.values(state.rooms).map(({ log, seen, botRounds, lateRounds, sessions, segments, ...room }) => {
@@ -217,6 +218,11 @@ export function install(rt) {
             replace: typeof body.replace === 'string' ? body.replace : undefined,
           })
           return ok(view())
+        case 'set-published':
+          // The owner's choice (#51): true, false, or null for the default (the Chief only).
+          await rt.load()
+          await rt.setPublished(String(body.id ?? body.botId ?? ''), body.published === undefined ? true : body.published)
+          return ok(view(actor))
         case 'create-room': {
           await rt.load()
           const room = await rt.createRoom({

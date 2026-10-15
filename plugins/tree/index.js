@@ -14,7 +14,7 @@ export function apply(ctx, config = {}) {
   const warn = (...args) => (ctx.logger?.('flybot-tree')?.warn ?? console.warn)(...args)
   const tree = createTree(fb, { limits: resolveLimits(config), rootName: config.rootName, rootBotId: config.rootBotId, adoptExisting: config.adoptExisting !== false, warn })
   const disposers = [
-    fb.useSend('tree', treeSendMiddleware(tree, { bypassSocial: config.bypassSocial === true, isRemote: fb.isRemote })),
+    fb.useSend('tree', treeSendMiddleware(tree, { bypassSocial: config.bypassSocial === true, isRemote: fb.isRemote, isPublished: fb.isPublished })),
     ...registerTreeTools(fb, tree),
     fb.onFieldChange(change => tree.onFieldChange(change)),
     fb.onBotRemoved(e => tree.onBotRemoved(e)),
