@@ -47,19 +47,20 @@ index 53fad47ce6092aa9e383bf089034715f3b38d8de..5305371e60d6918f3218f02cdf073d36
    const dictation = useDictation((text, final) => {
      if (final && inputActions) inputActions.insertText(text, inputActions.captureInsertion())
 diff --git a/src/client/details-drawer.js b/src/client/details-drawer.js
-index b051eb8d08eeff078f3e7da15d36322f262edf13..b7e8bfe8c8740f5aa573e64dc04cf50f432d6578 100644
+index b051eb8d08eeff078f3e7da15d36322f262edf13..4138065e40a60accee4bb79d8214fd4e97f5dd7d 100644
 --- a/src/client/details-drawer.js
 +++ b/src/client/details-drawer.js
-@@ -14,6 +14,8 @@ import { ScheduleSummary } from './schedules.js'
+@@ -14,6 +14,9 @@ import { ScheduleSummary } from './schedules.js'
  import { Segmented, useGlide, useMorph } from './motion.js'
  import { MemberWork, useMemberWork } from './member-status.js'
  import { t } from './i18n.js'
 +import { remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
++import { FlyBotRoomOverview } from './flybot-slots.js'
 +import { call } from './api.js'
  
  function transcriptOf(list, id, name, hiddenTurns = []) {
    const outline = list.projectionsBySession?.[id]?.values?.turnOutline ?? list.byId[id]?.projectionValues?.turnOutline
-@@ -113,16 +115,74 @@ function About({ text, title = 'About' }) {
+@@ -113,16 +116,79 @@ function About({ text, title = 'About' }) {
  
  // A group's overview: what members read, who is in it, and who answers. Changes are
  // made in its settings.
@@ -79,7 +80,7 @@ index b051eb8d08eeff078f3e7da15d36322f262edf13..b7e8bfe8c8740f5aa573e64dc04cf50f
 +    }, () => {})
 +    return () => { alive = false }
 +  }, [room.id, room.viewerRole, room.pendingCount])
-+  if (room.viewerRole !== 'invited-owner' || !items.length) return null
++  if ((room.viewerRole !== 'invited-owner' && room.origin !== 'face-to-face') || !items.length) return null
 +  const decide = async (item, decision) => {
 +    setBusy(item.id)
 +    try {
@@ -96,8 +97,9 @@ index b051eb8d08eeff078f3e7da15d36322f262edf13..b7e8bfe8c8740f5aa573e64dc04cf50f
 +}
 +
  function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) {
-+  const humans = (room.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
-+  const remotes = (room.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
++  const live = room.presentedParticipants ?? room.participants ?? []
++  const humans = live.filter(p => p.kind === 'human' && p.leftSeq === undefined)
++  const remotes = live.filter(p => p.remote && p.leftSeq === undefined)
    const members = room.members.map(id => roster.byId[id]).filter(Boolean)
    const { entries, now } = useMemberWork(room, useWork)
 +  const invited = room.viewerRole === 'invited-owner'
@@ -107,19 +109,23 @@ index b051eb8d08eeff078f3e7da15d36322f262edf13..b7e8bfe8c8740f5aa573e64dc04cf50f
 +      || members.find(member => member.ownerId === roster.self?.memberId)
 +    if (mine) void actions.updateRoom(room.id, { removeParticipants: [{ kind: 'bot', id: mine.handle || mine.id, remote: Boolean(mine.handle) }] })
 +  }
++  const face = room.origin === 'face-to-face'
    return [
 -    room.notice
 -      ? h(About, { key: 'notice', title: 'Notice', text: room.notice })
 -      : h('button', { key: 'notice', type: 'button', className: 'bt-more', onClick: openSettings }, t('Add a notice in group settings')),
-+    invited && room.sharedFrom
++    h(FlyBotRoomOverview, { key: 'plugin-overview', room, roster, actions }),
++    invited && room.sharedFrom && !face
 +      ? h('div', { key: 'from', className: 'bt-shared-from' },
 +        h('div', { className: 'bt-section-title' }, title),
 +        h('div', { className: 'bt-set-hint' }, t('Your Bot was invited to this room by {name}', { name: room.sharedFrom.inviterName })),
 +        room.sharedFrom.invitedAt ? h('div', { className: 'bt-set-hint' }, t('Invited {when}', { when: new Date(room.sharedFrom.invitedAt).toLocaleString() })) : null,
 +        h('button', { type: 'button', className: 'bt-more', onClick: leaveMine }, t('Remove my Bot')))
-+      : room.notice
-+        ? h(About, { key: 'notice', title: 'Notice', text: room.notice })
-+        : h('button', { key: 'notice', type: 'button', className: 'bt-more', onClick: openSettings }, t('Add a notice in group settings')),
++      : face
++        ? null
++        : room.notice
++          ? h(About, { key: 'notice', title: 'Notice', text: room.notice })
++          : h('button', { key: 'notice', type: 'button', className: 'bt-more', onClick: openSettings }, t('Add a notice in group settings')),
 +    h(SharedRoomApprovals, { key: 'approvals', room }),
      h('div', { key: 'members' },
 -      h('div', { className: 'bt-section-title' }, t('Members · {count}', { count: members.length })),
@@ -133,13 +139,13 @@ index b051eb8d08eeff078f3e7da15d36322f262edf13..b7e8bfe8c8740f5aa573e64dc04cf50f
 +            person.role === 'admin' ? h('span', { className: 'bt-chip bt-chip-admin' }, t('Admin')) : null))),
 +        ...remotes.map(person => h('div', { key: person.handle || person.id, role: 'listitem' },
 +          h('div', { className: 'bt-member' },
-+            h('span', { className: 'bt-member-name' }, h('span', null, remoteBotTitle(person))),
-+            h('span', { className: 'bt-chip' }, t('Friend\'s Bot'))))),
++            h('span', { className: 'bt-member-name' }, h('span', null, person.label || remoteBotTitle(person))),
++            face ? null : h('span', { className: 'bt-chip' }, t('Friend\'s Bot'))))),
 +        ...members.map((member) => {
          const entry = entries.find(item => item.id === member.id)
          return h('div', { key: member.id, role: 'listitem' },
            h('div', { className: 'bt-member' },
-@@ -131,7 +191,7 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings })
+@@ -131,7 +197,7 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings })
                h('span', null, member.name)),
              room.admin === member.id ? h('span', { className: 'bt-chip bt-chip-admin' }, t('Admin')) : null),
            entry ? h(MemberWork, { entry, bot: member, room, roster, actions, now }) : null)
@@ -149,7 +155,7 @@ index b051eb8d08eeff078f3e7da15d36322f262edf13..b7e8bfe8c8740f5aa573e64dc04cf50f
        h('div', { className: 'bt-kv' }, h('span', null, t(ROOM_MODES.find(([id]) => id === shownMode(room, roster))?.[1] ?? 'Everyone')))),
      usage ? h('div', { key: 'usage' }, h('div', { className: 'bt-section-title' }, t('Usage')),
 diff --git a/src/client/group-settings.js b/src/client/group-settings.js
-index 0fbdd65ca8666bb6530c0db3856cdf0c6c5c0bd8..0371562907a889af7d0ac0507d97beadb5d06459 100644
+index 0fbdd65ca8666bb6530c0db3856cdf0c6c5c0bd8..b4b973f9a033e3ac8c60691b7198047ea2986e0d 100644
 --- a/src/client/group-settings.js
 +++ b/src/client/group-settings.js
 @@ -6,6 +6,7 @@ import { Card, Row, InlineText, SwitchRow } from './bot-settings.js'
@@ -160,12 +166,13 @@ index 0fbdd65ca8666bb6530c0db3856cdf0c6c5c0bd8..0371562907a889af7d0ac0507d97bead
  
  export const ROOM_MODES = [
    ['admin', 'Admin leads', 'Plain messages go to the admin, who calls others with @Name.'],
-@@ -31,8 +32,19 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
+@@ -31,8 +32,20 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
      const timer = setTimeout(() => setConfirming(false), 4000)
      return () => clearTimeout(timer)
    }, [confirming])
-+  const humans = (room.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
-+  const remotes = (room.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
++  const live = room.presentedParticipants ?? room.participants ?? []
++  const humans = live.filter(p => p.kind === 'human' && p.leftSeq === undefined)
++  const remotes = live.filter(p => p.remote && p.leftSeq === undefined)
    const members = room.members.map(id => roster.byId[id]).filter(Boolean)
 -  const outside = roster.bots.filter(bot => !room.members.includes(bot.id))
 +  const shared = humans.length > 1
@@ -181,7 +188,7 @@ index 0fbdd65ca8666bb6530c0db3856cdf0c6c5c0bd8..0371562907a889af7d0ac0507d97bead
    const admin = roster.byId[room.admin]
    const mode = shownMode(room, roster)
    const modeHint = ROOM_MODES.find(([id]) => id === mode)?.[2] ?? ''
-@@ -65,26 +77,48 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
+@@ -65,26 +78,48 @@ export function GroupSettingsForm({ room, roster, actions, run, onDeleted }) {
        h('div', { className: 'bt-set-row bt-bs-row' },
          h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Folder'))),
          h(FolderMenu, { value: room.workDir, group: true, actions, run, onPick: workDir => update({ workDir }) }))),
@@ -209,15 +216,16 @@ index 0fbdd65ca8666bb6530c0db3856cdf0c6c5c0bd8..0371562907a889af7d0ac0507d97bead
              : h('button', { type: 'button', className: 'bt-mini', onClick: () => update({ admin: member.id }) }, t('Make admin')),
            members.length > 2 ? h('button', { type: 'button', className: 'bt-x', 'aria-label': t('Remove {name} from the group', { name: member.name }), title: t('Remove from group'), onClick: () => update({ remove: [member.id] }) }, '×') : null)
        }),
+-      adding
+-        ? [...outside.map(bot => h('button', { key: bot.id, type: 'button', className: 'bt-set-row bt-bs-row bt-gs-pick', onClick: () => { setAdding(false); void update({ add: [bot.id] }) } },
 +      remotes.map((person) => h('div', { key: person.handle || person.id, className: 'bt-set-row bt-bs-row bt-gs-member' },
 +        h('span', { className: 'bt-gs-who' },
-+          h('span', { className: 'bt-row-title' }, remoteBotTitle(person)),
-+          h('span', { className: 'bt-tag' }, t('Friend\'s Bot'))),
-+        members.length + remotes.length > 2
-+          ? h('button', { type: 'button', className: 'bt-x', 'aria-label': t('Remove {name} from the group', { name: remoteBotTitle(person) }), title: t('Remove from group'), onClick: () => update({ removeParticipants: [{ kind: 'bot', id: person.handle || person.id, remote: true }] }) }, '×')
-+          : null)),
-       adding
--        ? [...outside.map(bot => h('button', { key: bot.id, type: 'button', className: 'bt-set-row bt-bs-row bt-gs-pick', onClick: () => { setAdding(false); void update({ add: [bot.id] }) } },
++          h('span', { className: 'bt-row-title' }, person.label || remoteBotTitle(person)),
++          room.origin === 'face-to-face' ? null : h('span', { className: 'bt-tag' }, t('Friend\'s Bot'))),
++        room.origin === 'face-to-face' || members.length + remotes.length <= 2
++          ? null
++          : h('button', { type: 'button', className: 'bt-x', 'aria-label': t('Remove {name} from the group', { name: remoteBotTitle(person) }), title: t('Remove from group'), onClick: () => update({ removeParticipants: [{ kind: 'bot', id: person.handle || person.id, remote: true }] }) }, '×'))),
++      room.origin === 'face-to-face' ? null : adding
 +        ? [...outsidePeople.map(person => h('button', { key: person.id, type: 'button', className: 'bt-set-row bt-bs-row bt-gs-pick', onClick: () => { setAdding(false); void update({ addParticipants: [{ kind: 'human', id: person.id, displayName: person.displayName }] }) } },
 +            h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, person.displayName || person.id)),
 +            h('span', { className: 'bt-set-hint' }, t('Add person')))),
@@ -280,7 +288,7 @@ index 7ff33227fba848cb92bfb3624714134f01759c47..6858d67c112728ae1554eba728cebc2b
  export const isMainOf = (roster, id) => id !== undefined && (roster.mainBotIds ?? []).includes(id)
  
 diff --git a/src/host/groups.js b/src/host/groups.js
-index 7dbcc2cabf67187336152d01270d381f5bedda79..da2a182aa438c3aeb188908e137db2b8f30ed218 100644
+index 7dbcc2cabf67187336152d01270d381f5bedda79..511b6413222a83841c4289105a5242605d2d542a 100644
 --- a/src/host/groups.js
 +++ b/src/host/groups.js
 @@ -41,9 +41,12 @@ const ensureRoomLog = (room) => {
@@ -297,7 +305,17 @@ index 7dbcc2cabf67187336152d01270d381f5bedda79..da2a182aa438c3aeb188908e137db2b8
  }
  
  // A member's own lines are already in its Session, so only the others' are news.
-@@ -113,6 +116,7 @@ const ROOM_READ_MAX = 30
+@@ -58,6 +61,9 @@ const lineText = (line) => {
+   if (line.kind === 'resumed') return `[${line.who}'s work here was cut off when DeepSeek Harness restarted; it is picking it back up and posts when done]`
+   if (line.kind === 'cut') return `[${line.who}'s work here was cut off by a restart again, so it stopped; ask it to go on if it still matters]`
+   if (line.kind === 'stopped') return `[The user stopped ${line.who}'s work here]`
++  if (line.kind === 'joined' || line.kind === 'left' || line.kind === 'started' || line.kind === 'invited' || line.kind === 'notice') {
++    return line.text ? `[${line.text}]` : `[${line.who} ${line.kind}]`
++  }
+   return `${line.who}: ${line.text}`
+ }
+ const transcript = lines => lines.map(lineText).join('\n')
+@@ -113,6 +119,7 @@ const ROOM_READ_MAX = 30
  
  export function install(rt) {
    const { ctx } = rt
@@ -305,7 +323,7 @@ index 7dbcc2cabf67187336152d01270d381f5bedda79..da2a182aa438c3aeb188908e137db2b8
  
    // A member's group Session, created on its first turn there. A new one starts with
    // a fresh look at the log and a brief of the member's own chat; the brief is the
-@@ -292,8 +296,8 @@ export function install(rt) {
+@@ -292,8 +299,8 @@ export function install(rt) {
      const before = round.slots.length
      const members = room.members.map(rt.botOf).filter(Boolean)
      for (const line of lines) {
@@ -316,7 +334,7 @@ index 7dbcc2cabf67187336152d01270d381f5bedda79..da2a182aa438c3aeb188908e137db2b8
        const { all, found } = mentionsIn(line.text, members)
        const note = all || found.length > 0 ? 'the user mentioned you' : 'new message from the user'
        callMembers(round, turns, index - 1, openingSpeakers(room, { text: line.text }), note, ROOM_ADMIN_TURNS_EACH)
-@@ -367,7 +371,7 @@ export function install(rt) {
+@@ -367,7 +374,7 @@ export function install(rt) {
          continue
        }
        slot.status = 'posted'
@@ -325,7 +343,12 @@ index 7dbcc2cabf67187336152d01270d381f5bedda79..da2a182aa438c3aeb188908e137db2b8
        round.replies.push({ botId: member.id, name: member.name, color: member.color, text: reply, time: Date.now() })
        void rt.save().catch(() => {})
        // Only the admin's "@all" calls everyone, so a member cannot set off a storm.
-@@ -404,9 +408,12 @@ export function install(rt) {
+@@ -400,13 +407,16 @@ export function install(rt) {
+       // The opening greeting is a cue for the admin, not a line of the group; a member's
+       // late failure, its work picked up after a restart, or its work the user stopped is
+       // an event of the round.
+-      const event = item => item.failed || item.resumed || item.stopped
++      const event = item => item.failed || item.resumed || item.stopped || item.notice || item.botId === 'face-notice'
        for (const post of posts.filter(item => !item.kickoff && !event(item))) {
          // Image readings go into the log only; `@` names are picked from what the user typed.
          const text = post.images === undefined ? post.text : [post.text, ...await rt.imagesForGroup(post.images, room.id)].filter(Boolean).join('\n')
@@ -341,7 +364,19 @@ index 7dbcc2cabf67187336152d01270d381f5bedda79..da2a182aa438c3aeb188908e137db2b8
        }
        if (posts.some(post => !post.botId && !post.kickoff)) {
          room.botRounds = 0
-@@ -539,7 +546,9 @@ export function install(rt) {
+@@ -450,6 +460,11 @@ export function install(rt) {
+         appendRoom(room, { who: name, botId: post.botId, kind, text: '' })
+         round.replies.push({ kind, botId: post.botId, name, color: bot?.color, time: Date.now() })
+       }
++      for (const post of posts.filter(item => item.notice || item.botId === 'face-notice')) {
++        const text = String(post.text ?? '')
++        if (!text) continue
++        round.replies.push({ kind: 'notice', text, time: Date.now() })
++      }
+       if (posts.some(post => post.resumed || post.stopped)) await rt.save()
+       rt.roomProgress.set(exec.callId, round)
+       try {
+@@ -539,7 +554,9 @@ export function install(rt) {
        const { room, error } = rt.pickRoom(args.group, self)
        if (error) return error
        ensureRoomLog(room)
@@ -354,13 +389,15 @@ index 7dbcc2cabf67187336152d01270d381f5bedda79..da2a182aa438c3aeb188908e137db2b8
    }))
 diff --git a/src/host/room-membership.js b/src/host/room-membership.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..68b463ad088efd116bce0473778e793f36d5465b
+index 0000000000000000000000000000000000000000..d81b43716a2024eba523c37ac8d19383ee811a07
 --- /dev/null
 +++ b/src/host/room-membership.js
-@@ -0,0 +1,825 @@
+@@ -0,0 +1,1019 @@
 +// Room membership (#50/#50 follow-up): typed human, local-bot and published remote-bot
-+// participants, room roles, persistent author ids, membership-window history. This is
-+// not team mode — the gates in docs/subsystems/team.md stay unsatisfied.
++// participants, room roles, persistent author ids, membership-window history. Face-to-face
++// rooms (#83) reuse this model (`origin: 'face-to-face'`) so unpublished matching members
++// can sit as remote participants without a friendship. This is not team mode — the gates
++// in docs/subsystems/team.md stay unsatisfied.
 +//
 +// Data model (additive; no STATE_VERSION bump). A room may carry `participants`:
 +//
@@ -538,6 +575,10 @@ index 0000000000000000000000000000000000000000..68b463ad088efd116bce0473778e793f
 +  return cleanPeerName(p.ownerName || p.homeName || p.ownerHome, '')
 +}
 +
++export function isFaceRoom(room) {
++  return room?.origin === 'face-to-face'
++}
++
 +export function presentRoom(room, actor, state) {
 +  if (!room) return room
 +  const role = viewerRole(room, actor, state)
@@ -548,6 +589,27 @@ index 0000000000000000000000000000000000000000..68b463ad088efd116bce0473778e793f
 +    viewerRole: role,
 +    participants: room.participants,
 +    presentedParticipants: participants,
++  }
++  if (isFaceRoom(room)) {
++    const labeled = live.map(p => {
++      const shown = presentParticipant(p, live)
++      if (p.kind !== 'bot') return shown
++      // Every face-to-face member is `<Bot> · <owner>'s Bot` (Chief: `<owner>'s Chief`),
++      // including the viewer's own Bot, matching the server label.
++      if (!p.ownerName && !isRemoteParticipant(p)) return shown
++      const label = disambiguatedRemoteTitle(p, live)
++      return { ...shown, label, ownerBadge: label, ownerName: ownerNameSafe(p) }
++    })
++    return {
++      ...base,
++      presentedParticipants: labeled,
++      viewerRole: role === 'outsider' ? 'outsider' : 'member',
++      displayName: room.name,
++      face: room.face,
++      origin: 'face-to-face',
++      sharedFrom: undefined,
++      inviteNotice: false,
++    }
 +  }
 +  if (role !== 'invited-owner') return base
 +  const from = inviterSnapshot(room, state)
@@ -734,7 +796,11 @@ index 0000000000000000000000000000000000000000..68b463ad088efd116bce0473778e793f
 +    if (line.botId) {
 +      const remote = currentParticipants(room).find(p => p.remote && (p.id === line.botId || p.handle === line.botId))
 +      const name = remote ? remoteBotTitle(remote) : (line.who || state.bots?.[line.botId]?.name || 'Bot')
-+      return { ...line, who: name, authorId: line.botId, authorKind: 'bot', ...(remote ? { remote: true, ownerName: ownerNameSafe(remote) } : {}) }
++      const faceRemote = isFaceRoom(room) && (remote || !state.bots?.[line.botId])
++      const text = faceRemote && line.text && !String(line.text).includes('<untrusted-message')
++        ? fenceUntrusted(name, line.text)
++        : line.text
++      return { ...line, who: name, text, authorId: line.botId, authorKind: 'bot', ...(remote ? { remote: true, ownerName: ownerNameSafe(remote) } : {}) }
 +    }
 +    const humans = currentParticipants(room).filter(p => p.kind === 'human')
 +    const id = line.authorId || (humans.length === 1 ? humans[0].id : undefined)
@@ -906,7 +972,7 @@ index 0000000000000000000000000000000000000000..68b463ad088efd116bce0473778e793f
 +        (kind === 'human' && me.id === actor.memberId)
 +        || (kind === 'bot' && (state.bots?.[me.id]?.ownerId === actor.memberId || me.ownerId === actor.memberId || room.sharedFrom?.ownerId === actor.memberId))
 +      )
-+      if (kind === 'bot' && room.origin !== 'inbound-share' && botsLeft.length < 2 && !ownerLeave) throw invalid('A group chat needs at least two Bots')
++      if (kind === 'bot' && room.origin !== 'inbound-share' && room.origin !== 'face-to-face' && botsLeft.length < 2 && !ownerLeave) throw invalid('A group chat needs at least two Bots')
 +      const line = append(room, {
 +        kind: 'left',
 +        who: me.displayName,
@@ -1049,6 +1115,12 @@ index 0000000000000000000000000000000000000000..68b463ad088efd116bce0473778e793f
 +  // Bot that is no longer published to us gets nothing, and the sending Bot is one that may
 +  // speak outside (bot.send then runs the reach policy on every single send).
 +  rt.fanoutRoomLine = async function fanoutRoomLine(room, line) {
++    if (isFaceRoom(room)) {
++      try { await rt.faceRoomFanout?.(room, line) } catch (error) {
++        rt.warn?.('ds-bot: face-room line not sent: %s', error)
++      }
++      return
++    }
 +    const remotes = currentParticipants(room).filter(isRemoteParticipant)
 +    if (remotes.length === 0 || !rt.flybotSend) return
 +    const localAuthor = line.authorKind === 'bot' && !line.remote && rt.botOf?.(line.authorId ?? line.botId) ? (line.authorId ?? line.botId) : undefined
@@ -1181,6 +1253,163 @@ index 0000000000000000000000000000000000000000..68b463ad088efd116bce0473778e793f
 +    return room
 +  }
 +
++  function faceHandleOf(p) {
++    if (p?.remote) return p.handle || p.id
++    const bot = state.bots?.[p?.id]
++    return bot?.fields?.social?.member?.handle || p?.handle
++  }
++
++  function faceRemoteRecord(member, joinedSeq, at) {
++    const handle = String(member.handle || member.id || '')
++    const displayName = cleanPeerName(member.displayName || member.name, handle)
++    const ownerName = cleanPeerName(member.ownerName || member.ownerHome, '')
++    return {
++      kind: 'bot',
++      remote: true,
++      id: handle,
++      handle,
++      ownerHome: member.ownerHome,
++      ownerName,
++      displayName,
++      // ISSUE #51: when published / reach() lands, use that seam instead of the server's
++      // snapshot. FlyBot members default to unpublished; the matching room is the scope.
++      published: member.published === true,
++      role: 'member',
++      joinedSeq,
++      joinedAt: at,
++    }
++  }
++
++  function faceLocalRecord(bot, joinedSeq, at, member) {
++    return {
++      kind: 'bot',
++      id: bot.id,
++      role: 'member',
++      displayName: bot.name ?? bot.id,
++      handle: bot.handle,
++      ownerName: cleanPeerName(member?.ownerName, ''),
++      joinedSeq,
++      joinedAt: at,
++    }
++  }
++
++  rt.syncFaceParticipants = function syncFaceParticipants(room, members, localBots = []) {
++    materialize(room)
++    const at = Date.now()
++    const seq = room.seq ?? 0
++    const byHandle = new Map()
++    for (const bot of localBots) {
++      if (bot?.handle) byHandle.set(String(bot.handle).toLowerCase(), bot)
++    }
++    const liveKeys = new Set()
++    for (const member of members ?? []) {
++      const handle = String(member.handle || member.id || '')
++      if (!handle) continue
++      liveKeys.add(handle.toLowerCase())
++      const local = byHandle.get(handle.toLowerCase())
++      const existing = currentParticipants(room).find(p => {
++        if (local) return p.kind === 'bot' && !p.remote && p.id === local.id
++        return p.remote && (p.handle === handle || p.id === handle)
++      })
++      if (existing) {
++        if (existing.remote) {
++          existing.displayName = cleanPeerName(member.displayName || member.name, existing.displayName)
++          existing.ownerName = cleanPeerName(member.ownerName, existing.ownerName)
++          existing.published = member.published === true
++        } else if (member.ownerName) {
++          existing.ownerName = cleanPeerName(member.ownerName, existing.ownerName)
++        }
++        continue
++      }
++      const record = local
++        ? faceLocalRecord(local, seq, at, member)
++        : faceRemoteRecord(member, seq, at)
++      room.participants.push(record)
++    }
++    for (const p of currentParticipants(room)) {
++      const key = (p.remote ? (p.handle || p.id) : (byHandle.get(String(p.handle || '').toLowerCase())?.handle || faceHandleOf(p) || p.id) || '')
++      const match = String(key).toLowerCase()
++      const still = [...liveKeys].some(h => h === match || h === String(p.id).toLowerCase() || (p.handle && h === String(p.handle).toLowerCase()))
++      if (!still) {
++        p.leftSeq = seq
++        p.leftAt = at
++      }
++    }
++    syncMembers(room)
++    return room
++  }
++
++  rt.upsertFaceRoom = async function upsertFaceRoom(spec = {}) {
++    const serverId = String(spec.roomId || spec.faceRoomId || '')
++    if (!serverId) throw invalid('A face-to-face room needs a room id')
++    let room = Object.values(state.rooms || {}).find(item => item.face?.roomId === serverId)
++    const title = spec.name || room?.name || 'Face-to-face room'
++    const at = Date.now()
++    if (!room) {
++      const id = spec.localId || (typeof rt.createSession === 'function' ? await rt.createSession(title) : `face-${serverId}`)
++      room = {
++        id,
++        name: title,
++        named: true,
++        origin: 'face-to-face',
++        members: [],
++        admin: null,
++        mode: 'everyone',
++        createdAt: at,
++        createdBy: null,
++        log: [],
++        seq: 0,
++        seen: {},
++        participants: [],
++        face: { roomId: serverId, status: spec.status || 'candidate', expiresAt: spec.expiresAt || null, eventCursor: 0, seenEvents: [] },
++      }
++      state.rooms[id] = room
++    }
++    room.face = {
++      roomId: serverId,
++      status: spec.status || room.face.status || 'candidate',
++      expiresAt: spec.expiresAt ?? room.face.expiresAt ?? null,
++      startedAt: spec.startedAt ?? room.face.startedAt ?? null,
++      eventCursor: Math.max(Number(room.face.eventCursor) || 0, Number(spec.eventCursor) || 0),
++      seenEvents: Array.isArray(room.face.seenEvents) ? room.face.seenEvents : [],
++    }
++    if (spec.name) room.name = spec.name
++    if (Array.isArray(spec.members)) rt.syncFaceParticipants(room, spec.members, spec.localBots)
++    await rt.save?.()
++    return room
++  }
++
++  rt.applyFaceRoomLine = function applyFaceRoomLine(room, line) {
++    materialize(room)
++    const eventId = line?.eventId
++    room.face ??= { seenEvents: [] }
++    room.face.seenEvents ??= []
++    if (eventId && room.face.seenEvents.includes(eventId)) return undefined
++    if (eventId) {
++      room.face.seenEvents.push(eventId)
++      if (room.face.seenEvents.length > 200) room.face.seenEvents = room.face.seenEvents.slice(-200)
++    }
++    if (line?.eventCursor) room.face.eventCursor = Math.max(Number(room.face.eventCursor) || 0, Number(line.eventCursor) || 0)
++    const stamped = append(room, {
++      kind: line.kind,
++      who: line.who,
++      text: line.text ?? '',
++      authorId: line.authorId,
++      authorKind: line.authorKind,
++      ...(line.remote ? { remote: true, ownerName: line.ownerName, botId: line.authorId } : {}),
++      ...(line.eventId ? { eventId: line.eventId } : {}),
++    })
++    return stamped
++  }
++
++  rt.dropFaceRoom = async function dropFaceRoom(roomId) {
++    const room = rt.roomOf(roomId)
++    if (!room || !isFaceRoom(room)) return false
++    if (typeof rt.deleteRoom === 'function') await rt.deleteRoom(roomId)
++    else delete state.rooms[roomId]
++    return true
++  }
++
 +  return rt
 +}
 diff --git a/src/shared/remote-label.js b/src/shared/remote-label.js
@@ -1273,10 +1502,10 @@ index adc5416982fe43238970440a857d8fd6040f9b2a..5593b3d423c793bc638cbda59daedee2
    assert.deepEqual(names(mentionRows(roster, 'chief-2')), ['King', 'Writer'])
 diff --git a/test/remote-room.test.js b/test/remote-room.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..9242493be795f0fc6b697d39e2c77a3a520c9d62
+index 0000000000000000000000000000000000000000..b6f8a9bf218fe1eaae34d58e8023ea68330a3303
 --- /dev/null
 +++ b/test/remote-room.test.js
-@@ -0,0 +1,504 @@
+@@ -0,0 +1,538 @@
 +import assert from 'node:assert/strict'
 +import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 +import { tmpdir } from 'node:os'
@@ -1289,6 +1518,7 @@ index 0000000000000000000000000000000000000000..9242493be795f0fc6b697d39e2c77a3a
 +import { install as installAuthz } from '../src/host/authz.js'
 +import {
 +  install as installRooms,
++  isFaceRoom,
 +  linesVisibleTo,
 +  ownsInvitedBot,
 +  presentRoom,
@@ -1511,6 +1741,39 @@ index 0000000000000000000000000000000000000000..9242493be795f0fc6b697d39e2c77a3a
 +  const visible = linesVisibleTo(rt.state.rooms['from-alice'], actorB, rt.state)
 +  assert.deepEqual(visible.map(line => line.text), ['welcome', 'hello'])
 +  assert.equal(rt.roomHistory('from-alice', actorB).some(line => line.text === 'secret'), false)
++})
++
++test('face-to-face room hosts unpublished remotes and skips friend fanout', async (t) => {
++  const { rt, sent } = host(t, TEAM)
++  await rt.load()
++  const room = await rt.upsertFaceRoom({
++    roomId: 'frm_1',
++    localId: 'face-1',
++    status: 'candidate',
++    expiresAt: '2026-10-15T10:10:00.000Z',
++    members: [
++      { handle: '@writer.alice.home', displayName: 'Writer', ownerName: 'Alice', published: false },
++      { handle: '@coder.bob.home', displayName: 'Coder', ownerName: 'Bob', published: false },
++    ],
++    localBots: [{ id: 'spec-a', handle: '@writer.alice.home', name: 'Writer A' }],
++  })
++  assert.equal(isFaceRoom(room), true)
++  assert.equal(room.origin, 'face-to-face')
++  const live = room.participants.filter(p => p.leftSeq === undefined)
++  assert.equal(live.some(p => p.id === 'spec-a' && !p.remote), true)
++  const remote = live.find(p => p.handle === '@coder.bob.home')
++  assert.equal(remote.remote, true)
++  assert.equal(remote.published, false)
++  const shown = presentRoom(room, { memberId: 'owner-1' }, rt.state)
++  assert.equal(shown.viewerRole, 'member')
++  assert.doesNotMatch(shown.displayName || '', /Shared room/)
++  assert.ok(shown.presentedParticipants.some(p => /Coder/.test(p.label) && /Bob/.test(p.label)))
++  assert.ok(shown.presentedParticipants.some(p => /Writer A/.test(p.label) && /Alice/.test(p.label)))
++  await rt.postRoomMessage('face-1', { text: 'hello', authorId: 'spec-a', authorKind: 'bot' })
++  assert.equal(sent.length, 0)
++  const line = rt.applyFaceRoomLine(room, { kind: 'joined', who: 'Room', text: "Bob's Coder joined; not published, available to this room only", eventId: 'fev_1', eventCursor: 1 })
++  assert.equal(line.kind, 'joined')
++  assert.equal(rt.applyFaceRoomLine(room, { eventId: 'fev_1', text: 'dup' }), undefined)
 +})
 +
 +test('fanout to remotes fences peer text and never names unpublished specialists', async (t) => {

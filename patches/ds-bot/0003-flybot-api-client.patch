@@ -85,7 +85,7 @@ index 3651a710fe5fb33dfd2f056edbbb220a43bec732..65c268530255fa7465f4485cc11a9182
        h('button', { type: 'button', className: 'bt-set-row bt-bs-row', onClick: duplicate },
          h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Duplicate')), h('span', { className: 'bt-set-hint' }, t('A copy with the same job and model, and fresh memory.'))),
 diff --git a/src/client/cells.js b/src/client/cells.js
-index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..033ba4433bdc75f758092474b300b1d96239a798 100644
+index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..a9784b6f4d041461df88faa0aa67e83b8b0a2277 100644
 --- a/src/client/cells.js
 +++ b/src/client/cells.js
 @@ -2,12 +2,16 @@ import { createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useR
@@ -201,7 +201,7 @@ index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..033ba4433bdc75f758092474b300b1d9
  // A centered event line that names a group chat and opens it.
  function GroupEvent({ prefix, room, name, roster, actions }) {
    return h('div', { className: 'bt-event' },
-@@ -331,11 +403,19 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
+@@ -331,17 +403,27 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
      : body
  
    function triggerBody() {
@@ -221,7 +221,16 @@ index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..033ba4433bdc75f758092474b300b1d9
        // The secret card itself shows what the user did; the note to the Bot stays out.
        if (source.role === 'secret' || deferred) return null
        if (source.role === 'post') {
-@@ -571,7 +651,10 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
+         // A member's late failure, its work picked up after a restart, or its work the user
+-        // stopped shows as an event of the round it opens.
++        // stopped shows as an event of the round it opens. Face-to-face join/leave/start
++        // notices go through GroupReplies as bt-event, not as a Bot bubble.
+         if (source.failed !== undefined || source.resumed === true || source.stopped === true) return null
++        if (source.notice === true || source.senderSessionId === 'face-notice') return null
+         const room = roster.roomsById[sessionId]
+         const poster = roster.byId[source.senderSessionId] ?? { id: source.senderSessionId, name: source.senderName ?? t('a Bot'), color: 'gray' }
+         return h(GroupMessage, { bot: poster, text: stripHeader(contentText(data.content)), room, roster, actions, msgKey: `${sessionId}:${data.turn}:post`, useUi })
+@@ -571,7 +653,10 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
      replies.map((reply, index) => {
        const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? 'gray' }
        if (reply.kind === 'user') {
@@ -233,6 +242,29 @@ index a99dadcaf392ae86a22e5ba8fbd73a29e0e9003a..033ba4433bdc75f758092474b300b1d9
            h(MarkdownText, { text: reply.text, labels: mdLabels(), variant: 'compact' })))
        }
        if (reply.kind === 'failed') {
+@@ -599,6 +684,22 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
+       if (reply.kind === 'stopped') {
+         return h('div', { key: `${reply.botId}-${index}`, className: 'bt-event' }, t("You stopped {name}'s work", { name: bot.name }))
+       }
++      if (reply.kind === 'notice' || reply.kind === 'joined' || reply.kind === 'left' || reply.kind === 'started') {
++        return h('div', { key: `notice-${index}`, className: 'bt-event', 'data-flybot': 'face-notice' }, reply.text)
++      }
++      const remote = reply.remote || (reply.handle && !roster.byId[reply.botId])
++      if (remote) {
++        return h(RemoteMessage, {
++          key: `${reply.botId || reply.handle}-${index}`,
++          source: { remote: { handle: reply.handle || reply.botId }, senderName: reply.name || reply.who, senderSessionId: reply.botId },
++          text: reply.text,
++          roster,
++          actions,
++          sessionId,
++          msgKey: callId ? `${sessionId}:${callId}:${index}` : undefined,
++          useUi,
++        })
++      }
+       return h(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : undefined, useUi })
+     }),
+     pending.map((id) => {
 diff --git a/src/client/context-menu.js b/src/client/context-menu.js
 index 48b001892b5646e43b0aa01c8b98ce31d9def699..2fc397c61326b38cf7110b9704757c801bc0b079 100644
 --- a/src/client/context-menu.js
@@ -270,13 +302,13 @@ index 48b001892b5646e43b0aa01c8b98ce31d9def699..2fc397c61326b38cf7110b9704757c80
 +
 diff --git a/src/client/flybot-registry.js b/src/client/flybot-registry.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..9ec7e265e04462a98041e6e90811bc312ec6dc4d
+index 0000000000000000000000000000000000000000..d51c4f2a08d7d24b301f59337bb9d870f2941e66
 --- /dev/null
 +++ b/src/client/flybot-registry.js
 @@ -0,0 +1,188 @@
 +// The FlyBot slot registry, free of React so the "@" menu and tests can use it.
 +// See flybot-slots.js for what each slot carries.
-+export const SLOTS = ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals']
++export const SLOTS = ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals', 'flybot.room.overview']
 +
 +export function createRegistry() {
 +  const entries = new Map(SLOTS.map(name => [name, []]))
@@ -464,10 +496,10 @@ index 0000000000000000000000000000000000000000..9ec7e265e04462a98041e6e90811bc31
 +}
 diff --git a/src/client/flybot-slots.js b/src/client/flybot-slots.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..ff766018127e0453cda2890f05bb1109b2245f6a
+index 0000000000000000000000000000000000000000..1e6d1db9f4f8ac08b34dbffe5cd402dce2d80242
 --- /dev/null
 +++ b/src/client/flybot-slots.js
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,156 @@
 +// -------------------------------------------------------------------------
 +// FlyBot frontend slots. Feature plugins' client bundles register into one shared
 +// registry at globalThis.__flybot__ (created by whichever bundle loads first), and
@@ -481,6 +513,7 @@ index 0000000000000000000000000000000000000000..ff766018127e0453cda2890f05bb1109
 +//   flybot.composer.mention { id, order, candidates(query, { sessionId, roster, call }) → rows }   rows in the "@" menu
 +//   flybot.bot.details      { id, order, component({ bot, roster, call }) }        in a Bot's settings
 +//   flybot.approvals        { id, order, component({ approval, decide, call }) }   custom card for a held send
++//   flybot.room.overview    { id, order, component({ room, roster, actions, call }) }  top of a group's overview
 +//
 +// Types: ds-bot/types/flybot.d.ts (FlyBotClientRegistry).
 +import { Component, createElement as h, Fragment, useEffect, useState } from 'react'
@@ -543,6 +576,13 @@ index 0000000000000000000000000000000000000000..ff766018127e0453cda2890f05bb1109
 +  const remoteChats = (roster.bots ?? []).filter(bot => bot.remote)
 +  return h(Fragment, null, entries.map(entry => h('div', { key: entry.id, className: 'bt-flybot-section', 'data-flybot': entry.id },
 +    h(Safe, { entry, props: { roster, actions, call, renderBot, remoteChats } }))))
++}
++
++export function FlyBotRoomOverview({ room, roster, actions }) {
++  const entries = useSlot('flybot.room.overview')
++  if (entries.length === 0) return null
++  return h(Fragment, null, entries.map(entry => h('div', { key: entry.id, className: 'bt-flybot-room-overview', 'data-flybot': entry.id },
++    h(Safe, { entry, props: { room, roster, actions, call } }))))
 +}
 +
 +export function FlyBotDetails({ bot, roster }) {
@@ -1117,7 +1157,7 @@ index 0000000000000000000000000000000000000000..649ca3f372a8b38d5ea9703b367f3596
 +})
 diff --git a/test/flybot-client.test.js b/test/flybot-client.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..4fd3cd074c28ea93380c4f8ed7e7c5d15dba724c
+index 0000000000000000000000000000000000000000..16ea16a13fa96b731a4139cfe83a3d9f25fdbe35
 --- /dev/null
 +++ b/test/flybot-client.test.js
 @@ -0,0 +1,122 @@
@@ -1138,7 +1178,7 @@ index 0000000000000000000000000000000000000000..4fd3cd074c28ea93380c4f8ed7e7c5d1
 +  // The replaced entry stays: disposing the old one does not remove its successor.
 +  assert.deepEqual(slots.entries('flybot.sidebar.section').map(e => e.id), ['b', 'a'])
 +  assert.throws(() => slots.register('nope', { id: 'x' }), /unknown slot/)
-+  assert.deepEqual(SLOTS, ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals'])
++  assert.deepEqual(SLOTS, ['flybot.sidebar.section', 'flybot.sidebar.structure', 'flybot.composer.mention', 'flybot.bot.details', 'flybot.approvals', 'flybot.room.overview'])
 +})
 +
 +test('mention candidates come from every plugin and one failing source is skipped', async () => {

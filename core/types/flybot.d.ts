@@ -223,7 +223,27 @@ export interface FlyBot {
   }
   /** Optional: pending Bot Social approvals for a shared room the invited owner is viewing. */
   roomApprovals: {
-    setProvider(fn: ((room: { id?: string; participants?: unknown[]; sharedFrom?: unknown; viewerRole?: string }, actor?: { memberId?: string }) => unknown[]) | undefined): void
+    setProvider(fn: ((room: { id?: string; participants?: unknown[]; sharedFrom?: unknown; viewerRole?: string; origin?: string; face?: { roomId?: string } }, actor?: { memberId?: string }) => unknown[]) | undefined): void
+  }
+  /** Face-to-face rooms (#83): host a Bot Social matching room as a normal native room. */
+  rooms: {
+    upsertFace(spec: {
+      roomId: string
+      name?: string
+      status?: string
+      expiresAt?: string | null
+      startedAt?: string | null
+      eventCursor?: number
+      members?: Array<{ handle?: string; displayName?: string; ownerName?: string; published?: boolean; id?: string }>
+      localBots?: Array<{ id: string; handle?: string; name?: string }>
+      localId?: string
+    }): Promise<{ id: string; face?: { roomId?: string } } | undefined>
+    applyFaceLine(roomId: string, line: Record<string, unknown>): unknown
+    ofFace(serverId: string): { id: string; face?: { roomId?: string; eventCursor?: number } } | undefined
+    dropFace(roomId: string): Promise<boolean | undefined>
+    onFaceLine(fn: ((room: { id: string; face?: { roomId?: string }; members?: string[] }, line: Record<string, unknown>) => unknown) | undefined): () => void
+    postNotice(roomId: string, text: string): unknown
+    postRemote(roomId: string, msg: { handle?: string; name?: string; text?: string }): unknown
   }
   approvals: {
     list(filter?: { status?: Approval['status'] | 'all' }): Approval[]
@@ -278,6 +298,8 @@ export type FlyBotCall = (endpoint: string, payload?: unknown) => Promise<any>
  * - `flybot.bot.details`: a section in a Bot's details panel.
  * - `flybot.approvals`: renders held sends (approval cards), optionally only those held by
  *   one middleware (`policy`).
+ * - `flybot.room.overview`: a block at the top of a group's overview (Leave / Start for a
+ *   face-to-face room).
  */
 export interface FlyBotSlots {
   'flybot.sidebar.section': { id: string; order?: number; component(props: SidebarSectionProps): any }
@@ -292,6 +314,7 @@ export interface FlyBotSlots {
   'flybot.bot.details': { id: string; order?: number; component(props: BotDetailsProps): any }
   /** policy: only approvals held by this middleware name; omit for all. */
   'flybot.approvals': { id: string; order?: number; policy?: string; component(props: ApprovalCardProps): any }
+  'flybot.room.overview': { id: string; order?: number; component(props: { room: any; roster: any; actions: any; call: FlyBotCall }): any }
 }
 
 /** Browser ctx.flybot (client plugins inject 'flybot'). */

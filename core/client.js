@@ -1144,7 +1144,7 @@ var call = async (endpoint, payload, signal) => {
 };
 
 // src/client/flybot-registry.js
-var SLOTS = ["flybot.sidebar.section", "flybot.sidebar.structure", "flybot.composer.mention", "flybot.bot.details", "flybot.approvals"];
+var SLOTS = ["flybot.sidebar.section", "flybot.sidebar.structure", "flybot.composer.mention", "flybot.bot.details", "flybot.approvals", "flybot.room.overview"];
 function createRegistry() {
   const entries2 = new Map(SLOTS.map((name) => [name, []]));
   const listeners2 = /* @__PURE__ */ new Set();
@@ -1355,6 +1355,15 @@ function FlyBotSections({ roster, actions, renderBot }) {
     "div",
     { key: entry.id, className: "bt-flybot-section", "data-flybot": entry.id },
     (0, import_react.createElement)(Safe, { entry, props: { roster, actions, call: call2, renderBot, remoteChats } })
+  )));
+}
+function FlyBotRoomOverview({ room: room2, roster, actions }) {
+  const entries2 = useSlot("flybot.room.overview");
+  if (entries2.length === 0) return null;
+  return (0, import_react.createElement)(import_react.Fragment, null, entries2.map((entry) => (0, import_react.createElement)(
+    "div",
+    { key: entry.id, className: "bt-flybot-room-overview", "data-flybot": entry.id },
+    (0, import_react.createElement)(Safe, { entry, props: { room: room2, roster, actions, call: call2 } })
   )));
 }
 function FlyBotDetails({ bot, roster }) {
@@ -4628,6 +4637,7 @@ function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnClock, us
       if (source.role === "secret" || deferred) return null;
       if (source.role === "post") {
         if (source.failed !== void 0 || source.resumed === true || source.stopped === true) return null;
+        if (source.notice === true || source.senderSessionId === "face-notice") return null;
         const room2 = roster.roomsById[sessionId];
         const poster = roster.byId[source.senderSessionId] ?? { id: source.senderSessionId, name: source.senderName ?? t("a Bot"), color: "gray" };
         return (0, import_react7.createElement)(GroupMessage, { bot: poster, text: stripHeader(contentText(data.content)), room: room2, roster, actions, msgKey: `${sessionId}:${data.turn}:post`, useUi });
@@ -4906,6 +4916,22 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
       }
       if (reply.kind === "stopped") {
         return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("You stopped {name}'s work", { name: bot.name }));
+      }
+      if (reply.kind === "notice" || reply.kind === "joined" || reply.kind === "left" || reply.kind === "started") {
+        return (0, import_react7.createElement)("div", { key: `notice-${index}`, className: "bt-event", "data-flybot": "face-notice" }, reply.text);
+      }
+      const remote = reply.remote || reply.handle && !roster.byId[reply.botId];
+      if (remote) {
+        return (0, import_react7.createElement)(RemoteMessage, {
+          key: `${reply.botId || reply.handle}-${index}`,
+          source: { remote: { handle: reply.handle || reply.botId }, senderName: reply.name || reply.who, senderSessionId: reply.botId },
+          text: reply.text,
+          roster,
+          actions,
+          sessionId,
+          msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0,
+          useUi
+        });
       }
       return (0, import_react7.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi });
     }),
@@ -9502,8 +9528,9 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
     const timer = setTimeout(() => setConfirming(false), 4e3);
     return () => clearTimeout(timer);
   }, [confirming]);
-  const humans = (room2.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0);
-  const remotes = (room2.participants ?? []).filter((p) => p.remote && p.leftSeq === void 0);
+  const live = room2.presentedParticipants ?? room2.participants ?? [];
+  const humans = live.filter((p) => p.kind === "human" && p.leftSeq === void 0);
+  const remotes = live.filter((p) => p.remote && p.leftSeq === void 0);
   const members = room2.members.map((id) => roster.byId[id]).filter(Boolean);
   const shared2 = humans.length > 1;
   const chiefs = new Set((roster.humans ?? []).map((person) => person.designatedChiefId).filter(Boolean));
@@ -9627,12 +9654,12 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
         (0, import_react24.createElement)(
           "span",
           { className: "bt-gs-who" },
-          (0, import_react24.createElement)("span", { className: "bt-row-title" }, remoteBotTitle(person)),
-          (0, import_react24.createElement)("span", { className: "bt-tag" }, t("Friend's Bot"))
+          (0, import_react24.createElement)("span", { className: "bt-row-title" }, person.label || remoteBotTitle(person)),
+          room2.origin === "face-to-face" ? null : (0, import_react24.createElement)("span", { className: "bt-tag" }, t("Friend's Bot"))
         ),
-        members.length + remotes.length > 2 ? (0, import_react24.createElement)("button", { type: "button", className: "bt-x", "aria-label": t("Remove {name} from the group", { name: remoteBotTitle(person) }), title: t("Remove from group"), onClick: () => update({ removeParticipants: [{ kind: "bot", id: person.handle || person.id, remote: true }] }) }, "×") : null
+        room2.origin === "face-to-face" || members.length + remotes.length <= 2 ? null : (0, import_react24.createElement)("button", { type: "button", className: "bt-x", "aria-label": t("Remove {name} from the group", { name: remoteBotTitle(person) }), title: t("Remove from group"), onClick: () => update({ removeParticipants: [{ kind: "bot", id: person.handle || person.id, remote: true }] }) }, "×")
       )),
-      adding ? [
+      room2.origin === "face-to-face" ? null : adding ? [
         ...outsidePeople.map((person) => (0, import_react24.createElement)(
           "button",
           { key: person.id, type: "button", className: "bt-set-row bt-bs-row bt-gs-pick", onClick: () => {
@@ -12033,7 +12060,7 @@ function SharedRoomApprovals({ room: room2 }) {
       alive = false;
     };
   }, [room2.id, room2.viewerRole, room2.pendingCount]);
-  if (room2.viewerRole !== "invited-owner" || !items.length) return null;
+  if (room2.viewerRole !== "invited-owner" && room2.origin !== "face-to-face" || !items.length) return null;
   const decide = async (item, decision) => {
     setBusy(item.id);
     try {
@@ -12057,8 +12084,9 @@ function SharedRoomApprovals({ room: room2 }) {
   );
 }
 function GroupOverview({ room: room2, roster, actions, usage, useWork, openSettings }) {
-  const humans = (room2.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0);
-  const remotes = (room2.participants ?? []).filter((p) => p.remote && p.leftSeq === void 0);
+  const live = room2.presentedParticipants ?? room2.participants ?? [];
+  const humans = live.filter((p) => p.kind === "human" && p.leftSeq === void 0);
+  const remotes = live.filter((p) => p.remote && p.leftSeq === void 0);
   const members = room2.members.map((id) => roster.byId[id]).filter(Boolean);
   const { entries: entries2, now } = useMemberWork(room2, useWork);
   const invited = room2.viewerRole === "invited-owner";
@@ -12067,15 +12095,17 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
     const mine = remotes.find((p) => p.ownerId === roster.self?.memberId) || members.find((member) => member.ownerId === roster.self?.memberId);
     if (mine) void actions.updateRoom(room2.id, { removeParticipants: [{ kind: "bot", id: mine.handle || mine.id, remote: Boolean(mine.handle) }] });
   };
+  const face = room2.origin === "face-to-face";
   return [
-    invited && room2.sharedFrom ? (0, import_react32.createElement)(
+    (0, import_react32.createElement)(FlyBotRoomOverview, { key: "plugin-overview", room: room2, roster, actions }),
+    invited && room2.sharedFrom && !face ? (0, import_react32.createElement)(
       "div",
       { key: "from", className: "bt-shared-from" },
       (0, import_react32.createElement)("div", { className: "bt-section-title" }, title),
       (0, import_react32.createElement)("div", { className: "bt-set-hint" }, t("Your Bot was invited to this room by {name}", { name: room2.sharedFrom.inviterName })),
       room2.sharedFrom.invitedAt ? (0, import_react32.createElement)("div", { className: "bt-set-hint" }, t("Invited {when}", { when: new Date(room2.sharedFrom.invitedAt).toLocaleString() })) : null,
       (0, import_react32.createElement)("button", { type: "button", className: "bt-more", onClick: leaveMine }, t("Remove my Bot"))
-    ) : room2.notice ? (0, import_react32.createElement)(About, { key: "notice", title: "Notice", text: room2.notice }) : (0, import_react32.createElement)("button", { key: "notice", type: "button", className: "bt-more", onClick: openSettings }, t("Add a notice in group settings")),
+    ) : face ? null : room2.notice ? (0, import_react32.createElement)(About, { key: "notice", title: "Notice", text: room2.notice }) : (0, import_react32.createElement)("button", { key: "notice", type: "button", className: "bt-more", onClick: openSettings }, t("Add a notice in group settings")),
     (0, import_react32.createElement)(SharedRoomApprovals, { key: "approvals", room: room2 }),
     (0, import_react32.createElement)(
       "div",
@@ -12099,8 +12129,8 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
           (0, import_react32.createElement)(
             "div",
             { className: "bt-member" },
-            (0, import_react32.createElement)("span", { className: "bt-member-name" }, (0, import_react32.createElement)("span", null, remoteBotTitle(person))),
-            (0, import_react32.createElement)("span", { className: "bt-chip" }, t("Friend's Bot"))
+            (0, import_react32.createElement)("span", { className: "bt-member-name" }, (0, import_react32.createElement)("span", null, person.label || remoteBotTitle(person))),
+            face ? null : (0, import_react32.createElement)("span", { className: "bt-chip" }, t("Friend's Bot"))
           )
         )),
         ...members.map((member) => {

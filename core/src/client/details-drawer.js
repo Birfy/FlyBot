@@ -15,6 +15,7 @@ import { Segmented, useGlide, useMorph } from './motion.js'
 import { MemberWork, useMemberWork } from './member-status.js'
 import { t } from './i18n.js'
 import { remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
+import { FlyBotRoomOverview } from './flybot-slots.js'
 import { call } from './api.js'
 
 function transcriptOf(list, id, name, hiddenTurns = []) {
@@ -131,7 +132,7 @@ function SharedRoomApprovals({ room }) {
     }, () => {})
     return () => { alive = false }
   }, [room.id, room.viewerRole, room.pendingCount])
-  if (room.viewerRole !== 'invited-owner' || !items.length) return null
+  if ((room.viewerRole !== 'invited-owner' && room.origin !== 'face-to-face') || !items.length) return null
   const decide = async (item, decision) => {
     setBusy(item.id)
     try {
@@ -148,8 +149,9 @@ function SharedRoomApprovals({ room }) {
 }
 
 function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) {
-  const humans = (room.participants ?? []).filter(p => p.kind === 'human' && p.leftSeq === undefined)
-  const remotes = (room.participants ?? []).filter(p => p.remote && p.leftSeq === undefined)
+  const live = room.presentedParticipants ?? room.participants ?? []
+  const humans = live.filter(p => p.kind === 'human' && p.leftSeq === undefined)
+  const remotes = live.filter(p => p.remote && p.leftSeq === undefined)
   const members = room.members.map(id => roster.byId[id]).filter(Boolean)
   const { entries, now } = useMemberWork(room, useWork)
   const invited = room.viewerRole === 'invited-owner'
@@ -159,16 +161,20 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) 
       || members.find(member => member.ownerId === roster.self?.memberId)
     if (mine) void actions.updateRoom(room.id, { removeParticipants: [{ kind: 'bot', id: mine.handle || mine.id, remote: Boolean(mine.handle) }] })
   }
+  const face = room.origin === 'face-to-face'
   return [
-    invited && room.sharedFrom
+    h(FlyBotRoomOverview, { key: 'plugin-overview', room, roster, actions }),
+    invited && room.sharedFrom && !face
       ? h('div', { key: 'from', className: 'bt-shared-from' },
         h('div', { className: 'bt-section-title' }, title),
         h('div', { className: 'bt-set-hint' }, t('Your Bot was invited to this room by {name}', { name: room.sharedFrom.inviterName })),
         room.sharedFrom.invitedAt ? h('div', { className: 'bt-set-hint' }, t('Invited {when}', { when: new Date(room.sharedFrom.invitedAt).toLocaleString() })) : null,
         h('button', { type: 'button', className: 'bt-more', onClick: leaveMine }, t('Remove my Bot')))
-      : room.notice
-        ? h(About, { key: 'notice', title: 'Notice', text: room.notice })
-        : h('button', { key: 'notice', type: 'button', className: 'bt-more', onClick: openSettings }, t('Add a notice in group settings')),
+      : face
+        ? null
+        : room.notice
+          ? h(About, { key: 'notice', title: 'Notice', text: room.notice })
+          : h('button', { key: 'notice', type: 'button', className: 'bt-more', onClick: openSettings }, t('Add a notice in group settings')),
     h(SharedRoomApprovals, { key: 'approvals', room }),
     h('div', { key: 'members' },
       h('div', { className: 'bt-section-title' }, t('Members · {count}', { count: members.length + humans.length + remotes.length })),
@@ -180,8 +186,8 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) 
             person.role === 'admin' ? h('span', { className: 'bt-chip bt-chip-admin' }, t('Admin')) : null))),
         ...remotes.map(person => h('div', { key: person.handle || person.id, role: 'listitem' },
           h('div', { className: 'bt-member' },
-            h('span', { className: 'bt-member-name' }, h('span', null, remoteBotTitle(person))),
-            h('span', { className: 'bt-chip' }, t('Friend\'s Bot'))))),
+            h('span', { className: 'bt-member-name' }, h('span', null, person.label || remoteBotTitle(person))),
+            face ? null : h('span', { className: 'bt-chip' }, t('Friend\'s Bot'))))),
         ...members.map((member) => {
         const entry = entries.find(item => item.id === member.id)
         return h('div', { key: member.id, role: 'listitem' },

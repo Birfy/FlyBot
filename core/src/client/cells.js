@@ -420,8 +420,10 @@ export function TriggerCell({ node, sessionId, useRoster, useSessions, useTurnCl
       if (source.role === 'secret' || deferred) return null
       if (source.role === 'post') {
         // A member's late failure, its work picked up after a restart, or its work the user
-        // stopped shows as an event of the round it opens.
+        // stopped shows as an event of the round it opens. Face-to-face join/leave/start
+        // notices go through GroupReplies as bt-event, not as a Bot bubble.
         if (source.failed !== undefined || source.resumed === true || source.stopped === true) return null
+        if (source.notice === true || source.senderSessionId === 'face-notice') return null
         const room = roster.roomsById[sessionId]
         const poster = roster.byId[source.senderSessionId] ?? { id: source.senderSessionId, name: source.senderName ?? t('a Bot'), color: 'gray' }
         return h(GroupMessage, { bot: poster, text: stripHeader(contentText(data.content)), room, roster, actions, msgKey: `${sessionId}:${data.turn}:post`, useUi })
@@ -681,6 +683,22 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
       }
       if (reply.kind === 'stopped') {
         return h('div', { key: `${reply.botId}-${index}`, className: 'bt-event' }, t("You stopped {name}'s work", { name: bot.name }))
+      }
+      if (reply.kind === 'notice' || reply.kind === 'joined' || reply.kind === 'left' || reply.kind === 'started') {
+        return h('div', { key: `notice-${index}`, className: 'bt-event', 'data-flybot': 'face-notice' }, reply.text)
+      }
+      const remote = reply.remote || (reply.handle && !roster.byId[reply.botId])
+      if (remote) {
+        return h(RemoteMessage, {
+          key: `${reply.botId || reply.handle}-${index}`,
+          source: { remote: { handle: reply.handle || reply.botId }, senderName: reply.name || reply.who, senderSessionId: reply.botId },
+          text: reply.text,
+          roster,
+          actions,
+          sessionId,
+          msgKey: callId ? `${sessionId}:${callId}:${index}` : undefined,
+          useUi,
+        })
       }
       return h(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : undefined, useUi })
     }),

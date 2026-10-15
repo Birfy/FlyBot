@@ -59,10 +59,10 @@ index 9cdb56ac60dda8bb9f364eb0791908a867412210..6f275b131462facfa0e83d05128f1a88
  export function createRuntime(ctx, config = {}) {
 diff --git a/src/host/hooks.js b/src/host/hooks.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..04edf52487be21acb00dd0e4e866959078488f92
+index 0000000000000000000000000000000000000000..f5628e35c37c3d0b37f151167e9889a3867fcdda
 --- /dev/null
 +++ b/src/host/hooks.js
-@@ -0,0 +1,753 @@
+@@ -0,0 +1,778 @@
 +// FlyBot hooks: the `flybot` service feature plugins (plugins/social, plugins/tree)
 +// build on. Installed after resume.js, so its gate around rt.deliver is the outermost
 +// wrapper: every Bot-to-Bot message, including message_bot, stop_bot, and replies,
@@ -786,6 +786,31 @@ index 0000000000000000000000000000000000000000..04edf52487be21acb00dd0e4e8669590
 +    roomApprovals: {
 +      setProvider(fn) { rt.listRoomApprovals = typeof fn === 'function' ? fn : undefined },
 +    },
++    rooms: {
++      upsertFace: spec => rt.upsertFaceRoom?.(spec),
++      applyFaceLine: (roomId, line) => {
++        const room = rt.roomOf(roomId)
++        if (!room) return undefined
++        return rt.applyFaceRoomLine?.(room, line)
++      },
++      ofFace: serverId => Object.values(state.rooms || {}).find(room => room.face?.roomId === serverId),
++      dropFace: roomId => rt.dropFaceRoom?.(roomId),
++      onFaceLine(fn) {
++        rt.faceRoomFanout = typeof fn === 'function' ? fn : undefined
++        return () => { if (rt.faceRoomFanout === fn) rt.faceRoomFanout = undefined }
++      },
++      postNotice: (roomId, text) => {
++        const room = rt.roomOf(roomId)
++        if (!room || typeof rt.postToRoom !== 'function') return
++        return rt.postToRoom(room, { id: 'face-notice', name: 'Room' }, String(text ?? ''), { quiet: true, notice: true })
++      },
++      postRemote: (roomId, { handle, name, text } = {}) => {
++        const room = rt.roomOf(roomId)
++        if (!room || typeof rt.postToRoom !== 'function') return
++        const who = name || handle || 'Bot'
++        return rt.postToRoom(room, { id: handle, name: who }, String(text ?? ''), { remote: { handle }, senderName: who })
++      },
++    },
 +    remote: {
 +      publish: list => remoteMembers.publish(plugin, list),
 +      list: remoteMembers.list,
@@ -1504,10 +1529,10 @@ index 62fed26b0f4449349b2a06e219c18324109c7993..58fcd80ea8ad0ec119377f728853a977
        const dispose = execute()
 diff --git a/test/flybot.test.js b/test/flybot.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..9cf72616e93964014df05287fa3a5bc53059b7f2
+index 0000000000000000000000000000000000000000..c5f207c753fa32222110dbb6aa8fda0dbd164d09
 --- /dev/null
 +++ b/test/flybot.test.js
-@@ -0,0 +1,523 @@
+@@ -0,0 +1,525 @@
 +import assert from 'node:assert/strict'
 +import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 +import { tmpdir } from 'node:os'
@@ -1589,6 +1614,8 @@ index 0000000000000000000000000000000000000000..9cf72616e93964014df05287fa3a5bc5
 +  assert.equal(typeof fb.on, 'function')
 +  assert.equal(typeof fb.warn, 'function')
 +  assert.equal(fb.fields, fb.bot.fields)
++  assert.equal(typeof fb.rooms.upsertFace, 'function')
++  assert.equal(typeof fb.rooms.onFaceLine, 'function')
 +})
 +
 +test('flybot.warn writes to the host diagnostics log', async (t) => {

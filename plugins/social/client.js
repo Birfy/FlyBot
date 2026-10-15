@@ -84,6 +84,12 @@ window.__ModuleLoader__.load({
 .fs-pending{margin:4px 4px 6px;padding:8px 10px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:10px;background:var(--bt-card,#fff);display:flex;flex-direction:column;gap:6px}
 .fs-pending .fs-label{padding:0}
 .fs-draft{font-size:13px;line-height:18px;color:var(--bt-ink,#141414);white-space:pre-wrap;overflow-wrap:anywhere;max-height:96px;overflow:auto}
+.fs-digits{flex:1 1 auto;min-width:0;width:0;height:30px;padding:0 9px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:16px;letter-spacing:.24em;font-variant-numeric:tabular-nums;outline:none;text-align:center}
+.fs-digits:focus{border-color:var(--bt-accent,#4d6bfe)}
+.fs-face{margin:4px 4px 6px;padding:8px 10px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:10px;background:var(--bt-card,#fff);display:flex;flex-direction:column;gap:6px}
+.fs-face-members{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:2px}
+.fs-face-members li{font-size:13px;line-height:18px;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fs-face-actions{display:flex;gap:6px;flex-wrap:wrap}
 `
     function useStyles() {
       useEffect(() => {
@@ -101,7 +107,9 @@ window.__ModuleLoader__.load({
       if (!items?.length) return null
       return h('div', { className: 'fs-pending', 'data-flybot': 'pending-approvals', role: 'region', 'aria-label': 'Messages waiting for your approval' },
         h('div', { className: 'fs-label' }, 'Waiting for your approval', h('span', { className: 'fs-count' }, String(items.length))),
-        h('div', { className: 'fs-hint' }, 'A friend already sees their own message. These replies stay here until you Approve or Reject them. Turn on Auto-accept for that friend to skip the hold next time.'),
+        h('div', { className: 'fs-hint' }, items.some(item => item.kind === 'face_room_message')
+          ? 'These room messages stay here until you Approve or Reject them. They are not sent until you approve.'
+          : 'A friend already sees their own message. These replies stay here until you Approve or Reject them. Turn on Auto-accept for that friend to skip the hold next time.'),
         items.map(item => h('div', { key: item.id, className: 'fs-row', 'data-flybot': 'pending-item' },
           h('span', { className: 'fs-avatar', 'aria-hidden': true }, initial(item.from ?? item.toName ?? item.to)),
           h('span', { className: 'fs-text' },
@@ -115,7 +123,141 @@ window.__ModuleLoader__.load({
 
     // Friends' Bots grouped by their home (one collapsible group each). Each Bot is drawn by
     // ds-bot's own Bot row (renderBot: avatar, preview, unread, click opens its chat).
-    function FriendsBots({ renderBot, remoteChats } = {}) {
+    function JoinWithNumber({ actions } = {}) {
+      const [code, setCode] = useState('')
+      const [bots, setBots] = useState([])
+      const [joiner, setJoiner] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [status, setStatus] = useState(null)
+      const [open, setOpen] = useState(false)
+      useEffect(() => {
+        call('social/status', {}).then(value => {
+          const list = value?.bots ?? []
+          setBots(list)
+          setJoiner(current => current || list[0]?.id || '')
+        }, () => {})
+      }, [])
+      const join = async (event) => {
+        event?.preventDefault?.()
+        const digits = String(code).replace(/\D/g, '').slice(0, 6)
+        if (digits.length !== 6) {
+          setStatus({ tone: 'error', text: 'Enter a 6-digit number.' })
+          return
+        }
+        setBusy(true)
+        setStatus(null)
+        try {
+          const result = await call('social/face-join', { code: digits, ...(joiner ? { botId: joiner } : {}) })
+          setCode('')
+          const n = result?.members?.length ?? 0
+          setStatus({ tone: 'ok', text: n ? `Joined. ${n} ${n === 1 ? 'Bot' : 'Bots'} in the room.` : 'Joined.' })
+          if (result?.roomId && typeof actions?.openSession === 'function') actions.openSession(result.roomId)
+        } catch (e) {
+          setStatus({ tone: 'error', text: errorText(e) })
+        } finally { setBusy(false) }
+      }
+      return h('div', { className: 'bt-social-face-join', 'data-flybot': 'face-join' },
+        h('button', { type: 'button', className: 'fs-icon', style: { margin: '2px 4px', width: 'auto' }, 'aria-expanded': open, onClick: () => setOpen(value => !value) }, open ? 'Close number' : 'Join with a number'),
+        open ? h('form', { onSubmit: join, className: 'fs-card' },
+          h('div', { className: 'fs-hint' }, 'Type the same 6-digit number as the people next to you. You join at once — there is no preview.'),
+          h('div', { className: 'fs-line' },
+            h('input', {
+              className: 'fs-digits', value: code, inputMode: 'numeric', autoComplete: 'off', maxLength: 6,
+              placeholder: '000000', 'aria-label': '6-digit room number',
+              onChange: e => setCode(String(e.target.value).replace(/\D/g, '').slice(0, 6)),
+            }),
+            h('button', { type: 'submit', className: 'fs-btn', disabled: busy || String(code).replace(/\D/g, '').length !== 6 }, 'Join')),
+          bots.length > 1 ? h('label', { className: 'fs-line fs-hint', 'data-flybot': 'face-join-as' }, 'Bring ',
+            h('select', { className: 'fs-input', value: joiner, 'aria-label': 'Which of your Bots joins', onChange: e => setJoiner(e.target.value) },
+              bots.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name))),
+            ' (default: first)') : null,
+          status ? h('div', { className: 'fs-status', role: 'status', 'data-tone': status.tone }, status.text) : null) : null)
+    }
+
+    function FaceRoomCard({ room, actions, onChange }) {
+      const [busy, setBusy] = useState('')
+      const [note, setNote] = useState(null)
+      const run = async (label, fn) => {
+        setBusy(label)
+        setNote(null)
+        try {
+          await fn()
+          onChange?.()
+        } catch (e) { setNote({ tone: 'error', text: errorText(e) }) }
+        finally { setBusy('') }
+      }
+      const members = room.members ?? []
+      const candidate = room.status === 'candidate'
+      return h('div', { className: 'fs-face', 'data-flybot': 'face-room', 'data-status': room.status },
+        h('div', { className: 'fs-name' }, room.name || 'Face-to-face room'),
+        candidate && room.expiresAt ? h('div', { className: 'fs-sub' }, countdown(room.expiresAt)) : h('div', { className: 'fs-sub' }, 'The number is no longer valid.'),
+        h('ul', { className: 'fs-face-members', 'aria-label': 'Members' },
+          members.map(m => h('li', { key: m.handle || m.id }, m.label || m.displayName || m.handle))),
+        h('div', { className: 'fs-face-actions' },
+          h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => { if (room.roomId) actions?.openSession?.(room.roomId) } }, 'Open'),
+          candidate ? h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('start', () => call('social/face-start', { roomId: room.roomId, faceRoomId: room.faceRoomId })) }, 'Start chat') : null,
+          h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('leave', () => call('social/face-leave', { roomId: room.roomId, faceRoomId: room.faceRoomId })) }, 'Leave')),
+        note ? h('div', { className: 'fs-status', 'data-tone': note.tone }, note.text) : null)
+    }
+
+    function countdown(expiresAt) {
+      const at = Date.parse(expiresAt)
+      if (!Number.isFinite(at)) return 'Matching window open'
+      const left = Math.max(0, at - Date.now())
+      if (left <= 0) return 'The matching window has ended'
+      const minutes = Math.ceil(left / 60_000)
+      if (minutes >= 2) return `${minutes} minutes left to join`
+      const seconds = Math.max(1, Math.ceil(left / 1000))
+      return seconds === 1 ? '1 second left to join' : `${seconds} seconds left to join`
+    }
+
+    function FaceRooms({ actions } = {}) {
+      const [rooms, setRooms] = useState([])
+      const load = () => call('social/face-rooms', {}).then(value => setRooms(Array.isArray(value?.rooms) ? value.rooms : []), () => {})
+      useEffect(() => {
+        load()
+        if (typeof setInterval !== 'function') return undefined
+        const timer = setInterval(load, 5000)
+        timer?.unref?.()
+        return () => clearInterval(timer)
+      }, [])
+      if (!rooms.length) return null
+      return h('div', { 'data-flybot': 'face-rooms' },
+        h('div', { className: 'fs-label' }, 'Face-to-face rooms'),
+        rooms.map(room => h(FaceRoomCard, { key: room.faceRoomId || room.roomId, room, actions, onChange: load })))
+    }
+
+    function FaceRoomOverview({ room } = {}) {
+      useStyles()
+      const face = room?.origin === 'face-to-face' ? room.face : undefined
+      if (room?.origin !== 'face-to-face') return null
+      const [busy, setBusy] = useState('')
+      const [note, setNote] = useState(null)
+      const [tick, setTick] = useState(0)
+      useEffect(() => {
+        if (face?.status !== 'candidate' || !face?.expiresAt) return undefined
+        const timer = setInterval(() => setTick(n => n + 1), 1000)
+        timer?.unref?.()
+        return () => clearInterval(timer)
+      }, [face?.status, face?.expiresAt])
+      const run = async (label, fn) => {
+        setBusy(label)
+        setNote(null)
+        try { await fn() } catch (e) { setNote({ tone: 'error', text: errorText(e) }) }
+        finally { setBusy('') }
+      }
+      const candidate = face?.status === 'candidate'
+      return h('div', { className: 'fs-face', 'data-flybot': 'face-overview' },
+        h('div', { className: 'fs-hint', 'data-tick': tick }, candidate
+          ? (face?.expiresAt ? countdown(face.expiresAt) : 'Matching window open. Anyone with the number can still join.')
+          : 'This room is open. The number is no longer valid.'),
+        h('div', { className: 'fs-face-actions' },
+          candidate ? h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('start', () => call('social/face-start', { roomId: room.id, faceRoomId: face?.roomId })) }, 'Start chat') : null,
+          h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('leave', () => call('social/face-leave', { roomId: room.id, faceRoomId: face?.roomId })) }, 'Leave')),
+        note ? h('div', { className: 'fs-status', 'data-tone': note.tone }, note.text) : null)
+    }
+
+    function FriendsBots({ renderBot, remoteChats, actions } = {}) {
       useStyles()
       const [data, setData] = useState(null)
       const [error, setError] = useState('')
@@ -165,6 +307,8 @@ window.__ModuleLoader__.load({
           unavailable ? null : h('button', { type: 'button', className: 'fs-icon', 'aria-expanded': adding, title: 'Add a friend', onClick: () => { setAdding(!adding); setOpen(true) } }, adding ? 'Done' : '+ Add')),
         open ? h('div', { className: 'fs-body' },
           h(PendingApprovals, { items: pending, busy: saving, onDecide: decide }),
+          unavailable ? null : h(JoinWithNumber, { actions }),
+          unavailable ? null : h(FaceRooms, { actions }),
           adding && !unavailable ? h(AddFriend, { onChange: () => load().then(loadSettings) }) : null,
           unavailable ? h('div', { className: 'fs-empty', 'data-flybot': 'social-unavailable' }, error) : error ? h('div', { className: 'fs-status', 'data-tone': 'error', style: { padding: '4px 10px' } }, error) : null,
           data === null && !error ? h('div', { className: 'fs-hint' }, 'Loading…') : null,
@@ -335,6 +479,8 @@ window.__ModuleLoader__.load({
       canInvite,
       InviteToBot,
       PendingApprovals,
+      JoinWithNumber,
+      FaceRoomOverview,
       apply(ctx) {
         let offs = []
         let tries = 0
@@ -349,6 +495,7 @@ window.__ModuleLoader__.load({
             slots().register('flybot.sidebar.section', { id: 'social', order: 100, component: FriendsBots }),
             slots().register('flybot.composer.mention', { id: 'social', order: 100, candidates: friendRows }),
             slots().register('flybot.bot.details', { id: 'social-invite', order: 100, component: InviteToBot }),
+            slots().register('flybot.room.overview', { id: 'social-face', order: 50, component: FaceRoomOverview }),
           ]
           // For other plugins (the tree's per-node "Copy invite link"): ctx.flybot.social.canInvite(botId)
           // is synchronous; flybot.call('social.createInvite', { botId }) returns { link, text, ... }.

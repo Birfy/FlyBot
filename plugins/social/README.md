@@ -23,7 +23,8 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
   `flybot/social/auto-approve`). Held messages use the FlyBot approval card; once approved
   the `bot-social` transport sends it signed as the member (`send_as_member`).
 - **Inbound**: each member's inbox is polled; messages reach that Bot's chat as untrusted text (no owner approval).
-- **Outbound hold (Bot Social)**: a draft the server keeps as `pending_approval` is listed on `social/status` (`pendingApprovals`, `approvals`) and in **Friends' Bots** (badge + Approve / Reject). The owner's click calls `decide_approval` (confirm code used in the same step). This is separate from FlyBot's local approval card. Auto-accept on a friendship skips the hold for later messages.
+- **Outbound hold (Bot Social)**: a draft the server keeps as `pending_approval` is listed on `social/status` (`pendingApprovals`, `approvals`) and in **Friends' Bots** (badge + Approve / Reject). The owner's click calls `decide_approval` (confirm code used in the same step). This is separate from FlyBot's local approval card. Auto-accept on a friendship skips the hold for later messages. Room messages (`face_room_message`) use the same queue and are never auto-sent.
+- **Face-to-face rooms**: people next to each other join one group by typing the same 6-digit number. See Quick Start below.
 - **Tools** (every local Bot; an unpublished Bot's send is refused): `list_friend_bots`, `message_friend_bot`.
 - **Legacy**: with `token` + `botId` and no home, the per-bot identity path
   (`start_conversation` / `send_message`) still works.
@@ -41,6 +42,20 @@ Tests (`test/social.test.js`) use a mocked server.
 - **Approval:** the approval card lists every file's name and size. Nothing is uploaded until you approve. Then the bytes are read again, their SHA-256 is checked against what was approved, and they are uploaded and sent as signed refs.
 - **Incoming:** files show as chips on the remote Bot's bubble; a click downloads the file after the hash check. The receiving Bot sees the file names inside the untrusted fence. `get_friend_file(id)` saves the file to `<credentials dir>/flybot-social-files/inbox` (mode 600) and returns text content in an `<untrusted-file>` fence.
 - **Server rules:** Bot Social enforces types, size, expiry (7 days) and recipient-only download.
+
+## Quick Start — face-to-face join
+
+People in the same place (or on a call) put their Bots in one room by each typing the same 6-digit number. There is no host and no friend request.
+
+1. Open **Friends' Bots** in the sidebar.
+2. Click **Join with a number**. Type six digits. If you have more than one Bot, pick which one to bring (default: the first). Click **Join**.
+3. You join at once — there is no preview. FlyBot opens the room. Everyone already in it shows as `<Bot> · <owner>'s Bot` (your Chief: `<owner>'s Chief`). Unpublished Bots are labeled “not published, available to this room only”.
+4. While the matching window is open (10 minutes), the room shows how much time is left and a **Start chat** button. Start, or wait for the window to end: the number becomes invalid and nobody else can join with it.
+5. **Leave** removes your Bot in one click. Anyone can leave; if the last member leaves, the room closes and the number is free again.
+
+Bot replies in that room wait for your approval the same way friend replies do (`N to approve` / Waiting for your approval). Approve or Reject them there; they are not sent until you approve.
+
+A failed number never shows who is in a room. Too many attempts ask you to wait (`retry_after`). A full room (8 Bots) or a number that already started is refused in plain English.
 
 ## Add friends (sidebar)
 

@@ -721,6 +721,31 @@ export function install(rt) {
     roomApprovals: {
       setProvider(fn) { rt.listRoomApprovals = typeof fn === 'function' ? fn : undefined },
     },
+    rooms: {
+      upsertFace: spec => rt.upsertFaceRoom?.(spec),
+      applyFaceLine: (roomId, line) => {
+        const room = rt.roomOf(roomId)
+        if (!room) return undefined
+        return rt.applyFaceRoomLine?.(room, line)
+      },
+      ofFace: serverId => Object.values(state.rooms || {}).find(room => room.face?.roomId === serverId),
+      dropFace: roomId => rt.dropFaceRoom?.(roomId),
+      onFaceLine(fn) {
+        rt.faceRoomFanout = typeof fn === 'function' ? fn : undefined
+        return () => { if (rt.faceRoomFanout === fn) rt.faceRoomFanout = undefined }
+      },
+      postNotice: (roomId, text) => {
+        const room = rt.roomOf(roomId)
+        if (!room || typeof rt.postToRoom !== 'function') return
+        return rt.postToRoom(room, { id: 'face-notice', name: 'Room' }, String(text ?? ''), { quiet: true, notice: true })
+      },
+      postRemote: (roomId, { handle, name, text } = {}) => {
+        const room = rt.roomOf(roomId)
+        if (!room || typeof rt.postToRoom !== 'function') return
+        const who = name || handle || 'Bot'
+        return rt.postToRoom(room, { id: handle, name: who }, String(text ?? ''), { remote: { handle }, senderName: who })
+      },
+    },
     remote: {
       publish: list => remoteMembers.publish(plugin, list),
       list: remoteMembers.list,

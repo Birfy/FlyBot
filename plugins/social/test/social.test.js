@@ -62,6 +62,9 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
       onboarded += 1
       return new Response(JSON.stringify({ owner_id: 'o1', connector: { token }, home: { bot_id: 'h1', handle: '@danyang.home' }, bot: { bot_id: 'h1' }, webhook: null }), { status: 201 })
     }
+    if (String(url).includes('/v1/face-rooms')) {
+      return new Response(JSON.stringify({ rooms: [] }), { status: 200 })
+    }
     if (init.headers.authorization !== `Bearer ${token}`) return new Response('{}', { status: 401 })
     const body = JSON.parse(init.body)
     calls.push({ url, name: body.params.name, args: body.params.arguments })
@@ -436,7 +439,7 @@ test('client.js registers a sidebar section and @ rows into the FlyBot registry'
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
   const plugin = registered[0].factory(() => ({ createElement: () => null, useEffect() {}, useState: v => [v, () => {}] }))
   plugin.apply({})
-  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.composer.mention#social', 'flybot.bot.details#social-invite'])
+  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.composer.mention#social', 'flybot.bot.details#social-invite', 'flybot.room.overview#social-face'])
   // Transport errors are worded in English from their code, never the localized host text.
   assert.match(plugin.errorText(Object.assign(new Error('请求失败（HTTP 404）'), { code: 'HTTP_404' })), /^The FlyBot host did not answer \(HTTP 404\)/)
   assert.equal(plugin.errorText(Object.assign(new Error('x'), { code: 'bot/refused' })), 'x')
@@ -1012,3 +1015,173 @@ test('a paused conversation explains the pause and names the console, without re
   // The same for a Bot's send through the transport (message_friend_bot).
   await assert.rejects(ctx.flybot.bot.send({ from: 'a', to: '@coder.bob.home', text: 'hello from chief' }), /paused this conversation/)
 })
+
+function withFaceRooms(server) {
+  const rooms = new Map()
+  const codes = new Map()
+  const base = server.fetch
+  server.face = { rooms, codes }
+  server.fetch = async (url, init) => {
+    if (String(url).includes('/v1/face-rooms')) {
+      const auth = init.headers.authorization
+      if (auth !== `Bearer ${'owner-token'}` && auth !== 'Bearer owner-token') {
+        return new Response(JSON.stringify({ error: { code: 'unauthorized' } }), { status: 401 })
+      }
+      const path = String(url).replace(/^https:\/\/s\/v1\/face-rooms/, '')
+      const body = init.body ? JSON.parse(init.body) : undefined
+      server.calls.push({ url, name: `REST ${init.method} ${path}`, args: body })
+      if (init.method === 'POST' && path === '/join') {
+        if (body.code === '999999') return new Response(JSON.stringify({ error: { code: 'room_full' } }), { status: 409 })
+        if (body.code === '000000') return new Response(JSON.stringify({ error: { code: 'code_void' } }), { status: 409 })
+        if (body.code === '111111') return new Response(JSON.stringify({ error: { code: 'rate_limited', retry_after: 30, scope: 'ip' } }), { status: 429 })
+        let room = codes.get(body.code)
+        if (!room) {
+          room = { room_id: `frm_${body.code}`, status: 'candidate', expires_at: '2026-10-15T10:10:00.000Z', members: [], events: [], event_cursor: 0 }
+          rooms.set(room.room_id, room)
+          codes.set(body.code, room)
+        }
+        const handle = body.bots?.[0] || '@chief.danyang.home'
+        const member = { bot_id: 'bot_local', handle, display_name: 'Chief', owner_name: 'Danyang', published: false, label: 'Chief · Danyang' }
+        if (!room.members.some(m => m.handle === handle)) {
+          room.members.push(member)
+          room.event_cursor += 1
+          room.events.push({
+            event_id: `fev_${room.event_cursor}`, event_cursor: room.event_cursor, type: 'member.joined',
+            text: "Danyang's Chief joined; not published, available to this room only", member, trust: 'platform',
+          })
+        }
+        return new Response(JSON.stringify({ ...room, events: room.events.slice(-1) }), { status: 200 })
+      }
+      if (init.method === 'GET' && (path === '' || path === '/')) {
+        return new Response(JSON.stringify({ rooms: [...rooms.values()].map(r => ({ room_id: r.room_id, status: r.status, expires_at: r.expires_at, member_count: r.members.length })) }), { status: 200 })
+      }
+      const id = decodeURIComponent((path.split('?')[0] || '').replace(/^\//, '').split('/')[0])
+      const room = rooms.get(id)
+      if (!room) return new Response(JSON.stringify({ error: { code: 'face_room_not_found' } }), { status: 404 })
+      if (init.method === 'GET') {
+        const after = Number(new URL(url).searchParams.get('after') || 0)
+        return new Response(JSON.stringify({ ...room, events: room.events.filter(e => e.event_cursor > after) }), { status: 200 })
+      }
+      if (init.method === 'POST' && path.endsWith('/start')) {
+        room.status = 'open'
+        room.event_cursor += 1
+        room.events.push({ event_id: `fev_${room.event_cursor}`, event_cursor: room.event_cursor, type: 'room.started', reason: 'start', text: 'The room is now open. The number is no longer valid.', trust: 'platform' })
+        return new Response(JSON.stringify(room), { status: 200 })
+      }
+      if (init.method === 'POST' && path.endsWith('/leave')) {
+        room.status = 'closed'
+        return new Response(JSON.stringify(room), { status: 200 })
+      }
+      if (init.method === 'POST' && path.endsWith('/messages')) {
+        if (body.text === 'hold me') {
+          return new Response(JSON.stringify({ message_id: 'fmd_h', status: 'pending_approval', approval_id: 'apr-face-1', from: room.members[0] }), { status: 202 })
+        }
+        room.event_cursor += 1
+        room.events.push({
+          event_id: `fev_${room.event_cursor}`, event_cursor: room.event_cursor, type: 'room.message',
+          from: { handle: '@coder.bob.home', display_name: 'Coder', owner_name: 'Bob', published: false, label: 'Coder · Bob' },
+          trust: 'peer_untrusted', untrusted_content: { text: body.text },
+        })
+        return new Response(JSON.stringify({ message_id: 'fmd_ok', status: 'delivered', event_cursor: room.event_cursor }), { status: 202 })
+      }
+      return new Response(JSON.stringify({ error: { code: 'invalid_request' } }), { status: 400 })
+    }
+    return base(url, init)
+  }
+  return server
+}
+
+test('face-to-face join hosts a native room, maps errors, starts and leaves', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const joined = (await call('flybot/social/face-join', { code: '123456' })).value
+  assert.equal(joined.faceRoomId, 'frm_123456')
+  assert.ok(joined.roomId)
+  assert.equal(ctx.flybot.rooms.ofFace('frm_123456').origin, 'face-to-face')
+  assert.ok((joined.members ?? []).some(m => /Chief/.test(m.label || m.displayName) && /Danyang/.test(m.label || '')))
+  assert.equal((await call('flybot/social/face-join', { code: '12ab56' })).ok, false)
+  assert.match((await call('flybot/social/face-join', { code: '12ab56' })).error.message, /6-digit/)
+  assert.match((await call('flybot/social/face-join', { code: '999999' })).error.message, /8 Bots/)
+  assert.match((await call('flybot/social/face-join', { code: '000000' })).error.message, /no longer valid/)
+  assert.match((await call('flybot/social/face-join', { code: '111111' })).error.message, /30 seconds/)
+  const started = (await call('flybot/social/face-start', { faceRoomId: 'frm_123456' })).value
+  assert.equal(started.status, 'open')
+  const listed = (await call('flybot/social/face-rooms', {})).value
+  assert.equal(listed.rooms.length, 1)
+  const left = (await call('flybot/social/face-leave', { faceRoomId: 'frm_123456' })).value
+  assert.equal(left.status, 'closed')
+  assert.equal(ctx.flybot.rooms.ofFace('frm_123456'), undefined)
+})
+
+test('face-to-face send pending_approval uses decide_approval', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  let queue = [{
+    approval_id: 'apr-face-1',
+    kind: 'face_room_message',
+    status: 'pending',
+    bot_id: 'm1',
+    room_id: 'frm_123456',
+    message: { payload: { text: 'hold me' } },
+    summary: 'To the room: hold me',
+  }]
+  server.tools.list_approvals = () => ({ approvals: queue })
+  server.tools.decide_approval = a => {
+    if (a.confirm_code === undefined) return { status: 'confirmation_required', confirm_code: 'C0DE02' }
+    queue = queue.filter(item => item.approval_id !== a.approval_id)
+    return { approval_id: a.approval_id, decision: a.decision }
+  }
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  await call('flybot/social/face-join', { code: '123456' })
+  const sent = (await call('flybot/social/face-send', { faceRoomId: 'frm_123456', text: 'hold me' })).value
+  assert.equal(sent.status, 'pending_approval')
+  assert.equal(sent.approvalId, 'apr-face-1')
+  const status = (await call('flybot/social/status', {})).value
+  assert.equal(status.pendingApprovals, 1)
+  assert.equal(status.approvals[0].kind, 'face_room_message')
+  assert.equal(status.approvals[0].toName, 'the room')
+  const decided = (await call('flybot/social/decide-approval', { approvalId: 'apr-face-1', decision: 'approve' })).value
+  assert.equal(decided.status, 'approved')
+  assert.equal((await call('flybot/social/status', {})).value.pendingApprovals, 0)
+})
+
+test('Friends\' Bots (#83): Join with a number is in the panel', () => {
+  const registered = []
+  const entries = []
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = { slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } }, call: async () => ({ connected: true, bots: [{ id: 'a', name: 'Chief', isMain: true }], homes: [], rooms: [] }) }
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const data = { homes: [] }
+  const initial = [data, '', true, false, {}, {}, '', []]
+  let i = 0
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+  plugin.apply({})
+  const tree = entries[0][1].component({})
+  const all = []
+  const walk = node => {
+    if (!node || typeof node !== 'object') return
+    if (typeof node.type === 'function') { walk(node.type(node.props)); return }
+    all.push(node)
+    ;(node.children ?? []).forEach(walk)
+  }
+  walk(tree)
+  assert.ok(all.some(n => n.props['data-flybot'] === 'face-join'))
+  assert.ok(all.some(n => n.type === 'button' && n.children.includes('Join with a number')))
+  assert.ok(entries.some(([slot, entry]) => slot === 'flybot.room.overview' && entry.id === 'social-face'))
+})
+

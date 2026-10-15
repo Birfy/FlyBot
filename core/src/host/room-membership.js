@@ -1,6 +1,8 @@
 // Room membership (#50/#50 follow-up): typed human, local-bot and published remote-bot
-// participants, room roles, persistent author ids, membership-window history. This is
-// not team mode — the gates in docs/subsystems/team.md stay unsatisfied.
+// participants, room roles, persistent author ids, membership-window history. Face-to-face
+// rooms (#83) reuse this model (`origin: 'face-to-face'`) so unpublished matching members
+// can sit as remote participants without a friendship. This is not team mode — the gates
+// in docs/subsystems/team.md stay unsatisfied.
 //
 // Data model (additive; no STATE_VERSION bump). A room may carry `participants`:
 //
@@ -178,6 +180,10 @@ function ownerNameSafe(p) {
   return cleanPeerName(p.ownerName || p.homeName || p.ownerHome, '')
 }
 
+export function isFaceRoom(room) {
+  return room?.origin === 'face-to-face'
+}
+
 export function presentRoom(room, actor, state) {
   if (!room) return room
   const role = viewerRole(room, actor, state)
@@ -188,6 +194,27 @@ export function presentRoom(room, actor, state) {
     viewerRole: role,
     participants: room.participants,
     presentedParticipants: participants,
+  }
+  if (isFaceRoom(room)) {
+    const labeled = live.map(p => {
+      const shown = presentParticipant(p, live)
+      if (p.kind !== 'bot') return shown
+      // Every face-to-face member is `<Bot> · <owner>'s Bot` (Chief: `<owner>'s Chief`),
+      // including the viewer's own Bot, matching the server label.
+      if (!p.ownerName && !isRemoteParticipant(p)) return shown
+      const label = disambiguatedRemoteTitle(p, live)
+      return { ...shown, label, ownerBadge: label, ownerName: ownerNameSafe(p) }
+    })
+    return {
+      ...base,
+      presentedParticipants: labeled,
+      viewerRole: role === 'outsider' ? 'outsider' : 'member',
+      displayName: room.name,
+      face: room.face,
+      origin: 'face-to-face',
+      sharedFrom: undefined,
+      inviteNotice: false,
+    }
   }
   if (role !== 'invited-owner') return base
   const from = inviterSnapshot(room, state)
@@ -374,7 +401,11 @@ export function install(rt) {
     if (line.botId) {
       const remote = currentParticipants(room).find(p => p.remote && (p.id === line.botId || p.handle === line.botId))
       const name = remote ? remoteBotTitle(remote) : (line.who || state.bots?.[line.botId]?.name || 'Bot')
-      return { ...line, who: name, authorId: line.botId, authorKind: 'bot', ...(remote ? { remote: true, ownerName: ownerNameSafe(remote) } : {}) }
+      const faceRemote = isFaceRoom(room) && (remote || !state.bots?.[line.botId])
+      const text = faceRemote && line.text && !String(line.text).includes('<untrusted-message')
+        ? fenceUntrusted(name, line.text)
+        : line.text
+      return { ...line, who: name, text, authorId: line.botId, authorKind: 'bot', ...(remote ? { remote: true, ownerName: ownerNameSafe(remote) } : {}) }
     }
     const humans = currentParticipants(room).filter(p => p.kind === 'human')
     const id = line.authorId || (humans.length === 1 ? humans[0].id : undefined)
@@ -546,7 +577,7 @@ export function install(rt) {
         (kind === 'human' && me.id === actor.memberId)
         || (kind === 'bot' && (state.bots?.[me.id]?.ownerId === actor.memberId || me.ownerId === actor.memberId || room.sharedFrom?.ownerId === actor.memberId))
       )
-      if (kind === 'bot' && room.origin !== 'inbound-share' && botsLeft.length < 2 && !ownerLeave) throw invalid('A group chat needs at least two Bots')
+      if (kind === 'bot' && room.origin !== 'inbound-share' && room.origin !== 'face-to-face' && botsLeft.length < 2 && !ownerLeave) throw invalid('A group chat needs at least two Bots')
       const line = append(room, {
         kind: 'left',
         who: me.displayName,
@@ -689,6 +720,12 @@ export function install(rt) {
   // Bot that is no longer published to us gets nothing, and the sending Bot is one that may
   // speak outside (bot.send then runs the reach policy on every single send).
   rt.fanoutRoomLine = async function fanoutRoomLine(room, line) {
+    if (isFaceRoom(room)) {
+      try { await rt.faceRoomFanout?.(room, line) } catch (error) {
+        rt.warn?.('ds-bot: face-room line not sent: %s', error)
+      }
+      return
+    }
     const remotes = currentParticipants(room).filter(isRemoteParticipant)
     if (remotes.length === 0 || !rt.flybotSend) return
     const localAuthor = line.authorKind === 'bot' && !line.remote && rt.botOf?.(line.authorId ?? line.botId) ? (line.authorId ?? line.botId) : undefined
@@ -819,6 +856,163 @@ export function install(rt) {
     state.rooms[id] = room
     await rt.save?.()
     return room
+  }
+
+  function faceHandleOf(p) {
+    if (p?.remote) return p.handle || p.id
+    const bot = state.bots?.[p?.id]
+    return bot?.fields?.social?.member?.handle || p?.handle
+  }
+
+  function faceRemoteRecord(member, joinedSeq, at) {
+    const handle = String(member.handle || member.id || '')
+    const displayName = cleanPeerName(member.displayName || member.name, handle)
+    const ownerName = cleanPeerName(member.ownerName || member.ownerHome, '')
+    return {
+      kind: 'bot',
+      remote: true,
+      id: handle,
+      handle,
+      ownerHome: member.ownerHome,
+      ownerName,
+      displayName,
+      // ISSUE #51: when published / reach() lands, use that seam instead of the server's
+      // snapshot. FlyBot members default to unpublished; the matching room is the scope.
+      published: member.published === true,
+      role: 'member',
+      joinedSeq,
+      joinedAt: at,
+    }
+  }
+
+  function faceLocalRecord(bot, joinedSeq, at, member) {
+    return {
+      kind: 'bot',
+      id: bot.id,
+      role: 'member',
+      displayName: bot.name ?? bot.id,
+      handle: bot.handle,
+      ownerName: cleanPeerName(member?.ownerName, ''),
+      joinedSeq,
+      joinedAt: at,
+    }
+  }
+
+  rt.syncFaceParticipants = function syncFaceParticipants(room, members, localBots = []) {
+    materialize(room)
+    const at = Date.now()
+    const seq = room.seq ?? 0
+    const byHandle = new Map()
+    for (const bot of localBots) {
+      if (bot?.handle) byHandle.set(String(bot.handle).toLowerCase(), bot)
+    }
+    const liveKeys = new Set()
+    for (const member of members ?? []) {
+      const handle = String(member.handle || member.id || '')
+      if (!handle) continue
+      liveKeys.add(handle.toLowerCase())
+      const local = byHandle.get(handle.toLowerCase())
+      const existing = currentParticipants(room).find(p => {
+        if (local) return p.kind === 'bot' && !p.remote && p.id === local.id
+        return p.remote && (p.handle === handle || p.id === handle)
+      })
+      if (existing) {
+        if (existing.remote) {
+          existing.displayName = cleanPeerName(member.displayName || member.name, existing.displayName)
+          existing.ownerName = cleanPeerName(member.ownerName, existing.ownerName)
+          existing.published = member.published === true
+        } else if (member.ownerName) {
+          existing.ownerName = cleanPeerName(member.ownerName, existing.ownerName)
+        }
+        continue
+      }
+      const record = local
+        ? faceLocalRecord(local, seq, at, member)
+        : faceRemoteRecord(member, seq, at)
+      room.participants.push(record)
+    }
+    for (const p of currentParticipants(room)) {
+      const key = (p.remote ? (p.handle || p.id) : (byHandle.get(String(p.handle || '').toLowerCase())?.handle || faceHandleOf(p) || p.id) || '')
+      const match = String(key).toLowerCase()
+      const still = [...liveKeys].some(h => h === match || h === String(p.id).toLowerCase() || (p.handle && h === String(p.handle).toLowerCase()))
+      if (!still) {
+        p.leftSeq = seq
+        p.leftAt = at
+      }
+    }
+    syncMembers(room)
+    return room
+  }
+
+  rt.upsertFaceRoom = async function upsertFaceRoom(spec = {}) {
+    const serverId = String(spec.roomId || spec.faceRoomId || '')
+    if (!serverId) throw invalid('A face-to-face room needs a room id')
+    let room = Object.values(state.rooms || {}).find(item => item.face?.roomId === serverId)
+    const title = spec.name || room?.name || 'Face-to-face room'
+    const at = Date.now()
+    if (!room) {
+      const id = spec.localId || (typeof rt.createSession === 'function' ? await rt.createSession(title) : `face-${serverId}`)
+      room = {
+        id,
+        name: title,
+        named: true,
+        origin: 'face-to-face',
+        members: [],
+        admin: null,
+        mode: 'everyone',
+        createdAt: at,
+        createdBy: null,
+        log: [],
+        seq: 0,
+        seen: {},
+        participants: [],
+        face: { roomId: serverId, status: spec.status || 'candidate', expiresAt: spec.expiresAt || null, eventCursor: 0, seenEvents: [] },
+      }
+      state.rooms[id] = room
+    }
+    room.face = {
+      roomId: serverId,
+      status: spec.status || room.face.status || 'candidate',
+      expiresAt: spec.expiresAt ?? room.face.expiresAt ?? null,
+      startedAt: spec.startedAt ?? room.face.startedAt ?? null,
+      eventCursor: Math.max(Number(room.face.eventCursor) || 0, Number(spec.eventCursor) || 0),
+      seenEvents: Array.isArray(room.face.seenEvents) ? room.face.seenEvents : [],
+    }
+    if (spec.name) room.name = spec.name
+    if (Array.isArray(spec.members)) rt.syncFaceParticipants(room, spec.members, spec.localBots)
+    await rt.save?.()
+    return room
+  }
+
+  rt.applyFaceRoomLine = function applyFaceRoomLine(room, line) {
+    materialize(room)
+    const eventId = line?.eventId
+    room.face ??= { seenEvents: [] }
+    room.face.seenEvents ??= []
+    if (eventId && room.face.seenEvents.includes(eventId)) return undefined
+    if (eventId) {
+      room.face.seenEvents.push(eventId)
+      if (room.face.seenEvents.length > 200) room.face.seenEvents = room.face.seenEvents.slice(-200)
+    }
+    if (line?.eventCursor) room.face.eventCursor = Math.max(Number(room.face.eventCursor) || 0, Number(line.eventCursor) || 0)
+    const stamped = append(room, {
+      kind: line.kind,
+      who: line.who,
+      text: line.text ?? '',
+      authorId: line.authorId,
+      authorKind: line.authorKind,
+      ...(line.remote ? { remote: true, ownerName: line.ownerName, botId: line.authorId } : {}),
+      ...(line.eventId ? { eventId: line.eventId } : {}),
+    })
+    return stamped
+  }
+
+  rt.dropFaceRoom = async function dropFaceRoom(roomId) {
+    const room = rt.roomOf(roomId)
+    if (!room || !isFaceRoom(room)) return false
+    if (typeof rt.deleteRoom === 'function') await rt.deleteRoom(roomId)
+    else delete state.rooms[roomId]
+    return true
   }
 
   return rt
