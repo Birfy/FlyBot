@@ -40,3 +40,15 @@ test('a time-context snapshot appended after the typed text does not swallow it'
     assert.equal(t.text, 'hi');
     assert.equal(t.messageId, 'm1');
 });
+
+test('agent-instructions and notice messages after the typed text do not swallow it', () => {
+    const baseline = user([{ type: 'text', text: '<system-reminder>AGENTS.md ...</system-reminder>' }],
+        { kind: 'agent-instructions', form: 'instructions', baseline: true, changes: [] }, 'm2');
+    const notice = user('plan mode on', { kind: 'plan-mode', form: 'notice' }, 'm3');
+    for (const extra of [[baseline], [baseline, notice]]) {
+        const t = remoteTurn([user('hi', { kind: 'user' }), ...extra]);
+        assert.equal(t.kind, 'send'); assert.equal(t.text, 'hi'); assert.equal(t.messageId, 'm1');
+    }
+    assert.equal(remoteTurn([user('<f/>', { kind: 'bot', form: 'remote-chat', text: 'pong' }), baseline]).kind, 'echo');
+    assert.equal(remoteTurn([baseline]).kind, 'none');
+});
