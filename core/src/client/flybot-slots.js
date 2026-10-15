@@ -12,6 +12,7 @@
 //   flybot.bot.details      { id, order, component({ bot, roster, call }) }        in a Bot's settings
 //   flybot.approvals        { id, order, component({ approval, decide, call }) }   custom card for a held send
 //   flybot.room.overview    { id, order, component({ room, roster, actions, call }) }  top of a group's overview
+//   flybot.session.dock     { id, order, component({ sessionId, roster, room, bot, actions, call }) }  above the composer
 //
 // Types: ds-bot/types/flybot.d.ts (FlyBotClientRegistry).
 import { Component, createElement as h, Fragment, useEffect, useState } from 'react'
@@ -74,6 +75,16 @@ export function FlyBotSections({ roster, actions, renderBot }) {
   const remoteChats = (roster.bots ?? []).filter(bot => bot.remote)
   return h(Fragment, null, entries.map(entry => h('div', { key: entry.id, className: 'bt-flybot-section', 'data-flybot': entry.id },
     h(Safe, { entry, props: { roster, actions, call, renderBot, remoteChats } }))))
+}
+
+export function FlyBotSessionDock({ sessionId, useRoster, actions }) {
+  const entries = useSlot('flybot.session.dock')
+  const roster = typeof useRoster === 'function' ? useRoster(value => value) : undefined
+  if (entries.length === 0) return null
+  const room = roster?.roomsById?.[sessionId]
+  const bot = room ? undefined : roster?.byId?.[sessionId]
+  return h(Fragment, null, entries.map(entry => h('div', { key: entry.id, className: 'bt-flybot-session-dock', 'data-flybot': entry.id },
+    h(Safe, { entry, props: { sessionId, roster, room, bot, actions, call } }))))
 }
 
 export function FlyBotRoomOverview({ room, roster, actions }) {

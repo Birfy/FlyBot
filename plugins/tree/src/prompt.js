@@ -8,8 +8,8 @@ export function traceRule(trace, root) {
   if (root) return `Do not start your replies with a trace or path line (e.g. "${trace} → <child>"). ${NO_TRACE}`
   return `Only when you answer your parent bot in the tree, start that answer with a one-line trace of the path the request took, e.g. "${trace}". ${NO_TRACE}`
 }
-// A published tree Bot can be contacted from outside the tree (a friend's Bot, another owner's Bot).
-export const OUTSIDE_RULE = 'If your owner has published you, a bot outside the tree (a friend\'s bot, or another owner\'s bot) may message you directly. Answer that sender directly, with no trace line, and delegate only to your own children, never to bots outside the tree.'
+// A granted tree Bot can be contacted from outside the tree (a friend's Bot, another owner's Bot).
+export const OUTSIDE_RULE = 'If someone has been granted access to you, a bot outside the tree (a friend\'s bot, or another owner\'s bot) may message you directly. Answer that sender directly, with no trace line, and delegate only to your own children, never to bots outside the tree.'
 export function systemPrompt({ name, role, trace, children, root = false }) {
   const head = root
     ? [`Bot tree: you (${name}) are also the ROOT of a recursive bot tree of child bots. For tasks you delegate into the tree, follow these tree rules.`, `Your position: ${trace}`]

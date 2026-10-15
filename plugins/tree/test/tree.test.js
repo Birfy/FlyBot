@@ -285,59 +285,64 @@ test('non-tree local sender: only the root is reachable; remote senders unchange
     assert.equal(r.action, 'deny'); assert.match(r.reason, /only the tree root/)
   }
   const h = m.middlewares[0].handle
-  assert.equal(h({ from: { kind: 'remote', handle: '@x.peer' }, to: m.root, target: { remote: false, id: m.root } }), undefined) // remote sender to the published Chief: not the tree's call
+  assert.equal(h({ from: { kind: 'remote', handle: '@x.peer' }, to: m.root, target: { remote: false, id: m.root } })?.action, 'deny') // remote sender to an ungranted Chief
+  m.setGrants(m.root, [{ grantee: '@x.peer' }])
+  assert.equal(h({ from: { kind: 'remote', handle: '@x.peer' }, to: m.root, target: { remote: false, id: m.root } }), undefined) // granted Chief: not the tree's call
   assert.equal(h({ from: '@x.peer', to: chief, target: { remote: false, id: chief } }), undefined) // a non-tree Bot is not the tree's call
   assert.equal((await send(chief, await outsider(m, 'Other'))).action, 'allow')
   assert.equal((await send(a, '@coder.bob.home')).action, 'allow') // remote target
 })
 
-test('#51: a remote sender reaches a published tree Bot directly and an unpublished one never; no redirect to the root', async () => {
+test('#90: a remote sender reaches a granted tree Bot directly and an ungranted one never; no redirect to the root', async () => {
   const m = await setup()
   const a = await make(m, m.root, 'A'); const b = await make(m, a, 'B')
   const h = m.middlewares[0].handle
   const remote = { kind: 'remote', handle: '@x.peer' }
   const toward = to => h({ from: remote, to, target: { remote: false, id: to } })
-  // New tree Bots are unpublished.
+  // New tree Bots have no grant.
   for (const id of [a, b]) {
-    assert.equal(m.flybot.bot.isPublished(id), false)
+    assert.equal(m.flybot.bot.hasAnyGrant(id), false)
     const verdict = toward(id)
-    assert.equal(verdict.action, 'deny'); assert.match(verdict.reason, /not published/)
+    assert.equal(verdict.action, 'deny'); assert.match(verdict.reason, /has not been granted/)
   }
-  assert.equal(toward(m.root), undefined, 'the Chief is published by default')
-  // Published: reached directly, even a deep descendant, and the tree gives no other target.
-  m.setPublished(b, true)
+  assert.equal(toward(m.root)?.action, 'deny', 'the Chief has no grant until someone is invited')
+  m.setGrants(m.root, [{ grantee: '@x.peer' }])
+  assert.equal(toward(m.root), undefined, 'a granted Chief is reached directly')
+  // Granted: reached directly, even a deep descendant, and the tree gives no other target.
+  m.setGrants(b, [{ grantee: '@x.peer' }])
   assert.equal(toward(b), undefined)
   assert.equal((await m.flybot.bot.send({ from: remote, to: b, text: 'hi' })).action, 'allow')
-  assert.equal(toward(a)?.action, 'deny', 'its parent stays unpublished')
-  m.setPublished(b, false)
+  assert.equal(toward(a)?.action, 'deny', 'its parent stays ungranted')
+  m.setGrants(b, [])
   assert.equal(toward(b).action, 'deny')
   // The rule also holds before the control-role bypass, and the string handle form.
   assert.equal(h({ from: '@x.peer', to: b, role: 'stopped', target: { remote: false, id: b } }).action, 'deny')
   assert.equal(h({ from: '@x.peer', to: b, target: { remote: false, id: b } }).action, 'deny')
 })
 
-test('#51: published Bots on both sides are not the tree\'s call across trees; inside one tree the edge rule holds', async () => {
+test('#90: granted Bots on both sides are not the tree\'s call across trees; inside one tree the edge rule holds', async () => {
   const m = await setup()
   const a = await make(m, m.root, 'A'); const b = await make(m, a, 'B')
   const other = await outsider(m, 'Other owner Chief')
   const h = m.middlewares[0].handle
   const send = (from, to, extra = {}) => h({ from, to, target: { remote: false, id: to }, ...extra })
-  // Unpublished: the old rules.
+  const grant = id => m.setGrants(id, [{ grantee: 'peer' }])
+  // Ungranted: the old rules.
   assert.match(send(other, b).reason, /only the tree root/)
   assert.match(send(b, other).reason, /outside the tree/)
-  // Published on both sides: the core's owner policy decides, the tree does not force it through the root.
-  m.setPublished(other, true); m.setPublished(b, true)
+  // Granted on both sides: the core's owner policy decides, the tree does not force it through the root.
+  grant(other); grant(b)
   assert.equal(send(other, b), undefined)
   assert.equal(send(b, other), undefined)
-  // One side unpublished: still denied.
-  m.setPublished(b, false)
+  // One side ungranted: still denied.
+  m.setGrants(b, [])
   assert.match(send(other, b).reason, /only the tree root/)
-  // Inside one tree, publishing does not open the grandchild.
-  m.setPublished(b, true); m.setPublished(a, true)
+  // Inside one tree, a grant does not open the grandchild.
+  grant(b); grant(a)
   assert.match(send(m.root, b).reason, /parent and its direct children/)
   assert.match(send(b, m.root).reason, /parent and its direct children/)
   assert.equal(send(a, b), undefined)
-  // Two trees: published nodes of different trees reach each other directly, unpublished ones do not.
+  // Two trees: granted nodes of different trees reach each other directly, ungranted ones do not.
   const root2 = await outsider(m, 'Second root')
   m.flybot.scope('flybot-tree').fields.set(root2, 'treeRole', 'root')
   const c = await make(m, root2, 'C')
@@ -345,26 +350,26 @@ test('#51: published Bots on both sides are not the tree\'s call across trees; i
   assert.equal(m.tree.rootOf(b), m.root)
   assert.equal(m.tree.rootOf(other), undefined)
   assert.match(send(b, c).reason, /parent and its direct children/)
-  m.setPublished(c, true)
+  grant(c)
   assert.equal(send(b, c), undefined)
   assert.equal(send(c, b), undefined)
 })
 
-test('#51: an older core without isPublished leaves the remote-sender rule as no opinion', async () => {
+test('#90: an older core without hasAnyGrant leaves the remote-sender rule as no opinion', async () => {
   const m = await setup()
   const a = await make(m, m.root, 'A')
   const h = treeSendMiddleware(m.tree, { isRemote: ref => typeof ref === 'string' && ref.startsWith('@') })
   assert.equal(h({ from: '@x.peer', to: a, target: { remote: false, id: a } }), undefined)
 })
 
-test('#51: new and adopted Bots start unpublished, prompts tell a child how outside senders are answered', async () => {
+test('#90: new and adopted Bots start ungranted, prompts tell a child how outside senders are answered', async () => {
   const m = await setup()
   const a = await make(m, m.root, 'A')
-  assert.equal(m.flybot.bot.isPublished(a), false)
-  assert.equal(m.flybot.bot.isPublished(m.root), true)
-  assert.match(sp(m, a), /has published you|owner has published you/)
+  assert.equal(m.flybot.bot.hasAnyGrant(a), false)
+  assert.equal(m.flybot.bot.hasAnyGrant(m.root), false, 'the Chief has no grant by default')
+  assert.match(sp(m, a), /granted access to you/)
   assert.match(sp(m, a), /no trace line/)
-  assert.doesNotMatch(sp(m, m.root), /owner has published you/)
+  assert.doesNotMatch(sp(m, m.root), /granted access to you/)
 })
 
 const loadClient = () => {

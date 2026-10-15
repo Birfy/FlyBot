@@ -14,7 +14,7 @@
 // state.authSessions the sign-in surface writes, and before any module it gates.
 
 import { currentParticipants, roomVisibleTo } from './room-membership.js'
-import { isPublished } from './reach.js'
+import { hasAnyGrant } from './reach.js'
 
 // Endpoints a request without an actor may still reach. auth-invite keeps the
 // bootstrap rule in member-auth (first invite signs the installing human in).
@@ -40,7 +40,7 @@ const BOT_TARGETED = new Set([
   'memory-view', 'memory-ask', 'memory-forget',
   'schedules', 'schedule-create', 'schedule-delete',
   'agent-session', 'agent-adopt', 'agent-archive', 'agent-rename', 'remove-agent',
-  'stop-member-work', 'set-main', 'set-published',
+  'stop-member-work', 'set-main',
 ])
 
 // Endpoints whose body names a room.
@@ -95,8 +95,8 @@ export function install(rt) {
     if (bot.ownerId === actor.memberId) return true
     const owners = new Set(humans)
     owners.add(actor.memberId)
-    // Another owner's Bot joins only if its owner published it (the Chief by default, #51).
-    return isPublished(state, botId) && owners.has(bot.ownerId)
+    // Another owner's Bot joins only if it has a grant (#90).
+    return hasAnyGrant(state, botId) && owners.has(bot.ownerId)
   }
 
   // A sessionId may be a Bot's id, its current chat Session, a group Session, an
@@ -249,11 +249,11 @@ export function install(rt) {
           ...(Array.isArray(body?.participants) ? body.participants : []),
         ].filter(p => p?.kind === 'bot' && (p.remote || p.handle)).map(p => p.handle || p.id)
         if (remotes.some(handle => !rt.isPublishedRemote?.(handle))) {
-          return deny('bot/forbidden', 'Only a Chief or a Bot published to friends may join a shared room')
+          return deny('bot/forbidden', 'Only a Bot granted to you may join a shared room')
         }
         const bots = [...new Set([...members, ...fromParticipants])]
         // A room with nothing in it would belong to nobody; one made only of other
-        // participants (humans, published remote Bots) is a shared room (#50, #51).
+        // participants (humans, granted remote Bots) is a shared room (#50, #90).
         const hasParticipants = Array.isArray(body?.participants) && body.participants.length > 0
         if (bots.length === 0 && !hasParticipants) return deny('bot/forbidden', 'You do not own every Bot in that room')
         if (bots.every(id => botOwnedBy(actor, id))) return ALLOW
@@ -268,7 +268,7 @@ export function install(rt) {
           ...(Array.isArray(body?.addParticipants) ? body.addParticipants : []),
         ].filter(p => p?.kind === 'bot' && (p.remote || p.handle)).map(p => p.handle || p.id)
         if (addedRemotes.some(handle => !rt.isPublishedRemote?.(handle))) {
-          return deny('bot/forbidden', 'Only a Chief or a Bot published to friends may join a shared room')
+          return deny('bot/forbidden', 'Only a Bot granted to you may join a shared room')
         }
         if (roomOwnedBy(actor, roomId)) {
           const ids = []

@@ -1,6 +1,6 @@
-// Room membership (#50/#50 follow-up): typed human, local-bot and published remote-bot
+// Room membership (#50/#50 follow-up): typed human, local-bot and granted remote-bot
 // participants, room roles, persistent author ids, membership-window history. Face-to-face
-// rooms (#83) reuse this model (`origin: 'face-to-face'`) so unpublished matching members
+// rooms (#83) reuse this model (`origin: 'face-to-face'`) so room-only matching members
 // can sit as remote participants without a friendship. This is not team mode — the gates
 // in docs/subsystems/team.md stay unsatisfied.
 //
@@ -23,19 +23,19 @@
 //   (for an invited owner, their Bot's interval). Leaving closes the interval and
 //   withdraws all history access. Rejoining opens a new interval at the then-current
 //   seq; prior intervals do not come back. Non-members cannot read or inject.
-//   Unpublished specialists stay owner-private. Across owners (and with remote
-//   participants) only a *published* local Bot (the owner's choice; the designated
-//   Chief by default, see reach.js) or a Bot that joined by room code (`viaCode`, #83;
-//   reachable in this room only, while a member), and a Bot published to friends
+//   Ungranted specialists stay owner-private. Across owners (and with remote
+//   participants) only a local Bot that has a grant matching someone in the room
+//   (see reach.js) or a Bot that joined by room code (`viaCode`, #83; reachable in
+//   this room only, while a member), and a Bot granted to this owner
 //   (`state.flybot.remote`, cleanRemote) may be added. A Bot that stops qualifying
-//   (unpublished, Chief replaced) leaves such rooms at once (rt.evictUnshared).
+//   (grant revoked) leaves such rooms at once (rt.evictUnshared).
 //
 // Inbound shared rooms (`origin: 'inbound-share'`) are the remote owner's projection
-// of a friend's room that invited their published Bot.
+// of a friend's room that invited their granted Bot.
 
 import { cleanPeerName, disambiguatedRemoteTitle, isChiefRecord, remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
 import { cleanName, fenceUntrusted } from './delivery.js'
-import { isPublished, mayShareRoom } from './reach.js'
+import { hasAnyGrant, mayShareRoom } from './reach.js'
 
 const KINDS = new Set(['human', 'bot'])
 const ROLES = new Set(['admin', 'member'])
@@ -315,7 +315,7 @@ function permittedBot(state, room, botId, humans, { viaCode = false } = {}) {
   }
   if (state.bots[botId]?.ownerId) owners.add(bot.ownerId)
   const cross = owners.size > 1
-  if (cross) return (isPublished(state, botId) && humans.has(bot.ownerId)) || viaCode
+  if (cross) return (hasAnyGrant(state, botId) && humans.has(bot.ownerId)) || viaCode || mayShareRoom(state, room, botId)
   return bot.ownerId === [...owners][0]
 }
 
@@ -413,7 +413,7 @@ export function install(rt) {
     return { ...line, who: name, ...(id ? { authorId: id, authorKind: 'human' } : {}) }
   }
 
-  const REMOTE_ROOM_MESSAGE = 'Only a published Bot (or one that joined with the room code) may be in a room with friends\' Bots'
+  const REMOTE_ROOM_MESSAGE = 'Only a Bot you granted (or one that joined with the room code) may be in a room with friends\' Bots'
   const hasRemote = room => currentParticipants(room).some(isRemoteParticipant)
   // Local members that may not stay in a room with remote participants or other owners.
   const unsharable = room => currentParticipants(room).filter(p => p.kind === 'bot' && !p.remote && !mayShareRoom(state, room, p.id))
@@ -423,7 +423,7 @@ export function install(rt) {
     if (!KINDS.has(draft.kind)) throw invalid('Participant kind must be human or bot')
     if (isRemoteDraft(draft)) {
       const published = publishedRemoteOf(state, draft.handle || draft.id)
-      if (!published) throw forbidden('Only a Chief or a Bot published to friends may join a shared room')
+      if (!published) throw forbidden('Only a Bot granted to you may join a shared room')
       if (participantOf(room, 'bot', published.handle)) throw invalid('That participant is already in the room')
       if (unsharable(room).length > 0) throw forbidden(REMOTE_ROOM_MESSAGE)
       return published
@@ -451,12 +451,12 @@ export function install(rt) {
     if (actor?.memberId) humans.add(actor.memberId)
     humans.add(bot.ownerId)
     if (!permittedBot(state, room, draft.id, humans, { viaCode })) {
-      if (!isPublished(state, draft.id) && (isCrossOwnerRoom(room, state) || humans.size > 1)) {
+      if (!hasAnyGrant(state, draft.id) && !viaCode && (isCrossOwnerRoom(room, state) || humans.size > 1)) {
         throw forbidden('Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief')
       }
-      throw forbidden('Only a published Bot of a room member may join a shared room')
+      throw forbidden('Only a granted Bot of a room member may join a shared room')
     }
-    if (hasRemote(room) && !viaCode && !isPublished(state, draft.id)) throw forbidden(REMOTE_ROOM_MESSAGE)
+    if (hasRemote(room) && !viaCode && !mayShareRoom(state, room, draft.id)) throw forbidden(REMOTE_ROOM_MESSAGE)
     const nextOwners = new Set(humans)
     if (nextOwners.size > 1) {
       for (const p of currentParticipants(room).filter(item => item.kind === 'bot' && !item.remote)) {
@@ -467,7 +467,7 @@ export function install(rt) {
     }
   }
 
-  // `opts.viaCode`: the Bot joins with the room's code (#83): it needs no publication, and is
+  // `opts.viaCode`: the Bot joins with the room's code (#83): it needs no person-grant, and is
   // reachable in this room only, while it is a member. Internal: request bodies cannot set it.
   rt.addRoomParticipant = function addRoomParticipant(roomId, draft, actor, opts = {}) {
     return withRoomLock(async () => {
@@ -577,7 +577,7 @@ export function install(rt) {
         (kind === 'human' && me.id === actor.memberId)
         || (kind === 'bot' && (state.bots?.[me.id]?.ownerId === actor.memberId || me.ownerId === actor.memberId || room.sharedFrom?.ownerId === actor.memberId))
       )
-      if (kind === 'bot' && room.origin !== 'inbound-share' && room.origin !== 'face-to-face' && botsLeft.length < 2 && !ownerLeave) throw invalid('A group chat needs at least two Bots')
+      if (kind === 'bot' && room.origin !== 'inbound-share' && room.origin !== 'face-to-face' && !me.remote && botsLeft.length < 2 && !ownerLeave) throw invalid('A group chat needs at least two Bots')
       const line = append(room, {
         kind: 'left',
         who: me.displayName,
@@ -649,7 +649,7 @@ export function install(rt) {
     for (const draft of drafts) {
       if (isRemoteDraft(draft)) {
         const published = publishedRemoteOf(state, draft.handle || draft.id)
-        if (!published) throw forbidden('Only a Chief or a Bot published to friends may join a shared room')
+        if (!published) throw forbidden('Only a Bot granted to you may join a shared room')
         room.participants.push({
           kind: 'bot',
           remote: true,
@@ -701,7 +701,7 @@ export function install(rt) {
         throw forbidden('Specialists stay in their owner\'s private rooms; a cross-owner room takes each side\'s Chief')
       }
     }
-    // A room with a friend's Bot takes only published local Bots (a room code cannot be used here).
+    // A room with a friend's Bot takes only granted local Bots (a room code cannot be used here).
     if (hasRemote(room) && unsharable(room).length > 0) throw forbidden(REMOTE_ROOM_MESSAGE)
     syncMembers(room)
     return room
@@ -717,7 +717,7 @@ export function install(rt) {
 
   // Room lines go out to the friends' Bots in the room, checked per author and per recipient
   // (#51): a line written by a local Bot that may not share the room never leaves, a friend's
-  // Bot that is no longer published to us gets nothing, and the sending Bot is one that may
+  // Bot that is no longer granted to us gets nothing, and the sending Bot is one that may
   // speak outside (bot.send then runs the reach policy on every single send).
   rt.fanoutRoomLine = async function fanoutRoomLine(room, line) {
     if (isFaceRoom(room)) {
@@ -753,7 +753,7 @@ export function install(rt) {
     }
   }
 
-  // A Bot that no longer qualifies (unpublished, Chief replaced, owner removed) leaves every room
+  // A Bot that no longer qualifies (grant revoked, owner removed) leaves every room
   // that has friends' Bots or more than one owner, at once; without an id, every such Bot does.
   rt.evictUnshared = async function evictUnshared(botId) {
     let changed = false
@@ -876,9 +876,8 @@ export function install(rt) {
       ownerHome: member.ownerHome,
       ownerName,
       displayName,
-      // ISSUE #51: when published / reach() lands, use that seam instead of the server's
-      // snapshot. FlyBot members default to unpublished; the matching room is the scope.
-      published: member.published === true,
+      // Face-to-face: the matching room is the scope. No person-grant is implied.
+      roomOnly: member.roomOnly === true || member.published !== true,
       role: 'member',
       joinedSeq,
       joinedAt: at,
@@ -920,7 +919,7 @@ export function install(rt) {
         if (existing.remote) {
           existing.displayName = cleanPeerName(member.displayName || member.name, existing.displayName)
           existing.ownerName = cleanPeerName(member.ownerName, existing.ownerName)
-          existing.published = member.published === true
+          existing.roomOnly = member.roomOnly === true || member.published !== true
         } else if (member.ownerName) {
           existing.ownerName = cleanPeerName(member.ownerName, existing.ownerName)
         }

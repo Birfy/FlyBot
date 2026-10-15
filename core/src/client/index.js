@@ -1,4 +1,4 @@
-import { FLYBOT_CSS, FlyBotApprovals, createClientApi as createFlyBotClient } from './flybot-slots.js'
+import { FLYBOT_CSS, FlyBotApprovals, FlyBotSessionDock, createClientApi as createFlyBotClient } from './flybot-slots.js'
 import { call } from './api.js'
 import { isHex, inkText, paintCss } from './inks.js'
 import { DEFAULT_MASK, SHAPES, markupCache, maskOf } from './characters.js'
@@ -823,6 +823,7 @@ export function apply(ctx) {
     shadow('conversation.input.dock', { id: 'bot-model', order: -110, inject: face }, ModelChoiceDock),
     shadow('conversation.input.dock', { id: 'bot-question', order: -100, inject: face }, QuestionDock),
     shadow('conversation.input.dock', { id: 'bot-secret', order: -90, inject: face }, SecretDock),
+    shadow('conversation.input.dock', { id: 'flybot-session', order: -80, inject: face }, FlyBotSessionDock),
   ]
   // The return button belongs to neither group: it renders only in Agent mode.
   ctx.effect(() => {

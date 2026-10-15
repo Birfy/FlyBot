@@ -60,7 +60,8 @@ async function start(config = {}) {
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   }
   const received = id => (agents.get(id)?.calls ?? []).map(([, m]) => m.content.map(b => b.text).join('\n'))
-  return { ctx, fb: ctx.flybot, tool, call, home, stop, received, agents }
+  const grantTo = (botId, grantee) => ctx.flybot.grants.set(botId, [...(ctx.flybot.grants.of(botId) ?? []), { grantee }])
+  return { ctx, fb: ctx.flybot, tool, call, home, stop, received, agents, grantTo }
 }
 
 test('apply provides the flybot service with the agreed surface', async (t) => {
@@ -81,6 +82,9 @@ test('apply provides the flybot service with the agreed surface', async (t) => {
   assert.equal(fb.fields, fb.bot.fields)
   assert.equal(typeof fb.rooms.upsertFace, 'function')
   assert.equal(typeof fb.rooms.onFaceLine, 'function')
+  assert.equal(typeof fb.rooms.list, 'function')
+  assert.equal(typeof fb.rooms.removeParticipant, 'function')
+  assert.ok(Array.isArray(fb.rooms.list()))
 })
 
 test('flybot.warn writes to the host diagnostics log', async (t) => {
@@ -239,8 +243,9 @@ test('middleware order follows priority and before/after; bypass works only when
 })
 
 test('bot.send reaches remote Bots through a transport and takes remote senders as untrusted', async (t) => {
-  const { fb, received, stop } = await start()
+  const { fb, received, stop, grantTo } = await start()
   t.after(stop)
+  await grantTo('a', '@bob.bot')
   const out = []
   fb.transports.add('bot-social', { send: async msg => { out.push(msg); return { exchangeId: 'remote-1' } } })
   assert.deepEqual(await fb.bot.send({ from: 'a', to: { kind: 'remote', handle: '@bob.bot' }, text: 'hello bob' }), { action: 'allow', exchangeId: 'remote-1' })
@@ -302,8 +307,9 @@ test('the flybot service is provided the Cordis 4 way: provide first, never a ba
 })
 
 test('approvals (#12): an approved hold resumes the chain, a later deny wins, failures retry, limits hold', async (t) => {
-  const { fb, received, stop } = await start()
+  const { fb, received, stop, grantTo } = await start()
   t.after(stop)
+  await grantTo('a', '@bob.bot')
   let block = true
   fb.bot.send.use({ name: 'hold-all', handle: () => ({ action: 'hold', reason: 'check' }) })
   fb.bot.send.use({ name: 'leak-guard', after: ['hold-all'], handle: m => (block && /secret/.test(m.text) ? { action: 'deny', reason: 'leak' } : undefined) })
@@ -334,8 +340,9 @@ test('approvals (#12): an approved hold resumes the chain, a later deny wins, fa
 })
 
 test('mentions (#13): a friend\'s Bot named with @ gets the message once; code, quotes and unknown handles stay local', async (t) => {
-  const { ctx, fb, stop } = await start()
+  const { ctx, fb, stop, grantTo } = await start()
   t.after(stop)
+  await grantTo('a', '@helper.friend.home')
   const out = []
   fb.transports.add('bot-social', { send: async msg => { out.push(msg); return { exchangeId: `r${out.length}` } } })
   fb.scope('social').remote.publish([{ handle: '@helper.friend.home', name: '助手', home: '@friend.home' }])
@@ -362,10 +369,11 @@ test('mentions (#13): a friend\'s Bot named with @ gets the message once; code, 
 })
 
 test('mentions in a group (#80, #81): the room gets a receipt — sent points to the friend\'s chat, a hold or failure says why', async (t) => {
-  const { ctx, fb, stop, agents } = await start({
+  const { ctx, fb, stop, agents, grantTo } = await start({
     rooms: { 'room-1': { id: 'room-1', name: 'Group', members: ['a', 'b'], admin: 'a', mode: 'admin', notice: '', createdAt: 1, createdBy: null } },
   })
   t.after(stop)
+  await grantTo('a', '@helper.friend.home')
   const out = []
   fb.transports.add('bot-social', { send: async msg => { out.push(msg); return { exchangeId: `r${out.length}` } } })
   fb.scope('social').remote.publish([{ handle: '@helper.friend.home', name: '助手', home: '@friend.home' }])
@@ -422,13 +430,14 @@ test('host API (#18): reserved names and the shared scope throw, listeners get c
 })
 
 test('send edge cases (#20): a bogus middleware verdict denies; a remote send with no transport throws', async (t) => {
-  const { fb, stop } = await start()
+  const { fb, stop, grantTo } = await start()
   t.after(stop)
   const off = fb.bot.send.use({ name: 'weird', handle: () => ({ action: 'maybe' }) })
   const out = await fb.bot.send({ from: 'a', to: 'b', text: 'x' })
   assert.equal(out.action, 'deny')
   assert.match(out.reason, /weird returned "maybe"/)
   off()
+  await grantTo('a', '@nobody.home')
   await assert.rejects(fb.bot.send({ from: 'a', to: '@nobody.home', text: 'x' }), /no transport/)
 })
 
@@ -463,8 +472,9 @@ test('cleanPublishedName strips @, controls and newlines, and caps at 60 (#75)',
 })
 
 test('cleanRemote sanitizes peer name, homeName and owner at the record boundary (#75)', async (t) => {
-  const { ctx, fb, tool, received, stop } = await start()
+  const { ctx, fb, tool, received, stop, grantTo } = await start()
   t.after(stop)
+  await grantTo('a', '@eve.friend.home')
   ctx.llm.listProviders = () => [{ id: 'flybot-remote', name: 'Friends\' Bots' }]
   ctx.llm.listModels = async () => [{ id: '@eve.friend.home', name: 'Eve' }]
   let sessions = 0

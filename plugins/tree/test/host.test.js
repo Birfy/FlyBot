@@ -87,27 +87,30 @@ test('tree plugin on the real host: Chief adopted as root, create_child_bot, sco
   }
 })
 
-test('#51 on the real host: a friend reaches a published tree Bot directly, never an unpublished one, and nothing goes through the root', async () => {
+test('#90 on the real host: a friend reaches a granted tree Bot directly, never an ungranted one, and nothing goes through the root', async () => {
   const h = await start()
   try {
     const fork = h.ctx.plugin(tree, {})
     await waitFor(() => h.fb.scope('flybot-tree').fields.get('b', 'parent') === 'a')
     const friend = { kind: 'remote', handle: '@coder.bob.home', home: '@bob.home', name: 'Coder' }
     const send = to => h.fb.bot.send({ from: friend, to, text: 'hello from a friend' })
-    assert.equal(h.fb.bot.get('a').published, true, 'the Chief is published by default')
-    assert.equal(h.fb.bot.get('b').published, false, 'an adopted tree Bot is not')
+    const grant = id => h.fb.grants.set(id, [{ grantee: '@bob.home' }])
+    assert.equal(h.fb.bot.get('a').granted, false, 'the Chief has no grant until someone is invited')
+    assert.equal(h.fb.bot.get('b').granted, false, 'an adopted tree Bot is not')
+    assert.equal((await send('a')).action, 'deny')
+    await grant('a')
     assert.equal((await send('a')).action, 'allow')
     const denied = await send('b')
     assert.equal(denied.action, 'deny')
     assert.equal(denied.by, 'owner-policy')
-    assert.equal((await h.call('set-published', { id: 'b', published: true })).ok, true)
-    assert.equal(h.fb.bot.get('b').published, true)
+    await grant('b')
+    assert.equal(h.fb.bot.get('b').granted, true)
     const direct = await send('b')
     assert.equal(direct.action, 'allow', 'reached directly, not redirected to its parent')
-    // A deep child created under the published Bot stays unpublished.
+    // A deep child created under the granted Bot stays ungranted.
     const work = JSON.parse(await h.tool('create_child_bot', { name: 'Work', role_description: 'work' }, 'b')).created.id
     assert.equal((await send(work)).action, 'deny')
-    assert.equal((await h.call('set-published', { id: 'b', published: false })).ok, true)
+    await h.fb.grants.set('b', [])
     assert.equal((await send('b')).action, 'deny')
     fork.dispose()
   } finally {

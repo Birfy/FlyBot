@@ -10,17 +10,16 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
   Friends' Bots shows **Social is not running:** with the reason — including the taken
   handle and to change `displayName` in the flybot-social config — instead of the host's
   `Unknown FlyBot endpoint` message. The same failure is written to Settings → Feedback.
-- **Members**: each *published* local Bot becomes `@<bot>.<home>` (`add_home_member`), stored as field
-  `social.member`; a Bot is published by its owner (the Chief is by default, #51), registers when published
-  (`bot.published`), and deleted ones are revoked on `bot.removed`. Unpublished Bots are not registered at start,
-  are not polled, and cannot sign friend sends or take invites; unpublishing keeps the identity unused instead of revoking it.
-  **Face-to-face join** is the exception: if the Bot you bring has no identity yet, the plugin registers it with the
-  same `add_home_member` call (connector token, home id) so Bot Social can put it in that room. That identity is
-  room-only (`social.member.roomOnly`): it does not appear in friends' `list_remote_bots`, does not change the
-  owner's **Published to friends** flag, and `reach()` still denies anything outside the room. When you leave the
-  last face room or the room closes, the plugin revokes it (`remove_home_member`). A failed join that created a new
-  room-only identity is revoked too, so a retry is not blocked. An identity left over from a previous publish is
-  kept unused, not revoked.
+- **Members**: a local Bot becomes `@<bot>.<home>` (`add_home_member`) when it is invited, when it
+  joins an invite, or at face-to-face join, stored as field `social.member`. There is no published
+  flag: access is a per-Bot **grant** (Invite to this Bot → accept). Default deny, Chief included.
+  Deleted Bots are revoked on `bot.removed`. Ungranted Bots are not registered at start and are
+  not polled. **Face-to-face join** of my own Bot is an implicit room-scoped grant: if it has no
+  identity yet, the plugin registers it room-only (`social.member.roomOnly`). That identity does
+  not appear in friends' `list_remote_bots`, and `reach()` still denies anything outside the room.
+  When you leave the last face room or the room closes, the plugin revokes it (`remove_home_member`).
+  A failed join that created a new room-only identity is revoked too. A later person-grant reuses
+  the handle and drops `roomOnly`. **Manage access** on the Bot lists who has it and **Revoke**.
 - **Remote roster**: `list_remote_bots` → friends' Bots grouped by home; sidebar section
   `flybot.sidebar.section#social` with a remote badge, `@` rows via
   `flybot.composer.mention#social`. Remote Bots never enter `bot.list()`.
@@ -32,13 +31,17 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
 - **Inbound**: each member's inbox is polled; messages reach that Bot's chat as untrusted text (no owner approval).
 - **Outbound hold (Bot Social)**: a draft the server keeps as `pending_approval` is listed on `social/status` (`pendingApprovals`, `approvals`) and in **Friends' Bots** (badge + Approve / Reject). The owner's click calls `decide_approval` (confirm code used in the same step). This is separate from FlyBot's local approval card. Auto-accept on a friendship skips the hold for later messages. Room messages (`face_room_message`) use the same queue; **Auto-send my Bot's room messages** (`social/face-auto` → `PATCH /v1/me { auto_approve_face_rooms }`) lets later room posts skip the hold.
 - **Face-to-face rooms**: people next to each other join one group by typing the same 6-digit number. See Quick Start below.
-- **Tools** (every local Bot; an unpublished Bot's send is refused): `list_friend_bots`, `message_friend_bot`.
+- **Tools** (every local Bot; an ungranted Bot's send is refused by core `reach()`): `list_friend_bots`, `message_friend_bot`.
 - **Legacy**: with `token` + `botId` and no home, the per-bot identity path
   (`start_conversation` / `send_message`) still works.
 
 Server side (Bot Social, local only): `/v1/onboard/flybot`, `/v1/homes/:id/members`,
-`/v1/homes/:id/remote-bots`, `/v1/homes/:id/send`, and owner MCP tools `add_home_member`,
-`remove_home_member`, `list_home_members`, `list_remote_bots`, `send_as_member`.
+`/v1/homes/:id/remote-bots`, `/v1/homes/:id/send`, grant REST (`GET /v1/relationships/{id}/grants`,
+`DELETE /v1/grants/{id}`), and owner MCP tools `add_home_member`,
+`remove_home_member`, `list_home_members`, `list_remote_bots`, `send_as_member`,
+`create_invite`, `join_invite`, `list_grants`, `revoke_grant`. Grant/invite calls are isolated
+in `src/mcp-client.js` (`createSocialApi`) so a later server can add tools without touching
+the plugin's grant bookkeeping.
 
 Tests (`test/social.test.js`) use a mocked server.
 
@@ -56,7 +59,7 @@ People in the same place (or on a call) put their Bots in one room by each typin
 
 1. Open **Friends' Bots** in the sidebar.
 2. Click **Join with a number**. Type six digits. If you have more than one Bot, pick which one to bring (default: the first). Click **Join**.
-3. You join at once — there is no preview. FlyBot opens the room. Everyone already in it shows as `<Bot> · <owner>'s Bot` (your Chief: `<owner>'s Chief`). The join form says whether the Bot you bring is published; unpublished Bots are labeled “not published, available to this room only”. If that Bot has no Bot Social identity yet, FlyBot registers it for this room only, then joins — friends still cannot reach it, and it is not published. **Published to friends** (Bot settings, next to **Invite to this Bot**) is the owner's switch for that; it calls core `set-published` (#51).
+3. You join at once — there is no preview. FlyBot opens the room. Everyone already in it shows as `<Bot> · <owner>'s Bot` (your Chief: `<owner>'s Chief`). The join form says the Bot is **available to this room only**. If that Bot has no Bot Social identity yet, FlyBot registers it for this room only, then joins — friends still cannot reach it unless you invite them to it. **Invite to this Bot** / **Manage access** (Bot settings) are how you grant and revoke.
 4. While the matching window is open (10 minutes), the room shows how much time is left and a **Start chat** button. Start, or wait for the window to end: the number becomes invalid and nobody else can join with it.
 5. **Leave** removes your Bot in one click. Anyone can leave; if the last member leaves, the room closes and the number is free again.
 

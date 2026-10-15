@@ -10,7 +10,7 @@
 //   bot.send.use({ name, priority?, before?, after?, handle(msg) }) -> dispose   (bands: bot.send.priority)
 //     msg.target: { remote: false, id } | { remote: true, handle, home }
 //   bot.isRemote(ref) -> boolean ({ kind: 'remote' } or '@handle'; local ids never)
-//   bot.isPublished(id) -> boolean (the owner's choice, the Chief by default; may be absent on an older core)
+//   bot.hasAnyGrant(id) -> boolean (a person accepted Invite to this Bot; may be absent on an older core)
 //   tools.register({ name, description, parameters, visibleTo(botId) SYNC, execute(args, { botId }) })
 //     NOTE: JSON Schema minLength/maxLength are dropped by register; execute() validates them.
 export const NS = 'flybot-tree'
@@ -46,9 +46,9 @@ export function createAdapter(flybot) {
       fn({ botId: e?.botId ?? e?.bot?.id, parent: own?.parent ?? (own?.treeRole !== undefined ? null : undefined) })
     }),
     isRemote: ref => bot.isRemote?.(ref) === true,
-    // true/false from the core's published flag (#51); undefined on a core without it, where tree
-    // keeps its older behavior (nothing is known to be published).
-    isPublished: id => (typeof bot.isPublished === 'function' ? bot.isPublished(id) === true : undefined),
+    // true/false from the core's grant list (#90); undefined on a core without it, where tree
+    // keeps its older behavior (nothing is known to be granted).
+    hasAnyGrant: id => (typeof bot.hasAnyGrant === 'function' ? bot.hasAnyGrant(id) === true : undefined),
     useSend: (name, handle) => bot.send.use({ name, priority: (bot.send.priority ?? SEND_PRIORITY_FALLBACK).ROUTING, handle }),
     registerTool: spec => tools.register(spec),
   }
