@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import { apply as applyDsBot } from 'ds-bot'
 import { fakeContext } from './fake-ctx.js'
 import { inject, name } from '../index.js'
-import { createSocial, startSocial } from '../src/social.js'
+import { approvalView, createSocial, draftText, startSocial } from '../src/social.js'
 import { createMcpClient, untrustedText } from '../src/mcp-client.js'
 
 // A mocked Bot Social server: the FlyBot onboarding route and the owner MCP tools.
@@ -25,7 +25,8 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
       ? { relationship_id: 'r9', status: 'pending_requester_owner', awaiting: 'your_owner_approval', approval_id: 'apr9', inviter: { handle: 'eve.home', display_name: 'Eve' } }
       : { relationship_id: 'r8', status: 'active', awaiting: null, inviter: { handle: 'bob.home', display_name: 'Bob' } }),
     respond_friend_request: a => (a.confirm_code === undefined ? { status: 'confirmation_required', confirm_code: 'C0DE01' } : a.confirm_code === 'C0DE01' ? { relationship_id: a.relationship_id, status: a.decision === 'accept' ? 'active' : 'declined' } : { error: 'bad code' }),
-    decide_approval: a => (a.confirm_code === undefined ? { status: 'confirmation_required', confirm_code: 'C0DE02' } : { approval_id: a.approval_id, status: 'approved' }),
+    decide_approval: a => (a.confirm_code === undefined ? { status: 'confirmation_required', confirm_code: 'C0DE02' } : { approval_id: a.approval_id, decision: a.decision, status: a.decision }),
+    list_approvals: () => ({ approvals: [] }),
     upload_attachment: (a) => {
       const bytes = Buffer.from(a.content_base64, 'base64')
       const attachment = { id: `att_${uploads.size + 1}`, name: a.name, size: bytes.length, mime: a.mime, sha256: createHash('sha256').update(bytes).digest('hex') }
@@ -697,4 +698,148 @@ test('a friendship scoped to one Bot: the roster shows only the granted Bots and
   assert.equal((await ctx.flybot.bot.send({ from: 'a', to: '@coder.bob.home', text: 'hello from chief' })).action, 'allow')
   const chiefId = [...server.members.values()].find(m => m.handle === '@chief.danyang.home').bot_id
   assert.deepEqual(server.calls.filter(c => c.name === 'send_as_member').at(-1).args, { from_bot_id: chiefId, to: '@coder.bob.home', text: 'hello from chief' })
+})
+
+const heldOutbound = {
+  approval_id: 'apr-hold-1',
+  kind: 'outbound_message',
+  status: 'pending',
+  summary: 'To @hsliu.bot: I can review that',
+  bot_id: 'm1',
+  message: {
+    message_id: 'msg-1',
+    to: { handle: '@hsliu.bot', display_name: 'hsliu' },
+    payload: { text: 'I can review that' },
+    status: 'pending_approval',
+  },
+}
+
+test('status (#69): pending outbound approvals from Bot Social are listed', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  server.tools.list_approvals = () => ({ approvals: [heldOutbound, { approval_id: 'apr-friend', kind: 'relationship_request', status: 'pending' }] })
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0 }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const status = (await call('flybot/social/status', {})).value
+  assert.equal(status.pendingApprovals, 1)
+  assert.equal(status.approvals.length, 1)
+  assert.equal(status.approvals[0].id, 'apr-hold-1')
+  assert.equal(status.approvals[0].to, '@hsliu.bot')
+  assert.equal(status.approvals[0].text, 'I can review that')
+  assert.equal(status.approvals[0].from, 'Chief')
+  const listed = (await call('flybot/social/approvals', {})).value
+  assert.deepEqual(listed.approvals.map(item => item.id), ['apr-hold-1'])
+})
+
+test('decide-approval (#69): owner click approves or rejects via Bot Social', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  let queue = [heldOutbound]
+  server.tools.list_approvals = () => ({ approvals: queue })
+  server.tools.decide_approval = a => {
+    if (a.confirm_code === undefined) return { status: 'confirmation_required', confirm_code: 'C0DE02' }
+    queue = queue.filter(item => item.approval_id !== a.approval_id)
+    return { approval_id: a.approval_id, decision: a.decision }
+  }
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0 }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  assert.equal((await call('flybot/social/status', {})).value.pendingApprovals, 1)
+  const decided = (await call('flybot/social/decide-approval', { approvalId: 'apr-hold-1', decision: 'approve' })).value
+  assert.deepEqual(decided, { approvalId: 'apr-hold-1', status: 'approved' })
+  assert.deepEqual(server.calls.filter(c => c.name === 'decide_approval').map(c => c.args.confirm_code), [undefined, 'C0DE02'])
+  assert.equal((await call('flybot/social/status', {})).value.pendingApprovals, 0)
+  assert.equal((await call('flybot/social/decide-approval', { approvalId: 'apr-hold-1', decision: 'maybe' })).ok, false)
+})
+
+test('approvalView: outbound draft text is sanitized, friend requests stay out', () => {
+  const view = approvalView({
+    approval_id: 'apr1',
+    kind: 'outbound_message',
+    status: 'pending',
+    summary: 'To @coder.bob.home: hi\n[x]',
+    bot_id: 'm1',
+    message: { to: { handle: 'Coder.Bob.Home', display_name: 'Coder\n<script>' }, payload: { text: 'hi\u0007 there <ok>' } },
+  }, { localName: () => 'Writer' })
+  assert.equal(view.from, 'Writer')
+  assert.equal(view.to, '@coder.bob.home')
+  assert.equal(view.toName, 'Coder script')
+  assert.equal(view.text, 'hi there <ok>')
+  assert.equal(approvalView({ approval_id: 'x', kind: 'invite', status: 'pending' }).kind, 'invite')
+  assert.equal(approvalView(undefined), undefined)
+  assert.equal(draftText('a\n\nb'), 'a b')
+})
+
+test('Friends\' Bots (#69): a pending approval shows a badge and Approve / Reject', () => {
+  const registered = []
+  const entries = []
+  const decided = []
+  const flybot = {
+    slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } },
+    call: async (endpoint, payload) => {
+      if (endpoint === 'social/decide-approval') { decided.push(payload); return { approvalId: payload.approvalId, status: 'approved' } }
+      if (endpoint === 'social/status') return { connected: true, pendingApprovals: 1, approvals: [{ id: 'apr-hold-1', kind: 'outbound_message', from: '代码审查官', to: '@hsliu.bot', toName: 'hsliu', text: 'I can review that' }] }
+      if (endpoint === 'social/remote-bots') return { homes: [{ home: '@hsliu.home', name: 'hsliu', bots: [{ handle: '@hsliu.bot', name: 'hsliu' }] }] }
+      if (endpoint === 'social/settings') return { autoAccept: {} }
+      return {}
+    },
+  }
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = flybot
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const data = { homes: [{ home: '@hsliu.home', name: 'hsliu', bots: [{ handle: '@hsliu.bot', name: 'hsliu' }] }] }
+  const pending = [{ id: 'apr-hold-1', kind: 'outbound_message', from: '代码审查官', to: '@hsliu.bot', toName: 'hsliu', text: 'I can review that' }]
+  const initial = [data, '', true, false, {}, {}, '', pending]
+  let i = 0
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+  plugin.apply({})
+  const tree = entries[0][1].component({ renderBot: () => h('BotRow', {}), remoteChats: [] })
+  const all = []
+  const walk = node => {
+    if (!node || typeof node !== 'object') return
+    if (typeof node.type === 'function') { walk(node.type(node.props)); return }
+    all.push(node)
+    ;(node.children ?? []).forEach(walk)
+  }
+  walk(tree)
+  assert.ok(all.some(n => n.props['data-flybot'] === 'pending-badge' && n.children.includes('1 to approve')))
+  assert.ok(all.some(n => n.props['data-flybot'] === 'pending-approvals'))
+  assert.ok(all.some(n => n.props.className === 'fs-draft' && n.children.includes('I can review that')))
+  const approve = all.find(n => n.type === 'button' && n.children.includes('Approve'))
+  const reject = all.find(n => n.type === 'button' && n.children.includes('Reject'))
+  assert.ok(approve && reject)
+  // Direct card: the same affordance when status reports pending approvals.
+  const card = plugin.PendingApprovals({ items: pending, busy: '', onDecide: (item, decision) => decided.push([item.id, decision]) })
+  const buttons = []
+  const walkCard = node => { if (node && typeof node === 'object') { buttons.push(node); (node.children ?? []).forEach(walkCard) } }
+  walkCard(card)
+  buttons.find(n => n.type === 'button' && n.children.includes('Approve')).props.onClick()
+  buttons.find(n => n.type === 'button' && n.children.includes('Reject')).props.onClick()
+  assert.deepEqual(decided, [['apr-hold-1', 'approve'], ['apr-hold-1', 'reject']])
+})
+
+test('Friends\' Bots (#69): no cue when status reports no pending approvals', () => {
+  const registered = []
+  const entries = []
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = { slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } }, call: async () => ({}) }
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const data = { homes: [] }
+  const initial = [data, '', true, false, {}, {}, '', []]
+  let i = 0
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+  plugin.apply({})
+  const tree = entries[0][1].component({})
+  const all = []
+  const walk = node => { if (node && typeof node === 'object') { all.push(node); (node.children ?? []).forEach(walk) } }
+  walk(tree)
+  assert.equal(all.some(n => n.props['data-flybot'] === 'pending-badge' || n.props['data-flybot'] === 'pending-approvals'), false)
+  assert.equal(plugin.PendingApprovals({ items: [] }), null)
 })

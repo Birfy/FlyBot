@@ -4,6 +4,10 @@ All notable changes to FlyBot (earlier: DS Bot) are listed here. The format foll
 
 ## [Unreleased]
 
+### Added
+
+- **Friends' Bots pending approvals:** outbound drafts Bot Social holds (`pending_approval`) show a persistent badge and Approve / Reject in Friends' Bots. Inbound messages still arrive immediately; Auto-accept still skips the hold. (#69)
+
 ## [0.1.0] - 2026-10-14
 
 First public FlyBot-branded cut (core package remains `0.1.5-flybot.1`).

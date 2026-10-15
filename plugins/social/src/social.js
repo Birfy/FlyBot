@@ -14,7 +14,8 @@
 //   the friend home's setting (config.approval.homes[home] / default), overridden per
 //   local Bot by the field social.autoApprove[home]. 'hold' → FlyBot approval card.
 // - Inbound: each member's server inbox is polled; messages reach that member's chat
-//   as untrusted text from the remote Bot.
+//   as untrusted text from the remote Bot (no owner approval). Outbound drafts the
+//   server holds (pending_approval) show in Friends' Bots until Approve / Reject.
 // - Files: a Bot (message_friend_bot files) or the owner (composer) attaches files; the
 //   held send's approval card lists names and sizes, and only after approval are the
 //   bytes uploaded (hash re-checked) and sent as signed refs. Incoming files show as
@@ -40,6 +41,29 @@ const TEXTUAL = new Set(['text/plain', 'text/markdown', 'text/csv', 'text/tab-se
 const sizeLabel = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`)
 // Remote strings that reach model-visible text: one line, no brackets or markup, capped.
 export const cleanText = (value, fallback = '') => String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/[[\]"<>`]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) || fallback
+// Owner-only draft body: keep punctuation the friend will see; strip controls and cap.
+export const draftText = (value) => String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800)
+// Bot Social list_approvals card → the Friends' Bots queue (outbound drafts only).
+export function approvalView(item, { localName } = {}) {
+  if (!item || typeof item !== 'object') return undefined
+  const id = String(item.approval_id ?? item.id ?? '')
+  if (!id) return undefined
+  const to = item.message?.to
+  const payload = item.message?.payload
+  const text = draftText(payload && typeof payload === 'object' ? payload.text : payload) || draftText(item.summary)
+  return {
+    id,
+    kind: String(item.kind ?? ''),
+    status: String(item.status ?? 'pending'),
+    from: typeof localName === 'function' ? (localName(item.bot_id) || cleanText(item.bot_id)) : cleanText(item.bot_id),
+    to: to?.handle ? norm(to.handle) : undefined,
+    toName: cleanText(to?.display_name),
+    text,
+    summary: cleanText(item.summary),
+    createdAt: item.created_at,
+    attachments: (item.message?.attachments ?? []).filter(file => file?.name).map(file => ({ name: safeName(file.name), size: Number(file.size) || 0 })),
+  }
+}
 // Fence markers are removed until none is left (a nested fragment cannot rebuild one).
 export const stripMarkers = (text) => {
   let out = String(text)
@@ -341,6 +365,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
         if (!member) throw new Error('the sending Bot has no Bot Social identity')
         const attachments = await uploadAll(msg.attachments, member.bot_id)
         const sent = await client.callTool('send_as_member', { from_bot_id: member.bot_id, to: bot.handle, text: msg.text, ...(attachments.length ? { attachments } : {}) })
+        if (sent?.message?.status === 'pending_approval') pendingCache.at = 0
         return { exchangeId: sent?.message?.message_id ?? msg.exchangeId }
       }
       // Legacy per-bot identity.
@@ -384,7 +409,10 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       try {
         const sent = await client.callTool('send_as_member', { from_bot_id: member.bot_id, to: target, text })
         if (settings.via[target] !== bot.id) { settings.via[target] = bot.id; saveSettings() }
-        if (sent?.message?.status === 'pending_approval') return `Sent, but Bot Social holds it until you approve it there: turn on Auto-accept for this friend in Friends' Bots.`
+        if (sent?.message?.status === 'pending_approval') {
+          pendingCache.at = 0
+          return `Sent, but Bot Social holds it until you approve it in Friends' Bots. Turn on Auto-accept for this friend to skip the hold on later messages.`
+        }
         return ''
       } catch (error) {
         lastError = error
@@ -573,12 +601,19 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   }
   disposers.push(flybot.api.handle('social/create-invite', createBotInvite))
   disposers.push(flybot.api.handle('social.createInvite', createBotInvite))
-  // What the browser needs to offer invites: connected or not, and which local Bots can be invited to.
-  disposers.push(flybot.api.handle('social/status', async () => ({
-    connected: Boolean(home),
-    home: home ? norm(home.handle) : undefined,
-    bots: home ? flybot.bot.list().map(bot => ({ id: bot.id, name: bot.name, isMain: bot.isMain === true, handle: memberOf(bot.id)?.handle ? norm(memberOf(bot.id).handle) : undefined })) : [],
-  }), { read: true }))
+  // What the browser needs to offer invites: connected or not, which local Bots can be
+  // invited to, and any outbound drafts Bot Social is still holding for this owner.
+  async function socialStatus() {
+    const approvals = await pendingApprovals()
+    return {
+      connected: Boolean(home),
+      home: home ? norm(home.handle) : undefined,
+      bots: home ? flybot.bot.list().map(bot => ({ id: bot.id, name: bot.name, isMain: bot.isMain === true, handle: memberOf(bot.id)?.handle ? norm(memberOf(bot.id).handle) : undefined })) : [],
+      pendingApprovals: approvals.length,
+      approvals,
+    }
+  }
+  disposers.push(flybot.api.handle('social/status', socialStatus, { read: true }))
   // Joining a friend's invite (code or link). If the server asks this owner to approve
   // the request too, the click counts as that approval.
   // The friendship is between the invited Bot and the Bot that joins (botId, else the Main
@@ -661,6 +696,27 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       }
     }
   }
+  // Bot Social's outbound hold (pending_approval). Distinct from FlyBot's local approval
+  // cards: the draft already left this process; the friend sees nothing until the owner
+  // decides here. Cached briefly so status + the Friends' Bots poll share one fetch.
+  let pendingCache = { at: 0, items: [] }
+  const localNameOf = botId => flybot.bot.list().find(bot => memberOf(bot.id)?.bot_id === botId)?.name ?? cleanText(botId)
+  async function pendingApprovals({ fresh = false } = {}) {
+    if (flybot.readOnly?.()) return []
+    if (!fresh && now() - pendingCache.at < 5_000) return pendingCache.items
+    try {
+      const result = await client.callTool('list_approvals', { status: 'pending' })
+      const raw = result?.approvals ?? (Array.isArray(result) ? result : [])
+      const items = raw
+        .map(item => approvalView(item, { localName: localNameOf }))
+        .filter(item => item && item.kind === 'outbound_message' && (item.status === 'pending' || item.status === 'pending_approval'))
+      pendingCache = { at: now(), items }
+      return items
+    } catch (error) {
+      warn('list_approvals failed', error)
+      return pendingCache.items
+    }
+  }
   const homeOfPeer = peerHandle => { const parts = norm(peerHandle).slice(1).split('.'); return parts.length > 2 ? `@${parts.slice(1).join('.')}` : norm(peerHandle) }
   async function setAutoAccept(friendHome, on) {
     const key = norm(friendHome)
@@ -684,12 +740,26 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   }))
   disposers.push(flybot.api.handle('social/settings', async () => ({ autoAccept: Object.fromEntries(remote.homes.map(entry => [entry.home, autoAcceptOf(entry.home)])) }), { read: true }))
   disposers.push(flybot.api.handle('social/poll', async () => ({ delivered: await pollInbox() })))
+  disposers.push(flybot.api.handle('social/approvals', async () => ({ approvals: await pendingApprovals({ fresh: true }) }), { read: true }))
+  // Owner click is the consent, same as Accept / Join: request and use the confirm code here.
+  disposers.push(flybot.api.handle('social/decide-approval', async ({ approvalId, decision } = {}) => {
+    const id = String(approvalId ?? '').trim()
+    if (!id) throw new Error('which approval?')
+    const mapped = decision === 'approve' || decision === 'approved' ? 'approved'
+      : decision === 'reject' || decision === 'rejected' ? 'rejected'
+      : undefined
+    if (!mapped) throw new Error('decision is approve or reject')
+    const result = await confirmedCall('decide_approval', { approval_id: id, decision: mapped })
+    pendingCache = { at: 0, items: [] }
+    return { approvalId: result?.approval_id ?? id, status: result?.decision ?? mapped }
+  }))
 
   return {
     home,
     registerAll,
     remoteBots,
     pollInbox,
+    pendingApprovals,
     approvalFor,
     sendChat,
     setAutoAccept,
