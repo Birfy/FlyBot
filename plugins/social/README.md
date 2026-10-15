@@ -12,8 +12,15 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
   `Unknown FlyBot endpoint` message. The same failure is written to Settings → Feedback.
 - **Members**: each *published* local Bot becomes `@<bot>.<home>` (`add_home_member`), stored as field
   `social.member`; a Bot is published by its owner (the Chief is by default, #51), registers when published
-  (`bot.published`), and deleted ones are revoked on `bot.removed`. Unpublished Bots get no identity, are not polled
-  and cannot sign sends or take invites; unpublishing keeps the identity unused instead of revoking it.
+  (`bot.published`), and deleted ones are revoked on `bot.removed`. Unpublished Bots are not registered at start,
+  are not polled, and cannot sign friend sends or take invites; unpublishing keeps the identity unused instead of revoking it.
+  **Face-to-face join** is the exception: if the Bot you bring has no identity yet, the plugin registers it with the
+  same `add_home_member` call (connector token, home id) so Bot Social can put it in that room. That identity is
+  room-only (`social.member.roomOnly`): it does not appear in friends' `list_remote_bots`, does not change the
+  owner's **Published to friends** flag, and `reach()` still denies anything outside the room. When you leave the
+  last face room or the room closes, the plugin revokes it (`remove_home_member`). A failed join that created a new
+  room-only identity is revoked too, so a retry is not blocked. An identity left over from a previous publish is
+  kept unused, not revoked.
 - **Remote roster**: `list_remote_bots` → friends' Bots grouped by home; sidebar section
   `flybot.sidebar.section#social` with a remote badge, `@` rows via
   `flybot.composer.mention#social`. Remote Bots never enter `bot.list()`.
@@ -49,7 +56,7 @@ People in the same place (or on a call) put their Bots in one room by each typin
 
 1. Open **Friends' Bots** in the sidebar.
 2. Click **Join with a number**. Type six digits. If you have more than one Bot, pick which one to bring (default: the first). Click **Join**.
-3. You join at once — there is no preview. FlyBot opens the room. Everyone already in it shows as `<Bot> · <owner>'s Bot` (your Chief: `<owner>'s Chief`). The join form says whether the Bot you bring is published; unpublished Bots are labeled “not published, available to this room only”. **Published to friends** (Bot settings, next to **Invite to this Bot**) is the owner's switch for that; it calls core `set-published` (#51).
+3. You join at once — there is no preview. FlyBot opens the room. Everyone already in it shows as `<Bot> · <owner>'s Bot` (your Chief: `<owner>'s Chief`). The join form says whether the Bot you bring is published; unpublished Bots are labeled “not published, available to this room only”. If that Bot has no Bot Social identity yet, FlyBot registers it for this room only, then joins — friends still cannot reach it, and it is not published. **Published to friends** (Bot settings, next to **Invite to this Bot**) is the owner's switch for that; it calls core `set-published` (#51).
 4. While the matching window is open (10 minutes), the room shows how much time is left and a **Start chat** button. Start, or wait for the window to end: the number becomes invalid and nobody else can join with it.
 5. **Leave** removes your Bot in one click. Anyone can leave; if the last member leaves, the room closes and the number is free again.
 

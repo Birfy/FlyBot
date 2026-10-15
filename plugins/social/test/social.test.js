@@ -1397,3 +1397,109 @@ test('face-to-face join uses core isPublished (Chief published, others not)', as
   assert.equal((await call('flybot/social/status', {})).value.bots.find(b => b.id === 'b').published, true)
 })
 
+test('face-to-face join registers an unpublished Bot for that room only', async (t) => {
+  const { ctx, call, tool, stop } = await team({ writerPublished: false })
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  const polled = []
+  const listInbox = server.tools.list_inbox
+  server.tools.list_inbox = (a) => { polled.push(a.bot_id); return listInbox(a) }
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const scope = ctx.flybot.scope('social')
+  assert.equal(scope.fields.get('b', 'member'), undefined)
+  assert.equal(ctx.flybot.bot.get('b').published, false)
+
+  const joined = (await call('flybot/social/face-join', { code: '123456', botId: 'b' })).value
+  assert.equal(joined.joinedAs.botId, 'b')
+  assert.equal(joined.joinedAs.handle, '@writer.danyang.home')
+  assert.equal(ctx.flybot.bot.get('b').published, false, 'join does not flip published')
+  assert.deepEqual(scope.fields.get('b', 'member'), { bot_id: 'm2', handle: '@writer.danyang.home', roomOnly: true })
+  const status = (await call('flybot/social/status', {})).value
+  assert.equal(status.bots.find(bot => bot.id === 'b').published, false)
+  assert.equal(status.bots.find(bot => bot.id === 'b').handle, undefined, 'unpublished identity is not advertised as reachable')
+
+  const friends = (await call('flybot/social/friends', {})).value
+  assert.equal(friends.some(bot => bot.handle === '@writer.danyang.home'), false)
+  const remote = (await call('flybot/social/remote-bots', { fresh: true })).value
+  assert.equal(remote.homes.flatMap(entry => entry.bots).some(bot => bot.handle === '@writer.danyang.home'), false)
+
+  polled.length = 0
+  await social.pollInbox()
+  assert.equal(polled.includes('m2'), false, 'room-only identity is not polled')
+  await assert.rejects(tool('message_friend_bot', { to: '@coder.bob.home', message: 'hi' }, 'b'), /not published/)
+  assert.equal((await call('flybot/social/create-invite', { botId: 'b' })).ok, false)
+
+  const again = (await call('flybot/social/face-join', { code: '123456', botId: 'b' })).value
+  assert.equal(again.joinedAs.botId, 'b')
+  assert.equal(server.calls.filter(c => c.name === 'add_home_member' && c.args.name === 'writer').length, 1, 'join is idempotent')
+
+  const left = (await call('flybot/social/face-leave', { faceRoomId: 'frm_123456' })).value
+  assert.equal(left.status, 'closed')
+  assert.equal(scope.fields.get('b', 'member'), undefined, 'room-only identity is revoked on leave')
+  assert.equal(server.calls.some(c => c.name === 'remove_home_member' && c.args.member === 'm2'), true)
+  assert.equal(ctx.flybot.bot.get('b').published, false)
+})
+
+test('face-to-face join registration failures are friendly and leave no leftover identity', async (t) => {
+  const { ctx, call, stop } = await team({ writerPublished: false })
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  const add = server.tools.add_home_member
+  server.tools.add_home_member = (a) => {
+    if (String(a.name).startsWith('writer')) throw Object.assign(new Error('handle taken'), { code: 'handle_taken' })
+    return add(a)
+  }
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const scope = ctx.flybot.scope('social')
+  const taken = await call('flybot/social/face-join', { code: '123456', botId: 'b' })
+  assert.equal(taken.ok, false)
+  assert.match(taken.error.message, /already taken/)
+  assert.doesNotMatch(taken.error.message, /handle_taken/)
+  assert.equal(scope.fields.get('b', 'member'), undefined)
+
+  server.tools.add_home_member = (a) => {
+    if (String(a.name).startsWith('writer')) throw Object.assign(new Error('Bot Social add_home_member: HTTP 429'), { code: 'http_429', retryAfter: 20 })
+    return add(a)
+  }
+  const limited = await call('flybot/social/face-join', { code: '123456', botId: 'b' })
+  assert.equal(limited.ok, false)
+  assert.match(limited.error.message, /20 seconds/)
+  assert.equal(scope.fields.get('b', 'member'), undefined)
+
+  server.tools.add_home_member = (a) => {
+    if (String(a.name).startsWith('writer')) throw new Error('Bot Social add_home_member: upstream_boom')
+    return add(a)
+  }
+  const failed = await call('flybot/social/face-join', { code: '123456', botId: 'b' })
+  assert.equal(failed.ok, false)
+  assert.match(failed.error.message, /Could not register Writer/)
+  assert.doesNotMatch(failed.error.message, /upstream_boom/)
+  assert.equal(scope.fields.get('b', 'member'), undefined)
+
+  server.tools.add_home_member = add
+  const full = await call('flybot/social/face-join', { code: '999999', botId: 'b' })
+  assert.equal(full.ok, false)
+  assert.match(full.error.message, /8 Bots/)
+  assert.equal(scope.fields.get('b', 'member'), undefined, 'a brand-new room-only identity is revoked when join fails')
+  assert.equal(server.calls.some(c => c.name === 'remove_home_member'), true)
+
+  const joined = (await call('flybot/social/face-join', { code: '123456', botId: 'b' })).value
+  assert.equal(joined.joinedAs.botId, 'b')
+  assert.equal(scope.fields.get('b', 'member').handle, '@writer.danyang.home')
+
+  const refused = await call('flybot/social/face-join', { code: '999999', botId: 'b' })
+  assert.equal(refused.ok, false)
+  assert.match(refused.error.message, /8 Bots/)
+  assert.equal(scope.fields.get('b', 'member').handle, '@writer.danyang.home', 'an identity already in a room is kept when another join fails')
+})
+

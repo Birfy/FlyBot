@@ -20,6 +20,7 @@ import {
   publishedForJoin,
   createFaceRoomApi,
   FaceRoomError,
+  mapRegisterError,
 } from '../src/face-rooms.js'
 
 test('join code is exactly six digits', () => {
@@ -52,6 +53,16 @@ test('error mapping covers the FACE_ROOMS.md codes', () => {
   assert.doesNotMatch(mapFaceError({ error: { code: 'nope', message: 'raw_sql' } }, 500).message, /raw_sql/)
   assert.match(mapFaceError({ error: { code: 'connector_token_rest_forbidden' } }, 403).message, /would not save that setting/)
   assert.equal(mapFaceError({ error: { code: 'confirmation_required', confirm_code: 'AB12CD' } }, 403).confirmCode, 'AB12CD')
+  assert.equal(mapFaceError({ error: { code: 'handle_taken' } }, 409).message, 'That Bot Social handle is already taken. Rename the Bot and try again.')
+  const taken = mapRegisterError(Object.assign(new Error('handle taken'), { code: 'handle_taken' }), { name: 'Writer' })
+  assert.equal(taken.code, 'handle_taken')
+  assert.match(taken.message, /Writer could not join/)
+  assert.match(taken.message, /already taken/)
+  const limitedReg = mapRegisterError(Object.assign(new Error('Bot Social add_home_member: HTTP 429'), { code: 'http_429', retryAfter: 12 }), { name: 'Writer' })
+  assert.match(limitedReg.message, /12 seconds/)
+  const generic = mapRegisterError(new Error('Bot Social add_home_member: boom_code'), { name: 'Writer' })
+  assert.doesNotMatch(generic.message, /boom_code/)
+  assert.match(generic.message, /Could not register Writer/)
   assert.equal(formatRetryAfter(1), '1 second')
   assert.equal(formatRetryAfter(60), '1 minute')
 })

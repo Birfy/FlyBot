@@ -5,7 +5,9 @@
 //   POST /v1/onboard/flybot on first start; the returned connector token is kept in
 //   the credentials file (never in state.json).
 // - Every local Bot is a member identity @<bot>.<home>, keys custodied by the server.
-//   Bots are registered on start and on 'bot.created', revoked on 'bot.removed'.
+//   Published Bots are registered on start and on 'bot.created' / 'bot.published'.
+//   Unpublished Bots get a room-only identity at face-to-face join, revoked when they
+//   leave their last face room (or the room closes). Revoked on 'bot.removed'.
 // - Friendship is Bot-to-Bot: an invite names one local Bot and the friend joins as one of
 //   theirs; each side sees and reaches only the Bots the friendship covers (the server's
 //   list_remote_bots, with `via` naming the local Bots allowed to talk), shown in the roster (grouped by
@@ -32,6 +34,7 @@ import {
   createFaceRoomApi,
   isJoinCode,
   mapFaceError,
+  mapRegisterError,
   renderFaceEvent,
   rememberEvent,
   FaceRoomError,
@@ -321,17 +324,21 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   // ------------------------------------------------------------ members
   const memberOf = botId => flybot.fields.get(botId, 'member')
   // A Bot gets an outside identity only if its owner published it (#51): only published Bots
-  // are registered, polled and sign sends. A core without bot.isPublished has no such rule.
+  // are registered at start, polled and sign friend sends. A core without bot.isPublished has
+  // no such rule. An unpublished Bot may still get a *room-only* identity at face-to-face join
+  // (`forFace`); that identity is not polled, does not sign friend sends or invites, and is
+  // revoked when the Bot is no longer in any face room (Bot Social `remove_home_member`).
   const published = botId => flybot.bot.isPublished?.(botId) !== false
   // The identity a published Bot signs and polls with; an unpublished Bot has none to use
   // (an identity it already holds is kept on the server, unused, so republishing needs no new handle).
   const activeMember = botId => (published(botId) ? memberOf(botId) : undefined)
   const unpublishedMessage = bot => `${bot.name} is not published: publish it before it can be invited, friend other Bots or be reached`
+  const isRoomOnlyMember = botId => Boolean(memberOf(botId)?.roomOnly) && !published(botId)
   // One registration per Bot at a time; a taken handle retries with the Bot's id suffix;
   // a Bot removed while it was registering has its new identity revoked.
   const registering = new Map()
-  function register(bot) {
-    if (!bot || !published(bot.id)) return Promise.resolve(undefined)
+  function register(bot, { forFace = false } = {}) {
+    if (!bot || (!forFace && !published(bot.id))) return Promise.resolve(undefined)
     if (!home || memberOf(bot.id) || flybot.readOnly?.()) return Promise.resolve(memberOf(bot.id))
     if (!registering.has(bot.id)) {
       registering.set(bot.id, registerOnce(bot).finally(() => registering.delete(bot.id)))
@@ -360,7 +367,13 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       await client.callTool('remove_home_member', { home: home.id, member: member.bot_id }).catch(error => warn('revoke failed', error))
       return undefined
     }
-    flybot.fields.set(bot.id, 'member', { bot_id: member.bot_id, handle: member.handle })
+    // Room-only: unpublished at the moment of registration. A later publish reuses the handle
+    // and drops the flag so leave no longer revokes it.
+    flybot.fields.set(bot.id, 'member', {
+      bot_id: member.bot_id,
+      handle: member.handle,
+      ...(published(bot.id) ? {} : { roomOnly: true }),
+    })
     return memberOf(bot.id)
   }
   // Every Bot at startup, once ds-bot's team is loaded (saved Bots fire no bot.created).
@@ -384,8 +397,14 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     }
   }
   disposers.push(flybot.on('bot.created', bot => { void register(bot).catch(error => warn('register failed', error)) }))
-  // Publishing gives the Bot its identity; unpublishing only stops it being used.
-  disposers.push(flybot.on?.('bot.published', bot => { if (bot.published) void register(bot).catch(error => warn('register failed', error)) }) ?? (() => {}))
+  // Publishing gives the Bot its identity; unpublishing only stops it being used. A room-only
+  // identity from a face-to-face join is kept and unmarked so leave does not revoke it.
+  disposers.push(flybot.on?.('bot.published', bot => {
+    if (!bot.published) return
+    const member = memberOf(bot.id)
+    if (member?.roomOnly) flybot.fields.set(bot.id, 'member', { bot_id: member.bot_id, handle: member.handle })
+    void register(bot).catch(error => warn('register failed', error))
+  }) ?? (() => {}))
   disposers.push(flybot.on('bot.removed', ({ bot }) => {
     const member = bot?.fields?.[NS]?.member
     if (home && member) void client.callTool('remove_home_member', { home: home.id, member: member.bot_id }).catch(error => warn('revoke failed', error))
@@ -928,15 +947,45 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     }
   })
   const bringable = () => localFaceBots().filter(bot => bot.handle)
-  function pickJoiner(botId) {
-    const team = bringable()
+  function pickJoiner(botId, { needHandle = true } = {}) {
+    const all = localFaceBots()
+    const team = all.filter(bot => bot.handle)
     if (typeof botId === 'string' && botId) {
-      const hit = team.find(bot => bot.id === botId) || localFaceBots().find(bot => bot.id === botId)
+      const hit = all.find(bot => bot.id === botId)
       if (!hit) throw new Error('Choose which of your Bots joins')
-      if (!hit.handle) throw new Error(`${hit.name} has no Bot Social identity yet`)
+      if (needHandle && !hit.handle) throw new Error(`${hit.name} has no Bot Social identity yet`)
       return hit
     }
-    return team[0] ?? localFaceBots()[0]
+    return team[0] ?? all[0]
+  }
+  function botByHandle(handle) {
+    const key = norm(handle)
+    return flybot.bot.list().find(bot => memberOf(bot.id)?.handle && norm(memberOf(bot.id).handle) === key)
+  }
+  function faceRoomsUsing(handle) {
+    const key = norm(handle)
+    return Object.entries(settings.faceRooms).filter(([, meta]) => meta?.asBot && norm(meta.asBot) === key)
+  }
+  // Room-only identities exist so Bot Social can name the Bot in a face room. They must not
+  // linger as reachable home members: revoke when the Bot is in no face room and still unpublished.
+  async function releaseRoomOnlyIdentity(botId) {
+    if (!isRoomOnlyMember(botId)) return
+    const member = memberOf(botId)
+    if (faceRoomsUsing(member.handle).length) return
+    if (home && member.bot_id) {
+      await client.callTool('remove_home_member', { home: home.id, member: member.bot_id }).catch(error => warn('revoke room-only identity failed', error))
+    }
+    flybot.fields.set(botId, 'member', undefined)
+  }
+  async function registerForFace(bot) {
+    if (!bot) throw new FaceRoomError('Choose which of your Bots joins', 'invalid_request')
+    try {
+      const member = await register(bot, { forFace: true })
+      if (member?.handle) return member
+    } catch (error) {
+      throw mapRegisterError(error, bot)
+    }
+    throw new FaceRoomError(`${bot.name} could not be registered on Bot Social. Try again.`, 'register_failed')
   }
   function viewHostedFace(room, extra = {}) {
     if (!room) return undefined
@@ -1032,6 +1081,8 @@ export function createSocial(service, config = {}, { client: given, home: givenH
           if (known.has(serverId)) continue
           if (meta?.localRoomId) await flybot.rooms.dropFace?.(meta.localRoomId).catch(() => {})
           delete settings.faceRooms[serverId]
+          const left = botByHandle(meta?.asBot)
+          if (left) await releaseRoomOnlyIdentity(left.id)
         }
         if (listed.length !== Object.keys(settings.faceRooms).length) saveSettings()
       } catch (error) {
@@ -1044,21 +1095,25 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   async function joinFaceRoom({ code, botId } = {}) {
     const digits = String(code ?? '').trim()
     if (!isJoinCode(digits)) throw mapFaceError({ error: { code: 'invalid_code' } }, 400)
-    const bot = pickJoiner(botId)
+    const bot = pickJoiner(botId, { needHandle: false })
     if (!bot) throw new Error('Choose which of your Bots joins')
-    await register(flybot.bot.get(bot.id))
-    const ready = pickJoiner(bot.id)
-    let snapshot
+    const local = flybot.bot.get(bot.id)
+    const hadIdentity = Boolean(memberOf(bot.id))
     try {
-      snapshot = await faceNeed().join({ code: digits, bots: [ready.handle] })
+      await registerForFace(local)
+      const ready = pickJoiner(bot.id)
+      const snapshot = await faceNeed().join({ code: digits, bots: [ready.handle] })
+      const room = await applyFaceSnapshot(snapshot, { asBot: ready.handle })
+      if (settings.faceRooms[snapshot.roomId]) settings.faceRooms[snapshot.roomId].asBot = ready.handle
+      saveSettings()
+      return { ...viewHostedFace(room, { joinedAs: { botId: ready.id, botName: ready.name, handle: ready.handle } }), faceRoomId: snapshot.roomId, status: snapshot.status, expiresAt: snapshot.expiresAt, members: snapshot.members }
     } catch (error) {
+      // A brand-new room-only identity that never made it into a room must not block retry
+      // (and must not linger as a reachable home member).
+      if (!hadIdentity) await releaseRoomOnlyIdentity(bot.id)
       if (error instanceof FaceRoomError) throw error
       throw error
     }
-    const room = await applyFaceSnapshot(snapshot, { asBot: ready.handle })
-    if (settings.faceRooms[snapshot.roomId]) settings.faceRooms[snapshot.roomId].asBot = ready.handle
-    saveSettings()
-    return { ...viewHostedFace(room, { joinedAs: { botId: ready.id, botName: ready.name, handle: ready.handle } }), faceRoomId: snapshot.roomId, status: snapshot.status, expiresAt: snapshot.expiresAt, members: snapshot.members }
   }
   async function leaveFaceRoom({ roomId, faceRoomId, bots } = {}) {
     const id = faceRoomId || Object.entries(settings.faceRooms).find(([, item]) => item.localRoomId === roomId)?.[0]
@@ -1067,6 +1122,8 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     const meta = settings.faceRooms[id]
     if (meta?.localRoomId) await flybot.rooms.dropFace?.(meta.localRoomId).catch(() => {})
     delete settings.faceRooms[id]
+    const left = botByHandle(meta?.asBot)
+    if (left) await releaseRoomOnlyIdentity(left.id)
     saveSettings()
     return { roomId: meta?.localRoomId, faceRoomId: id, status: result?.status || 'left' }
   }

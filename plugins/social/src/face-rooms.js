@@ -95,6 +95,32 @@ const FRIENDLY = {
   dlp_blocked: 'That message was blocked and was not sent.',
   connector_token_rest_forbidden: 'Bot Social would not save that setting with this connection. Restart FlyBot or reconnect in Friends\' Bots.',
   confirmation_required: 'Bot Social asked for a confirmation. Try the toggle again.',
+  handle_taken: 'That Bot Social handle is already taken. Rename the Bot and try again.',
+}
+
+// MCP add_home_member failures at face-to-face join: same friendly class as REST join errors,
+// never a raw tool code. Registration is retried from a clean local state (no leftover member).
+export function mapRegisterError(error, bot) {
+  if (error instanceof FaceRoomError) return error
+  const name = bot?.name ? String(bot.name) : 'this Bot'
+  const code = String(error?.code ?? '')
+  const msg = String(error?.message ?? error ?? '')
+  const retryAfter = error?.retryAfter ?? error?.retry_after
+  if (code === 'handle_taken' || /handle[_ ]taken|taken|exists|conflict|duplicate|in use|another Bot's Bot Social identity/i.test(msg)) {
+    return new FaceRoomError(`${name} could not join: ${FRIENDLY.handle_taken}`, 'handle_taken')
+  }
+  if (code === 'rate_limited' || code === 'http_429' || /429|rate.?limit/i.test(code + msg)) {
+    return mapFaceError({ error: { code: 'rate_limited', retry_after: retryAfter } }, 429)
+  }
+  if (code === 'timeout' || /no answer in|TimeoutError|AbortError/i.test(msg)) {
+    return new FaceRoomError(`Bot Social did not answer while registering ${name}. Try again.`, 'timeout')
+  }
+  if (code === 'http_401' || code === 'http_403' || code === 'unauthorized' || /401|403|unauthori[sz]ed|token/i.test(code + msg)) {
+    return new FaceRoomError(FRIENDLY.unauthorized, 'unauthorized', { status: 401 })
+  }
+  const raw = msg.replace(/^Bot Social\s+\S+:\s*/, '').replace(/\s+/g, ' ').trim().slice(0, 200)
+  const detail = raw && !/^[a-z_]+$/.test(raw) ? `: ${raw}` : '. Try again.'
+  return new FaceRoomError(`Could not register ${name} on Bot Social${detail}`, code || 'register_failed')
 }
 
 export function mapFaceError(data, status) {
