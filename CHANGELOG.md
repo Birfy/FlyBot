@@ -13,6 +13,7 @@ All notable changes to FlyBot (earlier: DS Bot) are listed here. The format foll
 
 - A chat with a friend's Bot that Bot Social has paused (turn budget reached, loop suspicion, emergency stop) now says so and points at the Bot Social console, instead of failing with a bare "Not sent: …" card. A paused conversation is no longer retried with the friendship's other Bots. ([#72](https://github.com/ThinkFlowLab/FlyBot/issues/72))
 - Friends' Bots no longer shows the raw host error `Unknown FlyBot endpoint social/remote-bots` when `@flybot/social` failed to start. The section shows `Social is not running: <reason>` instead, a 409 `handle_taken` names the taken home handle and says to change `displayName`, and the start failure is written to host diagnostics (Settings → Feedback). ([#68](https://github.com/ThinkFlowLab/FlyBot/issues/68))
+- Owner-scoped access (#49) now lets a signed-in owner actually use their own team: session targets resolve again for Bot ids, current chats, group Sessions and earlier parts (own-bot sends were denied), the `flybot/*` plugin endpoints reach the plugin layer instead of answering `bot/not-found`, approvals are answered by their approval id, and the sole signed-in owner keeps the deployment-wide UI surfaces (agents, secrets, questions, connectors, memory reviews) that the first cut hid. With more than one member, plugin writes and `add-agent` join the explicitly blocked shared resources, and `create-room` refuses an empty member list.
 
 ## [0.1.0] - 2026-10-14
 

@@ -60,9 +60,10 @@ A thin invitation-and-session layer on top of the #47 identity schema, in `core/
 Central authorization in `core/src/host/authz.js`, installed after member-auth:
 
 - **Enforced only once a member session exists** (`authzEnforced`). With no sessions the shipped single-human product is unchanged.
-- When enforced, every Bot / room / session an endpoint touches must belong to the signed-in actor (`bot/forbidden` otherwise). `body.actorId` still grants nothing.
-- Shared resources that cannot yet be isolated per owner (secrets, connectors, folder picks, browser bridge, update-install, diagnostics, set-prefs, capability library writes) are **explicitly blocked** with `bot/blocked-shared` while more than one member exists — not hidden only in the UI.
-- `create-bot` stamps `ownerId` from the actor; `view()` and `live()` filter to that owner's bots/rooms.
+- When enforced, every Bot / room / session an endpoint touches must belong to the signed-in actor (`bot/forbidden` otherwise). `body.actorId` still grants nothing. Session targets resolve through the store's owner maps (`botOf` for a Bot id; `selfOf` / `groupOwners` / `pastOwners` for a current chat, group Session or earlier part); unresolvable ids deny. `approval-answer` is judged by the approval's own Bot or room, resolved by approval id — caller-supplied session fields grant nothing.
+- Shared resources that cannot yet be isolated per owner (secrets, connectors, folder picks, browser bridge, update-install, diagnostics, set-prefs, capability library writes, `add-agent` — the DSH Agent is one per deployment with no owner) are **explicitly blocked** with `bot/blocked-shared` while more than one member exists — not hidden only in the UI. `flybot/*` plugin endpoints follow the same split: plugin reads reach any signed-in actor, plugin writes are shared-blocked.
+- `create-bot` stamps `ownerId` from the actor; `view()` and `live()` narrow to the actor — per-session entries (`questions`, `exchangeTurns`) keep the actor's own, deployment-wide surfaces (agents, secrets, connectors, memory reviews) stay visible while a single member exists and hide with more than one, the same rule as the shared writes. `create-room` refuses an empty member list (a room with no member Bot would belong to nobody).
+- Watch item: `set-main` lets an owner promote their own Bot to a Main Bot. Main rights inside the Bot team are a shipped product concept, but how they compose with multi-human authority is exactly what #16 owns — revisit there before team mode turns on.
 - **Not done here:** cross-owner messaging, filesystem sandbox redesign, Chief-to-Chief routing (#51), human/Chief room membership (#50). Team mode stays disabled; #16 stays open.
 
 ## Identity model
@@ -181,6 +182,6 @@ Planned rules (fail closed by default):
 
 **Member auth foundation (#48)** has tests in `core/test/member-auth.test.js`: two members get distinct identities via invite→redeem, forged strings never authenticate (only a live session token does), invitation replay and expiry fail, `removeMember` / `revokeSession` invalidate sessions, the last owner cannot be removed, and tokens are stored only as hashes. These cover the sign-in surface only — no owner scoping or cross-owner behavior.
 
-Owner-scoped access (#49) tests in `core/test/authz.test.js`.
+Owner-scoped access (#49) tests in `core/test/authz.test.js`: cross-owner denials, and the positive paths that keep an owner working — their own Bots' sessions (Bot id, current chat, group Session, schedule), plugin-endpoint reads, approval answering by id, and the `view()`/`live()` narrowing rules for one and for several members.
 
 The routing-matrix rows above remain untested because the behavior is not shipped. When enforcement work starts (#48+), each row becomes a test first, per [fail-without-change](../code-standards.md): same-owner delegation allowed (a), Chief-to-Chief allowed (b), cross-owner specialist denied (c), team-admin vs private-owner denied (d), forwarded approval rejected (e). Each must fail on the unbroken tip before implementation lands.
