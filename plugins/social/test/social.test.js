@@ -18,6 +18,7 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
   const members = new Map()
   let seq = 0
   let onboarded = 0
+  const me = { autoApproveFaceRooms: false, confirm: false }
   const uploads = new Map()
   const tools = {
     create_invite: a => ({ code: 'INV123', url: 'https://s/i/INV123', status: 'active', expires_at: '2026-10-21T00:00:00Z', bot: a.bot_id, auto_accept: a.auto_accept }),
@@ -65,6 +66,21 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
     if (String(url).includes('/v1/face-rooms')) {
       return new Response(JSON.stringify({ rooms: [] }), { status: 200 })
     }
+    if (String(url).includes('/v1/me')) {
+      const meBody = init.body ? JSON.parse(init.body) : {}
+      calls.push({ url, name: `REST ${init.method} /v1/me`, args: meBody })
+      if (init.headers.authorization !== `Bearer ${token}`) return new Response(JSON.stringify({ error: { code: 'unauthorized' } }), { status: 401 })
+      if (init.method === 'GET') {
+        return new Response(JSON.stringify({ auto_approve_face_rooms: me.autoApproveFaceRooms }), { status: 200 })
+      }
+      if (init.method === 'PATCH') {
+        if (me.confirm && meBody.confirm_code === undefined) {
+          return new Response(JSON.stringify({ status: 'confirmation_required', confirm_code: 'MECODE' }), { status: 200 })
+        }
+        if (typeof meBody.auto_approve_face_rooms === 'boolean') me.autoApproveFaceRooms = meBody.auto_approve_face_rooms
+        return new Response(JSON.stringify({ auto_approve_face_rooms: me.autoApproveFaceRooms }), { status: 200 })
+      }
+    }
     if (init.headers.authorization !== `Bearer ${token}`) return new Response('{}', { status: 401 })
     const body = JSON.parse(init.body)
     calls.push({ url, name: body.params.name, args: body.params.arguments })
@@ -72,7 +88,7 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
     const result = tool ? { content: [{ type: 'text', text: JSON.stringify(tool(body.params.arguments)) }] } : { isError: true, content: [{ type: 'text', text: '{"code":"unknown","message":"no tool"}' }] }
     return new Response(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }), { status: 200 })
   }
-  return { fetch, calls, events, members, uploads, tools, onboarded: () => onboarded }
+  return { fetch, calls, events, members, uploads, tools, me, onboarded: () => onboarded }
 }
 
 // The Writer is published (#51: only published Bots get an outside identity) unless a test says otherwise.
@@ -1183,5 +1199,95 @@ test('Friends\' Bots (#83): Join with a number is in the panel', () => {
   assert.ok(all.some(n => n.props['data-flybot'] === 'face-join'))
   assert.ok(all.some(n => n.type === 'button' && n.children.includes('Join with a number')))
   assert.ok(entries.some(([slot, entry]) => slot === 'flybot.room.overview' && entry.id === 'social-face'))
+})
+
+test('face-to-face auto-send maps to PATCH /v1/me and swallows confirmation', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  server.me.autoApproveFaceRooms = false
+  server.me.confirm = true
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const status = (await call('flybot/social/status', {})).value
+  assert.equal(status.autoApproveFaceRooms, false)
+  const on = (await call('flybot/social/face-auto', { on: true })).value
+  assert.equal(on.autoApproveFaceRooms, true)
+  const patches = server.calls.filter(c => c.name === 'REST PATCH /v1/me')
+  assert.equal(patches[0].args.auto_approve_face_rooms, true)
+  assert.equal(patches[0].args.confirm_code, undefined)
+  assert.equal(patches[1].args.confirm_code, 'MECODE')
+  assert.equal((await call('flybot/social/status', {})).value.autoApproveFaceRooms, true)
+  server.me.confirm = false
+  const off = (await call('flybot/social/face-auto', { on: false })).value
+  assert.equal(off.autoApproveFaceRooms, false)
+  const listed = (await call('flybot/social/face-rooms', {})).value
+  assert.equal(listed.autoApproveFaceRooms, false)
+})
+
+test('Friends\' Bots (#83): auto-send toggle in the room header and pending-approval state', async () => {
+  const registered = []
+  const entries = []
+  const toggled = []
+  const decided = []
+  const sandbox = { window: { __ModuleLoader__: { load: r => registered.push(r) } }, setTimeout, clearTimeout, console, document: { getElementById: () => ({}), createElement: () => ({}), head: { appendChild() {} } } }
+  sandbox.globalThis = sandbox
+  sandbox.__flybot__ = {
+    slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } },
+    call: async (endpoint, payload) => {
+      if (endpoint === 'social/face-auto') {
+        toggled.push(payload)
+        return { autoApproveFaceRooms: payload.on !== false }
+      }
+      if (endpoint === 'social/status') return { autoApproveFaceRooms: false, approvals: [] }
+      return {}
+    },
+  }
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
+  const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
+  plugin.apply({})
+  const walk = (node, all = []) => {
+    if (!node || typeof node !== 'object') return all
+    if (typeof node.type === 'function') return walk(node.type(node.props), all)
+    all.push(node)
+    for (const child of node.children ?? []) walk(child, all)
+    return all
+  }
+  const overview = plugin.FaceRoomOverview({ room: { id: 'g1', origin: 'face-to-face', face: { roomId: 'frm_1', status: 'open' } } })
+  const header = walk(overview)
+  assert.ok(header.some(n => n.props['data-flybot'] === 'face-overview'))
+  const auto = header.find(n => n.props['data-flybot'] === 'face-auto-send')
+  assert.ok(auto)
+  assert.ok(header.some(n => n.type === 'label' && n.children.includes("Auto-send my Bot's room messages")))
+  assert.ok(header.some(n => typeof n.children?.[0] === 'string' && /without asking each time/.test(n.children[0])))
+  const box = header.find(n => n.type === 'input' && n.props.type === 'checkbox')
+  assert.equal(box.props.checked, false)
+  await box.props.onChange({ target: { checked: true } })
+  assert.equal(toggled.length, 1)
+  assert.equal(toggled[0].on, true)
+  await box.props.onChange({ target: { checked: false } })
+  assert.equal(toggled.length, 2)
+  assert.equal(toggled[1].on, false)
+
+  const card = plugin.PendingApprovals({
+    items: [{ id: 'apr-face-1', kind: 'face_room_message', from: 'Chief', toName: 'the room', text: 'hello there' }],
+    busy: '',
+    onDecide: (item, decision) => decided.push([item.id, decision]),
+  })
+  const pending = walk(card)
+  assert.ok(pending.some(n => n.props['data-flybot'] === 'face-auto-send'))
+  const turnOn = pending.find(n => n.type === 'button' && n.children.includes('Turn on auto-send'))
+  const always = pending.find(n => n.type === 'button' && n.children.includes('Approve and always auto-send in this room'))
+  assert.ok(turnOn && always)
+  await turnOn.props.onClick()
+  assert.equal(toggled.at(-1).on, true)
+  await always.props.onClick()
+  assert.equal(toggled.at(-1).on, true)
+  assert.deepEqual(decided, [['apr-face-1', 'approve']])
 })
 

@@ -119,20 +119,23 @@ function About({ text, title = 'About' }) {
 function SharedRoomApprovals({ room }) {
   const [items, setItems] = useState(room.pendingApprovals ?? [])
   const [busy, setBusy] = useState('')
+  const [autoSend, setAutoSend] = useState(false)
+  const face = room.origin === 'face-to-face'
   useEffect(() => {
-    if (room.viewerRole !== 'invited-owner') return undefined
-    if (Array.isArray(room.pendingApprovals) && room.pendingApprovals.length) {
-      setItems(room.pendingApprovals)
-      return undefined
-    }
+    const haveItems = Array.isArray(room.pendingApprovals) && room.pendingApprovals.length
+    if (haveItems) setItems(room.pendingApprovals)
+    if (room.viewerRole !== 'invited-owner' && !face) return undefined
     let alive = true
     call('social/status', {}).then((value) => {
       if (!alive) return
-      setItems(Array.isArray(value?.approvals) ? value.approvals : [])
+      if (room.viewerRole === 'invited-owner' && !haveItems) {
+        setItems(Array.isArray(value?.approvals) ? value.approvals : [])
+      }
+      if (typeof value?.autoApproveFaceRooms === 'boolean') setAutoSend(value.autoApproveFaceRooms)
     }, () => {})
     return () => { alive = false }
-  }, [room.id, room.viewerRole, room.pendingCount])
-  if ((room.viewerRole !== 'invited-owner' && room.origin !== 'face-to-face') || !items.length) return null
+  }, [room.id, room.viewerRole, room.pendingCount, face])
+  if ((room.viewerRole !== 'invited-owner' && !face) || !items.length) return null
   const decide = async (item, decision) => {
     setBusy(item.id)
     try {
@@ -140,12 +143,31 @@ function SharedRoomApprovals({ room }) {
       setItems(list => list.filter(entry => entry.id !== item.id))
     } finally { setBusy('') }
   }
+  const setAuto = async (on) => {
+    setBusy('auto')
+    try {
+      const result = await call('social/face-auto', { on })
+      setAutoSend(result?.autoApproveFaceRooms === true)
+    } finally { setBusy('') }
+  }
+  const approveAndAuto = async (item) => {
+    setBusy(item.id)
+    try {
+      const result = await call('social/face-auto', { on: true })
+      setAutoSend(result?.autoApproveFaceRooms === true)
+      await call('social/decide-approval', { approvalId: item.id, decision: 'approve' })
+      setItems(list => list.filter(entry => entry.id !== item.id))
+    } finally { setBusy('') }
+  }
   return h('div', { key: 'approvals', className: 'bt-shared-wait', 'data-flybot': 'room-pending-approvals' },
     h('div', { className: 'bt-section-title' }, t('Waiting for your approval'), h('span', { className: 'bt-chip' }, t('{count} to approve', { count: items.length }))),
+    face && autoSend ? h('div', { className: 'bt-set-hint' }, t('Your Bots post in rooms without asking each time. Use Auto-send in the room header to turn it off.')) : null,
+    face && !autoSend ? h('button', { type: 'button', className: 'bt-more', 'data-flybot': 'face-auto-send-on', disabled: !!busy, onClick: () => setAuto(true) }, t('Turn on auto-send')) : null,
     items.map(item => h('div', { key: item.id, className: 'bt-set-row' },
       h('span', { className: 'bt-set-copy' }, item.text || item.summary || item.to || t('Outbound reply')),
-      h('button', { type: 'button', className: 'bt-mini', disabled: busy === item.id, onClick: () => decide(item, 'approve') }, t('Approve')),
-      h('button', { type: 'button', className: 'bt-mini', disabled: busy === item.id, onClick: () => decide(item, 'reject') }, t('Reject')))))
+      h('button', { type: 'button', className: 'bt-mini', disabled: busy === item.id || busy === 'auto', onClick: () => decide(item, 'approve') }, t('Approve')),
+      h('button', { type: 'button', className: 'bt-mini', disabled: busy === item.id || busy === 'auto', onClick: () => decide(item, 'reject') }, t('Reject')),
+      face && !autoSend ? h('button', { type: 'button', className: 'bt-mini', 'data-flybot': 'face-approve-auto', disabled: busy === item.id || busy === 'auto', onClick: () => approveAndAuto(item) }, t('Approve and always auto-send in this room')) : null)))
 }
 
 function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) {

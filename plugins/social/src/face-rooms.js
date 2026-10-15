@@ -21,6 +21,7 @@ export class FaceRoomError extends Error {
     this.retryAfter = extra.retryAfter
     this.scope = extra.scope
     this.status = extra.status
+    this.confirmCode = extra.confirmCode
   }
 }
 
@@ -92,17 +93,20 @@ const FRIENDLY = {
   room_closed: 'This room has closed.',
   not_a_member: 'You are no longer in this room.',
   dlp_blocked: 'That message was blocked and was not sent.',
+  connector_token_rest_forbidden: 'Bot Social would not save that setting with this connection. Restart FlyBot or reconnect in Friends\' Bots.',
+  confirmation_required: 'Bot Social asked for a confirmation. Try the toggle again.',
 }
 
 export function mapFaceError(data, status) {
   const err = data?.error
   const payload = typeof err === 'string'
-    ? { code: err, message: data?.message, retry_after: data?.retry_after, scope: data?.scope }
+    ? { code: err, message: data?.message, retry_after: data?.retry_after, scope: data?.scope, confirm_code: data?.confirm_code }
     : (err && typeof err === 'object'
-      ? { code: err.code, message: err.message, retry_after: err.retry_after ?? data?.retry_after, scope: err.scope }
-      : { code: data?.code, message: data?.message, retry_after: data?.retry_after, scope: data?.scope })
+      ? { code: err.code, message: err.message, retry_after: err.retry_after ?? data?.retry_after, scope: err.scope, confirm_code: err.confirm_code ?? data?.confirm_code }
+      : { code: data?.code, message: data?.message, retry_after: data?.retry_after, scope: data?.scope, confirm_code: data?.confirm_code })
   const code = String(payload.code ?? '')
   const retryAfter = payload.retry_after
+  const confirmCode = payload.confirm_code ? String(payload.confirm_code) : undefined
   let message = FRIENDLY[code]
   if (code === 'rate_limited') {
     message = retryAfter != null
@@ -120,7 +124,25 @@ export function mapFaceError(data, status) {
       ? `Too many attempts. Try again in ${formatRetryAfter(retryAfter)}.`
       : 'Too many attempts. Try again in a few minutes.'
   }
-  return new FaceRoomError(message, code || 'face_room_error', { retryAfter, scope: payload.scope, status })
+  return new FaceRoomError(message, code || 'face_room_error', { retryAfter, scope: payload.scope, status, confirmCode })
+}
+
+export function viewMe(body) {
+  if (!body || typeof body !== 'object') return undefined
+  return { autoApproveFaceRooms: body.auto_approve_face_rooms === true }
+}
+
+function confirmationCode(value) {
+  if (!value || typeof value !== 'object') return ''
+  if (value instanceof FaceRoomError) return String(value.confirmCode || '')
+  if (value.status === 'confirmation_required' || value.code === 'confirmation_required') {
+    return String(value.confirm_code || value.confirmCode || '')
+  }
+  const err = value.error
+  if (err && typeof err === 'object' && err.code === 'confirmation_required') {
+    return String(err.confirm_code || err.confirmCode || value.confirm_code || '')
+  }
+  return ''
 }
 
 // ISSUE #51: when the published flag / reach() seam lands in core, supply it here
@@ -288,14 +310,15 @@ const normHandle = (handle) => {
 export function createFaceRoomApi({ server, token, fetch: fetchImpl = globalThis.fetch, timeoutMs = CALL_TIMEOUT_MS } = {}) {
   if (!server) throw new Error('flybot-social: server URL is required')
   if (!token) throw new Error('flybot-social: owner connector token is required')
-  const base = `${String(server).replace(/\/+$/, '')}/v1/face-rooms`
+  const origin = String(server).replace(/\/+$/, '')
+  const base = `${origin}/v1/face-rooms`
 
-  async function request(method, path, body) {
+  async function callHttp(method, url, body) {
     const signal = AbortSignal.timeout(timeoutMs)
     let response
     let data
     try {
-      response = await fetchImpl(`${base}${path}`, {
+      response = await fetchImpl(url, {
         method,
         headers: {
           authorization: `Bearer ${token}`,
@@ -316,6 +339,14 @@ export function createFaceRoomApi({ server, token, fetch: fetchImpl = globalThis
     }
     if (!response.ok) throw mapFaceError(data, response.status)
     return data
+  }
+
+  async function request(method, path, body) {
+    return callHttp(method, `${base}${path}`, body)
+  }
+
+  async function patchMe(payload) {
+    return callHttp('PATCH', `${origin}/v1/me`, payload)
   }
 
   return {
@@ -361,6 +392,28 @@ export function createFaceRoomApi({ server, token, fetch: fetchImpl = globalThis
         autoApproved: body.auto_approved === true,
         from: viewFaceMember(body.from),
       }
+    },
+    async me() {
+      return viewMe(await callHttp('GET', `${origin}/v1/me`)) ?? { autoApproveFaceRooms: false }
+    },
+    // Owner click is the consent. If Bot Social answers confirmation_required, the
+    // confirm_code is requested and used in this same call — the UI never asks for it.
+    async setAutoApproveFaceRooms(on) {
+      const payload = { auto_approve_face_rooms: Boolean(on) }
+      let body
+      try {
+        body = await patchMe(payload)
+      } catch (error) {
+        const code = confirmationCode(error)
+        if (!code) throw error
+        body = await patchMe({ ...payload, confirm_code: code })
+      }
+      const retry = confirmationCode(body)
+      if (retry) body = await patchMe({ ...payload, confirm_code: retry })
+      if (confirmationCode(body)) {
+        throw new FaceRoomError(FRIENDLY.confirmation_required, 'confirmation_required')
+      }
+      return viewMe(body) ?? { autoApproveFaceRooms: Boolean(on) }
     },
   }
 }

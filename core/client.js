@@ -12044,23 +12044,26 @@ function About({ text, title = "About" }) {
 function SharedRoomApprovals({ room: room2 }) {
   const [items, setItems] = (0, import_react32.useState)(room2.pendingApprovals ?? []);
   const [busy, setBusy] = (0, import_react32.useState)("");
+  const [autoSend, setAutoSend] = (0, import_react32.useState)(false);
+  const face = room2.origin === "face-to-face";
   (0, import_react32.useEffect)(() => {
-    if (room2.viewerRole !== "invited-owner") return void 0;
-    if (Array.isArray(room2.pendingApprovals) && room2.pendingApprovals.length) {
-      setItems(room2.pendingApprovals);
-      return void 0;
-    }
+    const haveItems = Array.isArray(room2.pendingApprovals) && room2.pendingApprovals.length;
+    if (haveItems) setItems(room2.pendingApprovals);
+    if (room2.viewerRole !== "invited-owner" && !face) return void 0;
     let alive = true;
     call("social/status", {}).then((value) => {
       if (!alive) return;
-      setItems(Array.isArray(value?.approvals) ? value.approvals : []);
+      if (room2.viewerRole === "invited-owner" && !haveItems) {
+        setItems(Array.isArray(value?.approvals) ? value.approvals : []);
+      }
+      if (typeof value?.autoApproveFaceRooms === "boolean") setAutoSend(value.autoApproveFaceRooms);
     }, () => {
     });
     return () => {
       alive = false;
     };
-  }, [room2.id, room2.viewerRole, room2.pendingCount]);
-  if (room2.viewerRole !== "invited-owner" && room2.origin !== "face-to-face" || !items.length) return null;
+  }, [room2.id, room2.viewerRole, room2.pendingCount, face]);
+  if (room2.viewerRole !== "invited-owner" && !face || !items.length) return null;
   const decide = async (item, decision) => {
     setBusy(item.id);
     try {
@@ -12070,16 +12073,39 @@ function SharedRoomApprovals({ room: room2 }) {
       setBusy("");
     }
   };
+  const setAuto = async (on) => {
+    setBusy("auto");
+    try {
+      const result = await call("social/face-auto", { on });
+      setAutoSend(result?.autoApproveFaceRooms === true);
+    } finally {
+      setBusy("");
+    }
+  };
+  const approveAndAuto = async (item) => {
+    setBusy(item.id);
+    try {
+      const result = await call("social/face-auto", { on: true });
+      setAutoSend(result?.autoApproveFaceRooms === true);
+      await call("social/decide-approval", { approvalId: item.id, decision: "approve" });
+      setItems((list) => list.filter((entry) => entry.id !== item.id));
+    } finally {
+      setBusy("");
+    }
+  };
   return (0, import_react32.createElement)(
     "div",
     { key: "approvals", className: "bt-shared-wait", "data-flybot": "room-pending-approvals" },
     (0, import_react32.createElement)("div", { className: "bt-section-title" }, t("Waiting for your approval"), (0, import_react32.createElement)("span", { className: "bt-chip" }, t("{count} to approve", { count: items.length }))),
+    face && autoSend ? (0, import_react32.createElement)("div", { className: "bt-set-hint" }, t("Your Bots post in rooms without asking each time. Use Auto-send in the room header to turn it off.")) : null,
+    face && !autoSend ? (0, import_react32.createElement)("button", { type: "button", className: "bt-more", "data-flybot": "face-auto-send-on", disabled: !!busy, onClick: () => setAuto(true) }, t("Turn on auto-send")) : null,
     items.map((item) => (0, import_react32.createElement)(
       "div",
       { key: item.id, className: "bt-set-row" },
       (0, import_react32.createElement)("span", { className: "bt-set-copy" }, item.text || item.summary || item.to || t("Outbound reply")),
-      (0, import_react32.createElement)("button", { type: "button", className: "bt-mini", disabled: busy === item.id, onClick: () => decide(item, "approve") }, t("Approve")),
-      (0, import_react32.createElement)("button", { type: "button", className: "bt-mini", disabled: busy === item.id, onClick: () => decide(item, "reject") }, t("Reject"))
+      (0, import_react32.createElement)("button", { type: "button", className: "bt-mini", disabled: busy === item.id || busy === "auto", onClick: () => decide(item, "approve") }, t("Approve")),
+      (0, import_react32.createElement)("button", { type: "button", className: "bt-mini", disabled: busy === item.id || busy === "auto", onClick: () => decide(item, "reject") }, t("Reject")),
+      face && !autoSend ? (0, import_react32.createElement)("button", { type: "button", className: "bt-mini", "data-flybot": "face-approve-auto", disabled: busy === item.id || busy === "auto", onClick: () => approveAndAuto(item) }, t("Approve and always auto-send in this room")) : null
     ))
   );
 }

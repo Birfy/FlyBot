@@ -170,6 +170,7 @@ export const SOCIAL_UI_ENDPOINTS = [
   'social/auto-approve', 'social/auto-accept', 'social/poll', 'social/approvals', 'social/decide-approval',
   'social/attachment',
   'social/face-join', 'social/face-rooms', 'social/face-leave', 'social/face-start', 'social/face-send',
+  'social/face-auto',
 ]
 
 export function registerUnavailable(service, reason) {
@@ -199,6 +200,25 @@ export function createSocial(service, config = {}, { client: given, home: givenH
   const home = givenHome ?? config.home
   const disposers = []
   const warn = (...args) => console.warn('flybot-social:', ...args)
+  let faceAutoCache = { at: 0, on: false, known: false }
+  async function faceAutoApprove({ fresh = false } = {}) {
+    if (!faceApi) return false
+    if (!fresh && faceAutoCache.known && now() - faceAutoCache.at < 5_000) return faceAutoCache.on
+    try {
+      const me = await faceApi.me()
+      faceAutoCache = { at: now(), on: me?.autoApproveFaceRooms === true, known: true }
+      return faceAutoCache.on
+    } catch (error) {
+      warn('face auto-approve status failed', error)
+      return faceAutoCache.known ? faceAutoCache.on : false
+    }
+  }
+  async function setFaceAutoApprove(on) {
+    if (!faceApi) throw new Error('Bot Social is not connected')
+    const result = await faceApi.setAutoApproveFaceRooms(on)
+    faceAutoCache = { at: now(), on: result?.autoApproveFaceRooms === true, known: true }
+    return { autoApproveFaceRooms: faceAutoCache.on }
+  }
   const maxFileBytes = config.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES
   const filesDir = config.filesDir ?? join(config.credentialsPath ? dirname(config.credentialsPath) : tmpdir(), 'flybot-social-files')
   const ensureDir = (dir) => { mkdirSync(dir, { recursive: true, mode: 0o700 }); return dir }
@@ -723,6 +743,7 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       bots: home ? flybot.bot.list().map(bot => ({ id: bot.id, name: bot.name, isMain: bot.isMain === true, published: published(bot.id), handle: activeMember(bot.id)?.handle ? norm(activeMember(bot.id).handle) : undefined })) : [],
       pendingApprovals: approvals.length,
       approvals,
+      autoApproveFaceRooms: await faceAutoApprove().catch(() => false),
     }
   }
   disposers.push(flybot.api.handle('social/status', socialStatus, { read: true }))
@@ -851,7 +872,10 @@ export function createSocial(service, config = {}, { client: given, home: givenH
     if (typeof friendHome !== 'string' || !friendHome) throw new Error('which friend?')
     return setAutoAccept(friendHome, on !== false)
   }))
-  disposers.push(flybot.api.handle('social/settings', async () => ({ autoAccept: Object.fromEntries(remote.homes.map(entry => [entry.home, autoAcceptOf(entry.home)])) }), { read: true }))
+  disposers.push(flybot.api.handle('social/settings', async () => ({
+    autoAccept: Object.fromEntries(remote.homes.map(entry => [entry.home, autoAcceptOf(entry.home)])),
+    autoApproveFaceRooms: await faceAutoApprove().catch(() => false),
+  }), { read: true }))
   disposers.push(flybot.api.handle('social/poll', async () => ({ delivered: await pollInbox() })))
   disposers.push(flybot.api.handle('social/approvals', async () => ({ approvals: await pendingApprovals({ fresh: true }) }), { read: true }))
   // Owner click is the consent, same as Accept / Join: request and use the confirm code here.
@@ -1073,8 +1097,12 @@ export function createSocial(service, config = {}, { client: given, home: givenH
       const room = flybot.rooms.ofFace?.(faceRoomId)
       return viewHostedFace(room, { faceRoomId, localRoomId: meta.localRoomId, cursor: meta.cursor }) || { faceRoomId, roomId: meta.localRoomId, status: 'candidate' }
     }).filter(Boolean)
-    return { rooms, bots: localFaceBots() }
+    return { rooms, bots: localFaceBots(), autoApproveFaceRooms: await faceAutoApprove().catch(() => false) }
   }, { read: true }))
+  disposers.push(flybot.api.handle('social/face-auto', async ({ on } = {}) => {
+    if (on === undefined) return { autoApproveFaceRooms: await faceAutoApprove({ fresh: true }) }
+    return setFaceAutoApprove(on !== false)
+  }))
   disposers.push(flybot.api.handle('social/face-leave', async (payload) => leaveFaceRoom(payload)))
   disposers.push(flybot.api.handle('social/face-start', async (payload) => startFaceRoom(payload)))
   disposers.push(flybot.api.handle('social/face-send', async ({ roomId, faceRoomId, text, botId } = {}) => {

@@ -47,7 +47,7 @@ index 53fad47ce6092aa9e383bf089034715f3b38d8de..5305371e60d6918f3218f02cdf073d36
    const dictation = useDictation((text, final) => {
      if (final && inputActions) inputActions.insertText(text, inputActions.captureInsertion())
 diff --git a/src/client/details-drawer.js b/src/client/details-drawer.js
-index b051eb8d08eeff078f3e7da15d36322f262edf13..4138065e40a60accee4bb79d8214fd4e97f5dd7d 100644
+index b051eb8d08eeff078f3e7da15d36322f262edf13..cd435dded3a52d1d885a30fec88ac28c7c02d1b1 100644
 --- a/src/client/details-drawer.js
 +++ b/src/client/details-drawer.js
 @@ -14,6 +14,9 @@ import { ScheduleSummary } from './schedules.js'
@@ -60,27 +60,30 @@ index b051eb8d08eeff078f3e7da15d36322f262edf13..4138065e40a60accee4bb79d8214fd4e
  
  function transcriptOf(list, id, name, hiddenTurns = []) {
    const outline = list.projectionsBySession?.[id]?.values?.turnOutline ?? list.byId[id]?.projectionValues?.turnOutline
-@@ -113,16 +116,79 @@ function About({ text, title = 'About' }) {
+@@ -113,16 +116,101 @@ function About({ text, title = 'About' }) {
  
  // A group's overview: what members read, who is in it, and who answers. Changes are
  // made in its settings.
 +function SharedRoomApprovals({ room }) {
 +  const [items, setItems] = useState(room.pendingApprovals ?? [])
 +  const [busy, setBusy] = useState('')
++  const [autoSend, setAutoSend] = useState(false)
++  const face = room.origin === 'face-to-face'
 +  useEffect(() => {
-+    if (room.viewerRole !== 'invited-owner') return undefined
-+    if (Array.isArray(room.pendingApprovals) && room.pendingApprovals.length) {
-+      setItems(room.pendingApprovals)
-+      return undefined
-+    }
++    const haveItems = Array.isArray(room.pendingApprovals) && room.pendingApprovals.length
++    if (haveItems) setItems(room.pendingApprovals)
++    if (room.viewerRole !== 'invited-owner' && !face) return undefined
 +    let alive = true
 +    call('social/status', {}).then((value) => {
 +      if (!alive) return
-+      setItems(Array.isArray(value?.approvals) ? value.approvals : [])
++      if (room.viewerRole === 'invited-owner' && !haveItems) {
++        setItems(Array.isArray(value?.approvals) ? value.approvals : [])
++      }
++      if (typeof value?.autoApproveFaceRooms === 'boolean') setAutoSend(value.autoApproveFaceRooms)
 +    }, () => {})
 +    return () => { alive = false }
-+  }, [room.id, room.viewerRole, room.pendingCount])
-+  if ((room.viewerRole !== 'invited-owner' && room.origin !== 'face-to-face') || !items.length) return null
++  }, [room.id, room.viewerRole, room.pendingCount, face])
++  if ((room.viewerRole !== 'invited-owner' && !face) || !items.length) return null
 +  const decide = async (item, decision) => {
 +    setBusy(item.id)
 +    try {
@@ -88,12 +91,31 @@ index b051eb8d08eeff078f3e7da15d36322f262edf13..4138065e40a60accee4bb79d8214fd4e
 +      setItems(list => list.filter(entry => entry.id !== item.id))
 +    } finally { setBusy('') }
 +  }
++  const setAuto = async (on) => {
++    setBusy('auto')
++    try {
++      const result = await call('social/face-auto', { on })
++      setAutoSend(result?.autoApproveFaceRooms === true)
++    } finally { setBusy('') }
++  }
++  const approveAndAuto = async (item) => {
++    setBusy(item.id)
++    try {
++      const result = await call('social/face-auto', { on: true })
++      setAutoSend(result?.autoApproveFaceRooms === true)
++      await call('social/decide-approval', { approvalId: item.id, decision: 'approve' })
++      setItems(list => list.filter(entry => entry.id !== item.id))
++    } finally { setBusy('') }
++  }
 +  return h('div', { key: 'approvals', className: 'bt-shared-wait', 'data-flybot': 'room-pending-approvals' },
 +    h('div', { className: 'bt-section-title' }, t('Waiting for your approval'), h('span', { className: 'bt-chip' }, t('{count} to approve', { count: items.length }))),
++    face && autoSend ? h('div', { className: 'bt-set-hint' }, t('Your Bots post in rooms without asking each time. Use Auto-send in the room header to turn it off.')) : null,
++    face && !autoSend ? h('button', { type: 'button', className: 'bt-more', 'data-flybot': 'face-auto-send-on', disabled: !!busy, onClick: () => setAuto(true) }, t('Turn on auto-send')) : null,
 +    items.map(item => h('div', { key: item.id, className: 'bt-set-row' },
 +      h('span', { className: 'bt-set-copy' }, item.text || item.summary || item.to || t('Outbound reply')),
-+      h('button', { type: 'button', className: 'bt-mini', disabled: busy === item.id, onClick: () => decide(item, 'approve') }, t('Approve')),
-+      h('button', { type: 'button', className: 'bt-mini', disabled: busy === item.id, onClick: () => decide(item, 'reject') }, t('Reject')))))
++      h('button', { type: 'button', className: 'bt-mini', disabled: busy === item.id || busy === 'auto', onClick: () => decide(item, 'approve') }, t('Approve')),
++      h('button', { type: 'button', className: 'bt-mini', disabled: busy === item.id || busy === 'auto', onClick: () => decide(item, 'reject') }, t('Reject')),
++      face && !autoSend ? h('button', { type: 'button', className: 'bt-mini', 'data-flybot': 'face-approve-auto', disabled: busy === item.id || busy === 'auto', onClick: () => approveAndAuto(item) }, t('Approve and always auto-send in this room')) : null)))
 +}
 +
  function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) {
@@ -145,7 +167,7 @@ index b051eb8d08eeff078f3e7da15d36322f262edf13..4138065e40a60accee4bb79d8214fd4e
          const entry = entries.find(item => item.id === member.id)
          return h('div', { key: member.id, role: 'listitem' },
            h('div', { className: 'bt-member' },
-@@ -131,7 +197,7 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings })
+@@ -131,7 +219,7 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings })
                h('span', null, member.name)),
              room.admin === member.id ? h('span', { className: 'bt-chip bt-chip-admin' }, t('Admin')) : null),
            entry ? h(MemberWork, { entry, bot: member, room, roster, actions, now }) : null)

@@ -63,7 +63,7 @@ window.__ModuleLoader__.load({
 .fs-name{font-size:14px;line-height:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fs-sub{font-size:12px;line-height:16px;color:var(--bt-ink-2,rgba(20,20,20,.6));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fs-msg{white-space:normal;overflow-wrap:anywhere}
-.fs-actions{flex:none;display:flex;gap:4px}
+.fs-actions{flex:none;display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:100%}
 .fs-card{margin:4px 4px 2px;padding:10px;border:1px solid var(--bt-line,rgba(20,20,20,.08));border-radius:10px;background:var(--bt-card,#fff);display:flex;flex-direction:column;gap:8px}
 .fs-card .fs-hint{padding:0}
 .fs-line{display:flex;gap:6px;min-width:0;align-items:center}
@@ -90,6 +90,10 @@ window.__ModuleLoader__.load({
 .fs-face-members{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:2px}
 .fs-face-members li{font-size:13px;line-height:18px;padding:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fs-face-actions{display:flex;gap:6px;flex-wrap:wrap}
+.fs-face-auto-wrap{display:flex;flex-direction:column;gap:2px;padding:2px 0}
+.fs-face-auto{white-space:normal;font-size:13px;line-height:18px;color:var(--bt-ink,#141414);align-items:flex-start}
+.fs-face-auto input{margin-top:2px}
+.fs-face-note{padding:0}
 `
     function useStyles() {
       useEffect(() => {
@@ -102,14 +106,78 @@ window.__ModuleLoader__.load({
     }
     const initial = name => (String(name ?? '?').replace(/^@/, '').trim()[0] ?? '?').toUpperCase()
 
+    const AUTO_SEND_NOTE = 'When this is on, your Bots post in face-to-face rooms without asking each time.'
+
+    function FaceAutoSend({ on, busy, onChange, error } = {}) {
+      return h('div', { className: 'fs-face-auto-wrap', 'data-flybot': 'face-auto-send' },
+        h('label', { className: 'fs-auto fs-face-auto', title: AUTO_SEND_NOTE },
+          h('input', {
+            type: 'checkbox',
+            checked: on === true,
+            disabled: !!busy,
+            'aria-label': "Auto-send my Bot's room messages",
+            onChange: e => onChange?.(e.target.checked),
+          }),
+          "Auto-send my Bot's room messages"),
+        h('div', { className: 'fs-hint fs-face-note' }, AUTO_SEND_NOTE),
+        error ? h('div', { className: 'fs-status', 'data-tone': 'error', role: 'status' }, error) : null)
+    }
+
+    function FaceAutoSendControl() {
+      const [on, setOn] = useState(false)
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState('')
+      useEffect(() => {
+        call('social/status', {}).then(value => setOn(value?.autoApproveFaceRooms === true), () => {})
+      }, [])
+      const toggle = async (next) => {
+        setBusy(true)
+        setError('')
+        try {
+          const result = await call('social/face-auto', { on: next })
+          setOn(result?.autoApproveFaceRooms === true)
+        } catch (e) { setError(errorText(e)) }
+        finally { setBusy(false) }
+      }
+      return h(FaceAutoSend, { on, busy, onChange: toggle, error })
+    }
+
     // Outbound drafts Bot Social is holding: badge + Approve / Reject. Inbound does not wait.
     function PendingApprovals({ items, busy, onDecide }) {
+      const hasFace = items?.some(item => item.kind === 'face_room_message')
+      const [autoSend, setAutoSend] = useState(false)
+      const [autoBusy, setAutoBusy] = useState(false)
+      const [autoError, setAutoError] = useState('')
+      useEffect(() => {
+        if (!hasFace) return undefined
+        call('social/status', {}).then(value => setAutoSend(value?.autoApproveFaceRooms === true), () => {})
+        return undefined
+      }, [hasFace])
       if (!items?.length) return null
+      const setAuto = async (next) => {
+        setAutoBusy(true)
+        setAutoError('')
+        try {
+          const result = await call('social/face-auto', { on: next })
+          const on = result?.autoApproveFaceRooms === true
+          setAutoSend(on)
+          return on
+        } catch (e) {
+          setAutoError(errorText(e))
+          return autoSend
+        } finally { setAutoBusy(false) }
+      }
+      const locked = !!busy || autoBusy
       return h('div', { className: 'fs-pending', 'data-flybot': 'pending-approvals', role: 'region', 'aria-label': 'Messages waiting for your approval' },
         h('div', { className: 'fs-label' }, 'Waiting for your approval', h('span', { className: 'fs-count' }, String(items.length))),
-        h('div', { className: 'fs-hint' }, items.some(item => item.kind === 'face_room_message')
-          ? 'These room messages stay here until you Approve or Reject them. They are not sent until you approve.'
+        h('div', { className: 'fs-hint' }, hasFace
+          ? (autoSend
+            ? 'Auto-send is on: new room messages go out without asking. Drafts already here still need Approve or Reject.'
+            : 'These room messages stay here until you Approve or Reject them. They are not sent until you approve.')
           : 'A friend already sees their own message. These replies stay here until you Approve or Reject them. Turn on Auto-accept for that friend to skip the hold next time.'),
+        hasFace ? h(FaceAutoSend, { on: autoSend, busy: locked, onChange: setAuto, error: autoError }) : null,
+        hasFace && !autoSend ? h('div', { className: 'fs-face-actions' },
+          h('button', { type: 'button', className: 'fs-btn fs-btn-sm', 'data-flybot': 'face-auto-send-on', disabled: locked, onClick: () => setAuto(true) }, 'Turn on auto-send')) : null,
         items.map(item => h('div', { key: item.id, className: 'fs-row', 'data-flybot': 'pending-item' },
           h('span', { className: 'fs-avatar', 'aria-hidden': true }, initial(item.from ?? item.toName ?? item.to)),
           h('span', { className: 'fs-text' },
@@ -117,8 +185,17 @@ window.__ModuleLoader__.load({
             item.text ? h('span', { className: 'fs-draft' }, item.text) : (item.summary ? h('span', { className: 'fs-sub fs-msg' }, item.summary) : null),
             item.attachments?.length ? h('span', { className: 'fs-sub' }, item.attachments.map(file => file.name).join(', ')) : null),
           h('span', { className: 'fs-actions' },
-            h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: busy === item.id, onClick: () => onDecide(item, 'approve') }, 'Approve'),
-            h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: busy === item.id, onClick: () => onDecide(item, 'reject') }, 'Reject')))))
+            h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: busy === item.id || autoBusy, onClick: () => onDecide(item, 'approve') }, 'Approve'),
+            h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: busy === item.id || autoBusy, onClick: () => onDecide(item, 'reject') }, 'Reject'),
+            hasFace && item.kind === 'face_room_message' && !autoSend
+              ? h('button', {
+                type: 'button',
+                className: 'fs-btn fs-btn-sm',
+                'data-flybot': 'face-approve-auto',
+                disabled: busy === item.id || autoBusy,
+                onClick: async () => { await setAuto(true); onDecide(item, 'approve') },
+              }, 'Approve and always auto-send in this room')
+              : null))))
     }
 
     // Friends' Bots grouped by their home (one collapsible group each). Each Bot is drawn by
@@ -174,7 +251,7 @@ window.__ModuleLoader__.load({
           status ? h('div', { className: 'fs-status', role: 'status', 'data-tone': status.tone }, status.text) : null) : null)
     }
 
-    function FaceRoomCard({ room, actions, onChange }) {
+    function FaceRoomCard({ room, actions, onChange, autoSend, autoBusy, autoError, onAutoSend }) {
       const [busy, setBusy] = useState('')
       const [note, setNote] = useState(null)
       const run = async (label, fn) => {
@@ -193,6 +270,7 @@ window.__ModuleLoader__.load({
         candidate && room.expiresAt ? h('div', { className: 'fs-sub' }, countdown(room.expiresAt)) : h('div', { className: 'fs-sub' }, 'The number is no longer valid.'),
         h('ul', { className: 'fs-face-members', 'aria-label': 'Members' },
           members.map(m => h('li', { key: m.handle || m.id }, m.label || m.displayName || m.handle))),
+        h(FaceAutoSend, { on: autoSend, busy: autoBusy, onChange: onAutoSend, error: autoError }),
         h('div', { className: 'fs-face-actions' },
           h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => { if (room.roomId) actions?.openSession?.(room.roomId) } }, 'Open'),
           candidate ? h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('start', () => call('social/face-start', { roomId: room.roomId, faceRoomId: room.faceRoomId })) }, 'Start chat') : null,
@@ -213,7 +291,13 @@ window.__ModuleLoader__.load({
 
     function FaceRooms({ actions } = {}) {
       const [rooms, setRooms] = useState([])
-      const load = () => call('social/face-rooms', {}).then(value => setRooms(Array.isArray(value?.rooms) ? value.rooms : []), () => {})
+      const [autoSend, setAutoSend] = useState(false)
+      const [autoBusy, setAutoBusy] = useState(false)
+      const [autoError, setAutoError] = useState('')
+      const load = () => call('social/face-rooms', {}).then(value => {
+        setRooms(Array.isArray(value?.rooms) ? value.rooms : [])
+        if (typeof value?.autoApproveFaceRooms === 'boolean') setAutoSend(value.autoApproveFaceRooms)
+      }, () => {})
       useEffect(() => {
         load()
         if (typeof setInterval !== 'function') return undefined
@@ -221,10 +305,22 @@ window.__ModuleLoader__.load({
         timer?.unref?.()
         return () => clearInterval(timer)
       }, [])
+      const toggle = async (next) => {
+        setAutoBusy(true)
+        setAutoError('')
+        try {
+          const result = await call('social/face-auto', { on: next })
+          setAutoSend(result?.autoApproveFaceRooms === true)
+        } catch (e) { setAutoError(errorText(e)) }
+        finally { setAutoBusy(false) }
+      }
       if (!rooms.length) return null
       return h('div', { 'data-flybot': 'face-rooms' },
         h('div', { className: 'fs-label' }, 'Face-to-face rooms'),
-        rooms.map(room => h(FaceRoomCard, { key: room.faceRoomId || room.roomId, room, actions, onChange: load })))
+        rooms.map(room => h(FaceRoomCard, {
+          key: room.faceRoomId || room.roomId, room, actions, onChange: load,
+          autoSend, autoBusy, autoError, onAutoSend: toggle,
+        })))
     }
 
     function FaceRoomOverview({ room } = {}) {
@@ -251,6 +347,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'fs-hint', 'data-tick': tick }, candidate
           ? (face?.expiresAt ? countdown(face.expiresAt) : 'Matching window open. Anyone with the number can still join.')
           : 'This room is open. The number is no longer valid.'),
+        h(FaceAutoSendControl),
         h('div', { className: 'fs-face-actions' },
           candidate ? h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('start', () => call('social/face-start', { roomId: room.id, faceRoomId: face?.roomId })) }, 'Start chat') : null,
           h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('leave', () => call('social/face-leave', { roomId: room.id, faceRoomId: face?.roomId })) }, 'Leave')),
@@ -481,6 +578,7 @@ window.__ModuleLoader__.load({
       PendingApprovals,
       JoinWithNumber,
       FaceRoomOverview,
+      FaceAutoSend,
       apply(ctx) {
         let offs = []
         let tries = 0
