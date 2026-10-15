@@ -36,9 +36,11 @@
     "src/client/context-menu.js",
     "src/client/at-menu.js",
     "src/client/bot-settings.js",
+    "src/client/user-message.js",
     "src/client/styles.js",
     "src/client/icons.js",
     "test/flybot-client.test.js",
+    "test/mention-rule.test.js",
     "test/bot-tree.test.js"
   ],
   "0004-flybot-api-types": [

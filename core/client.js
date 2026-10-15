@@ -1765,6 +1765,19 @@ function mentionTarget(event) {
   const anchor = event.target instanceof Element ? event.target.closest(`a[href^="${MENTION_ORIGIN}"]`) : null;
   return anchor ? anchor.getAttribute("href").slice(MENTION_ORIGIN.length) : null;
 }
+function nameMentions(text, roster) {
+  const value = String(text ?? "");
+  if (!value.includes("@") || roster === null || typeof roster !== "object") return value;
+  const names = /* @__PURE__ */ new Map();
+  for (const record of [...Array.isArray(roster.remoteBots) ? roster.remoteBots : [], ...Array.isArray(roster.bots) ? roster.bots : []]) {
+    const handle = typeof record?.remote === "object" && record.remote !== null ? record.remote.handle : record?.handle;
+    if (typeof handle === "string" && typeof record?.name === "string" && record.name !== "") names.set(handle.replace(/^@+/, "").toLowerCase(), record.name);
+  }
+  const handles = [...names.keys()].filter(Boolean).sort((a, b) => b.length - a.length);
+  if (handles.length === 0) return value;
+  const source = handles.map((handle) => handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  return value.replace(new RegExp(`(^|[^a-z0-9_./])@(${source})(?![a-z0-9_\\-/\\\\])(?!\\.[a-z0-9_-])`, "gi"), (_all, before, handle) => `${before}@${names.get(handle.toLowerCase())}`);
+}
 function clock(ms) {
   return new Date(ms).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" });
 }
@@ -5138,7 +5151,7 @@ var workLine = (lead, tool, more) => (0, import_react9.createElement)(Shimmer, n
 function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked, asRow = false }) {
   const id = bot.id;
   const part = currentPart(bot);
-  const preview = useSessions((list) => previewOf(list, part, roster.exchangeTurns[part]));
+  const preview = useSessions((list) => nameMentions(previewOf(list, part, roster.exchangeTurns[part]), roster));
   const running = useSessionStatus((map) => map.get(part)?.running === true);
   const active = useSessionRetainInfo(part, (info) => (info?.retainedBy?.mainView ?? 0) > 0);
   const unread = useSessionStatus((map) => map.get(part)?.completionUnread === true || map.get(part)?.pendingInteraction !== void 0) || marked && !active;
@@ -5214,8 +5227,8 @@ function RemoteMark({ remote }) {
 }
 function RoomRow({ room: room2, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, wide, marked }) {
   const id = room2.id;
-  const fallback = useSessions((list) => previewOf(list, id));
-  const preview = room2.preview?.replace(/\s+/g, " ").trim() || fallback;
+  const fallback = useSessions((list) => nameMentions(previewOf(list, id), roster));
+  const preview = nameMentions(room2.preview?.replace(/\s+/g, " ").trim(), roster) || fallback;
   const active = useSessionRetainInfo(id, (info) => (info?.retainedBy?.mainView ?? 0) > 0);
   const unread = useSessionStatus((map) => map.get(id)?.completionUnread === true) || marked && !active;
   useMarkedUnread(id, active, marked, actions);
@@ -13559,8 +13572,8 @@ function contentParts(content) {
 }
 function mentionableBots(roster, sessionId) {
   const room2 = roster.roomsById[sessionId];
-  if (room2) return room2.members.map((id) => roster.byId[id]).filter(Boolean);
-  return roster.byId[sessionId] ? roster.bots : [];
+  const bots = room2 ? room2.members.map((id) => roster.byId[id]).filter(Boolean) : roster.byId[sessionId] ? roster.bots : [];
+  return bots.concat(bots.filter((bot) => typeof bot?.remote?.handle === "string").map((bot) => ({ ...bot, name: bot.remote.handle.replace(/^@+/, ""), mentionLabel: bot.name })));
 }
 function userTextParts(text, bots, referenceLabels = []) {
   const parts = [];
@@ -13579,7 +13592,7 @@ function UserText({ text, bots, referenceLabels, skillNames, references, actions
     "button",
     { key: index, type: "button", className: "bt-umention", title: `@${part.bot.name}`, onClick: () => actions.openSession(part.bot.id) },
     (0, import_react35.createElement)(BotMark, { bot: part.bot, size: 16 }),
-    part.label
+    part.bot.mentionLabel ?? part.label
   ) : (0, import_react35.createElement)(import_react35.Fragment, { key: index }, ui.projectUserText(part.text, referenceLabels, skillNames, "skill", references)));
 }
 function Attachments({ attachments, renderMessageImages }) {

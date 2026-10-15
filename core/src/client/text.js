@@ -25,6 +25,25 @@ export function mentionTarget(event) {
   return anchor ? anchor.getAttribute('href').slice(MENTION_ORIGIN.length) : null
 }
 
+// A friend's remote Bot is stored and delivered by its handle ("@bot-x.home": what the
+// @ menu inserts, what the host matches); the user reads its display name. Previews
+// rewrite the handle from the local roster, never from the text, so a remote name
+// reaches the UI only through the sanitized roster record. One pass over the text: a
+// name that itself contains a handle is never rescanned.
+export function nameMentions(text, roster) {
+  const value = String(text ?? '')
+  if (!value.includes('@') || roster === null || typeof roster !== 'object') return value
+  const names = new Map()
+  for (const record of [...(Array.isArray(roster.remoteBots) ? roster.remoteBots : []), ...(Array.isArray(roster.bots) ? roster.bots : [])]) {
+    const handle = typeof record?.remote === 'object' && record.remote !== null ? record.remote.handle : record?.handle
+    if (typeof handle === 'string' && typeof record?.name === 'string' && record.name !== '') names.set(handle.replace(/^@+/, '').toLowerCase(), record.name)
+  }
+  const handles = [...names.keys()].filter(Boolean).sort((a, b) => b.length - a.length)
+  if (handles.length === 0) return value
+  const source = handles.map(handle => handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  return value.replace(new RegExp(`(^|[^a-z0-9_./])@(${source})(?![a-z0-9_\\-/\\\\])(?!\\.[a-z0-9_-])`, 'gi'), (_all, before, handle) => `${before}@${names.get(handle.toLowerCase())}`)
+}
+
 function clock(ms) {
   return new Date(ms).toLocaleTimeString(dateLocale(), { hour: 'numeric', minute: '2-digit' })
 }

@@ -28,10 +28,15 @@ export function contentParts(content) {
 }
 
 // In a group only its members are called; elsewhere a mention opens that Bot's chat.
+// A friend's remote Bot is also called by its handle — the @ menu inserts "@<handle>"
+// and the host delivers on it — so the handle joins as a second name of the same Bot,
+// and the chip reads the display name (mentionLabel) from the roster.
 export function mentionableBots(roster, sessionId) {
   const room = roster.roomsById[sessionId]
-  if (room) return room.members.map(id => roster.byId[id]).filter(Boolean)
-  return roster.byId[sessionId] ? roster.bots : []
+  const bots = room ? room.members.map(id => roster.byId[id]).filter(Boolean)
+    : roster.byId[sessionId] ? roster.bots : []
+  return bots.concat(bots.filter(bot => typeof bot?.remote?.handle === 'string')
+    .map(bot => ({ ...bot, name: bot.remote.handle.replace(/^@+/, ''), mentionLabel: bot.name })))
 }
 
 // Runs of plain text and Bot mentions, in order.
@@ -51,7 +56,7 @@ export function userTextParts(text, bots, referenceLabels = []) {
 function UserText({ text, bots, referenceLabels, skillNames, references, actions }) {
   return userTextParts(text, bots, referenceLabels).map((part, index) => (part.bot
     ? h('button', { key: index, type: 'button', className: 'bt-umention', title: `@${part.bot.name}`, onClick: () => actions.openSession(part.bot.id) },
-      h(BotMark, { bot: part.bot, size: 16 }), part.label)
+      h(BotMark, { bot: part.bot, size: 16 }), part.bot.mentionLabel ?? part.label)
     : h(Fragment, { key: index }, ui.projectUserText(part.text, referenceLabels, skillNames, 'skill', references))))
 }
 

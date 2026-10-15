@@ -7,7 +7,7 @@ import { build } from 'esbuild'
 // The inbound friend conversation's display: trace lines, the thinking row, the remote speaker.
 const { outputFiles } = await build({
   stdin: {
-    contents: "export { stripTrace, previewOf } from './src/client/text.js'\nexport { remoteSpeaker } from './src/client/cells.js'",
+    contents: "export { stripTrace, previewOf, nameMentions } from './src/client/text.js'\nexport { remoteSpeaker } from './src/client/cells.js'",
     resolveDir: fileURLToPath(new URL('..', import.meta.url)),
   },
   bundle: true, format: 'cjs', platform: 'browser', write: false, logLevel: 'silent',
@@ -25,7 +25,7 @@ runInNewContext(outputFiles[0].text, {
     throw new Error(`Unexpected platform module ${name}`)
   },
 })
-const { stripTrace, previewOf, remoteSpeaker } = module.exports
+const { stripTrace, previewOf, nameMentions, remoteSpeaker } = module.exports
 
 test('a reply opening with a delegation trace shows without it', () => {
   assert.equal(stripTrace('Chief → 助手\n\nHi Chief! Good to hear from you.'), 'Hi Chief! Good to hear from you.')
@@ -61,4 +61,23 @@ test("an inbound friend's message uses the friend's sidebar Bot (avatar, name), 
   assert.equal(other.name, 'X')
   assert.notEqual(other.bot.color, 'gray')
   assert.equal(other.chatId, undefined)
+})
+
+test("a friend Bot's handle in a preview reads as its display name (#71)", () => {
+  const roster = { bots: [{ id: 'f', name: '代码审查官', remote: { handle: '@bot-2a758c0f.danyang.home' } }], remoteBots: [{ handle: '@bot-2a758c0f.danyang.home', name: '代码审查官' }] }
+  assert.equal(nameMentions('@bot-2a758c0f.danyang.home 你是?', roster), '@代码审查官 你是?')
+  assert.equal(nameMentions('看 @bot-2a758c0f.danyang.home。', roster), '看 @代码审查官。')
+  // An address before the @, or a longer word after the handle, stays as written.
+  assert.equal(nameMentions('mail a@bot-2a758c0f.danyang.home', roster), 'mail a@bot-2a758c0f.danyang.home')
+  assert.equal(nameMentions('@bot-2a758c0f.danyang.home2 不在', roster), '@bot-2a758c0f.danyang.home2 不在')
+  // Unknown handles, missing rosters, and non-string input pass through.
+  assert.equal(nameMentions('@bot-x.home 你在?', roster), '@bot-x.home 你在?')
+  assert.equal(nameMentions('@bot-2a758c0f.danyang.home', undefined), '@bot-2a758c0f.danyang.home')
+  assert.equal(nameMentions(undefined, roster), '')
+  // One pass: a name that itself contains another handle is not rescanned.
+  const nested = { bots: [], remoteBots: [
+    { handle: '@b.x.home', name: '请找 @a.x.home 的主人' },
+    { handle: '@a.x.home', name: '代码审查官' },
+  ] }
+  assert.equal(nameMentions('@b.x.home 你在?', nested), '@请找 @a.x.home 的主人 你在?')
 })
