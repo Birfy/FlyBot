@@ -433,7 +433,7 @@ test('add friend from the UI: invite link, join by link, and answer requests (ow
   assert.notEqual(made.bot_id, 'h1') // the member, never the home
   assert.deepEqual([made.max_uses, made.auto_accept, made.offered_capabilities], [1, true, ['chat.public']])
   assert.deepEqual([invite.botId, invite.botName, invite.handle, invite.home, invite.link, invite.url, invite.code, invite.expiresAt], ['a', 'Chief', '@chief.danyang.home', '@danyang.home', 'https://s/i/INV123', 'https://s/i/INV123', 'INV123', '2026-10-21T00:00:00Z'])
-  assert.match(invite.text, /^Add my bot @chief\.danyang\.home \(Chief\) from my FlyBot home @danyang\.home\. In FlyBot: open Friends' Bots, click \+ Add, paste this link and click Join\. Using a Grok bot\? Send it this link and say 'join this FlyBot invite'\. Link: https:\/\/s\/i\/INV123 \(single use, expires Oct 2\d, 2026/)
+  assert.match(invite.text, /^Add my bot @chief\.danyang\.home \(Chief\) from my FlyBot home @danyang\.home\. In FlyBot: open the \+ menu, choose Add friend, paste this link and click Join\. Using a Grok bot\? Send it this link and say 'join this FlyBot invite'\. Link: https:\/\/s\/i\/INV123 \(single use, expires Oct 2\d, 2026/)
   // The same call under the name the tree sidebar uses, and the status the browser reads.
   assert.equal((await call('flybot/social.createInvite', { botId: 'b' })).value.handle, '@writer.danyang.home')
   const status = (await call('flybot/social/status', {})).value
@@ -493,7 +493,7 @@ test('client.js registers a sidebar section and @ rows into the FlyBot registry'
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
   const plugin = registered[0].factory(() => ({ createElement: () => null, useEffect() {}, useState: v => [v, () => {}] }))
   plugin.apply({})
-  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.new-chat.action#social-face-group', 'flybot.composer.mention#social', 'flybot.bot.details#social-invite', 'flybot.room.overview#social-face', 'flybot.session.dock#social-approval'])
+  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.new-chat.action#social-face-group', 'flybot.new-chat.action#social-add-friend', 'flybot.new-chat.action#social-friend-requests', 'flybot.composer.mention#social', 'flybot.bot.details#social-invite', 'flybot.room.overview#social-face', 'flybot.session.dock#social-approval'])
   // Transport errors are worded in English from their code, never the localized host text.
   assert.match(plugin.errorText(Object.assign(new Error('请求失败（HTTP 404）'), { code: 'HTTP_404' })), /^The FlyBot host did not answer \(HTTP 404\)/)
   assert.equal(plugin.errorText(Object.assign(new Error('x'), { code: 'bot/refused' })), 'x')
@@ -969,14 +969,12 @@ test('approvalView: outbound draft text is sanitized, friend requests stay out',
   assert.equal(draftText('a\n\nb'), 'a b')
 })
 
-test('Friends\' Bots (#69): a pending approval shows a badge and Approve / Reject', () => {
+test('Friends\' Bots (#69): a pending approval shows a badge and a one-line jump row', () => {
   const registered = []
   const entries = []
-  const decided = []
   const flybot = {
     slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } },
-    call: async (endpoint, payload) => {
-      if (endpoint === 'social/decide-approval') { decided.push(payload); return { approvalId: payload.approvalId, status: 'approved' } }
+    call: async (endpoint) => {
       if (endpoint === 'social/status') return { connected: true, pendingApprovals: 1, approvals: [{ id: 'apr-hold-1', kind: 'outbound_message', from: '代码审查官', to: '@hsliu.bot', toName: 'hsliu', text: 'I can review that' }] }
       if (endpoint === 'social/remote-bots') return { homes: [{ home: '@hsliu.home', name: 'hsliu', bots: [{ handle: '@hsliu.bot', name: 'hsliu' }] }] }
       if (endpoint === 'social/settings') return { autoAccept: {} }
@@ -1005,18 +1003,19 @@ test('Friends\' Bots (#69): a pending approval shows a badge and Approve / Rejec
   walk(tree)
   assert.ok(all.some(n => n.props['data-flybot'] === 'pending-badge' && n.children.includes('1 to approve')))
   assert.ok(all.some(n => n.props['data-flybot'] === 'pending-approvals'))
-  assert.ok(all.some(n => n.props.className === 'fs-draft' && n.children.includes('I can review that')))
-  const approve = all.find(n => n.type === 'button' && n.children.includes('Approve'))
-  const reject = all.find(n => n.type === 'button' && n.children.includes('Reject'))
-  assert.ok(approve && reject)
-  // Direct card: the same affordance when status reports pending approvals.
-  const card = plugin.PendingApprovals({ items: pending, busy: '', onDecide: (item, decision) => decided.push([item.id, decision]) })
-  const buttons = []
-  const walkCard = node => { if (node && typeof node === 'object') { buttons.push(node); (node.children ?? []).forEach(walkCard) } }
+  assert.ok(all.some(n => n.props.className === 'fs-pending-one' && n.children.includes('I can review that')))
+  assert.equal(all.some(n => n.type === 'button' && n.children.includes('Approve')), false)
+  const opened = []
+  const card = plugin.PendingApprovals({ items: pending, onOpen: item => opened.push(item.id) })
+  const rows = []
+  const walkCard = node => { if (node && typeof node === 'object') { rows.push(node); (node.children ?? []).forEach(walkCard) } }
   walkCard(card)
-  buttons.find(n => n.type === 'button' && n.children.includes('Approve')).props.onClick()
-  buttons.find(n => n.type === 'button' && n.children.includes('Reject')).props.onClick()
-  assert.deepEqual(decided, [['apr-hold-1', 'approve'], ['apr-hold-1', 'reject']])
+  const jump = rows.find(n => n.props['data-flybot'] === 'pending-item')
+  assert.ok(jump)
+  jump.props.onClick()
+  assert.deepEqual(opened, ['apr-hold-1'])
+  assert.match(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), /\.fs-pending-one\{[^}]*white-space:nowrap/)
+  assert.match(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), /\.fs-pending-item \.fs-text\{[^}]*flex-direction:row/)
 })
 
 test('Friends\' Bots (#68): a start failure is an idle state, never Unknown FlyBot endpoint', () => {
@@ -1301,7 +1300,7 @@ test('mapPool runs work concurrently up to the cap', async () => {
   assert.equal(max, 2)
 })
 
-test('Friends\' Bots (#92): Face-to-face group is under + Add; the inline join form is gone', () => {
+test('Friends\' Bots header has no + Add; Add friend and Face-to-face group live on the sidebar + menu', () => {
   const sidebar = (adding) => {
     const { entries, walk, pluginOf } = loadSocialClient(async () => ({ connected: true, bots: [{ id: 'a', name: 'Chief', isMain: true }], homes: [], rooms: [] }))
     const plugin = pluginOf([{ homes: [] }, '', true, adding, {}, {}, '', [], '', false])
@@ -1310,15 +1309,20 @@ test('Friends\' Bots (#92): Face-to-face group is under + Add; the inline join f
     return { nodes: walk(entry[1].component({})), entries }
   }
   const closed = sidebar(false)
+  assert.equal(closed.nodes.some(n => n.type === 'button' && n.children.includes('+ Add')), false)
   assert.equal(closed.nodes.some(n => n.type === 'button' && n.children.includes('Join with a number')), false)
   assert.equal(closed.nodes.some(n => n.props['data-flybot'] === 'face-join' || n.props['data-flybot'] === 'face-group-entry'), false)
   assert.ok(closed.entries.some(([slot, entry]) => slot === 'flybot.room.overview' && entry.id === 'social-face'))
+  assert.ok(closed.entries.some(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-face-group'))
+  assert.ok(closed.entries.some(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-add-friend'))
+  assert.ok(closed.entries.some(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-friend-requests'))
 
   const opened = sidebar(true)
-  assert.ok(opened.nodes.some(n => n.props['data-flybot'] === 'face-group-entry'))
-  assert.ok(opened.nodes.some(n => n.type === 'button' && n.props['data-flybot'] === 'face-group-open' && n.children.includes('Face-to-face group')))
+  assert.ok(opened.nodes.some(n => n.props['data-flybot'] === 'add-friend'))
+  assert.ok(opened.nodes.some(n => n.type === 'button' && n.children.includes('Join')))
+  assert.equal(opened.nodes.some(n => n.props['data-flybot'] === 'face-group-entry'), false)
+  assert.equal(opened.nodes.some(n => n.type === 'button' && n.children.includes('+ Add')), false)
   assert.equal(opened.nodes.some(n => n.type === 'button' && n.children.includes('Join with a number')), false)
-  assert.equal(opened.nodes.some(n => n.props['data-flybot'] === 'face-join'), false)
 
   const loading = (() => {
     const { entries, walk, pluginOf } = loadSocialClient(async () => ({ connected: true, bots: [], homes: [], rooms: [] }))
@@ -1327,8 +1331,8 @@ test('Friends\' Bots (#92): Face-to-face group is under + Add; the inline join f
     const entry = entries.find(([slot]) => slot === 'flybot.sidebar.section')
     return walk(entry[1].component({}))
   })()
-  assert.ok(loading.some(n => n.props['data-flybot'] === 'face-group-entry'), 'Face-to-face group must show while the roster is still loading')
-  assert.ok(loading.some(n => n.type === 'button' && n.children.includes('+ Add') || n.children.includes('Done')))
+  assert.ok(loading.some(n => n.props['data-flybot'] === 'add-friend'), 'Add friend must show while the roster is still loading')
+  assert.equal(loading.some(n => n.type === 'button' && n.children.includes('+ Add')), false)
   assert.equal(loading.some(n => n.type === 'div' && n.children.includes('Loading…')), false)
 })
 
@@ -1380,6 +1384,51 @@ test('the sidebar + menu gets a Face-to-face group action from social', () => {
   assert.match(row[1].hint, /6-digit/)
   assert.equal(row[1].order, 15)
   assert.equal(typeof row[1].run, 'function')
+})
+
+test('sidebar + Add friend opens the join panel in Friends\' Bots; header stays without + Add', () => {
+  const { registered, entries, walk, sandbox } = loadSocialClient(async (endpoint) => {
+    if (endpoint === 'social/remote-bots') return { homes: [] }
+    if (endpoint === 'social/settings') return { autoAccept: {} }
+    if (endpoint === 'social/status') return { connected: true, bots: [{ id: 'a', name: 'Chief', isMain: true }], approvals: [] }
+    if (endpoint === 'social/overview') return { incoming: [], outgoing: [] }
+    if (endpoint === 'social/face-rooms') return { rooms: [] }
+    return {}
+  })
+  const hooks = []
+  let hookI = 0
+  const plugin = registered[0].factory(() => ({
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() }),
+    Fragment: 'F',
+    useEffect: fn => { fn?.() },
+    useState: (init) => {
+      const i = hookI++
+      if (hooks[i] === undefined) hooks[i] = typeof init === 'function' ? init() : init
+      return [hooks[i], (value) => { hooks[i] = typeof value === 'function' ? value(hooks[i]) : value }]
+    },
+    useRef: v => ({ current: v }),
+    useMemo: f => f(),
+  }))
+  plugin.apply({})
+  const section = entries.find(([slot]) => slot === 'flybot.sidebar.section')[1]
+  hookI = 0
+  const before = walk(section.component({}))
+  assert.equal(before.some(n => n.type === 'button' && n.children.includes('+ Add')), false)
+  assert.equal(before.some(n => n.props['data-flybot'] === 'add-friend'), false)
+  const add = entries.find(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-add-friend')
+  assert.equal(add[1].label, 'Add friend')
+  assert.equal(add[1].order, 16)
+  const closed = []
+  add[1].run({ close: () => closed.push(true) })
+  assert.deepEqual(closed, [true])
+  hookI = 0
+  const after = walk(section.component({}))
+  assert.ok(after.some(n => n.props['data-flybot'] === 'add-friend'))
+  assert.ok(after.some(n => n.type === 'button' && n.children.includes('Join')))
+  assert.equal(after.some(n => n.type === 'button' && n.children.includes('+ Add')), false)
+  const requests = entries.find(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-friend-requests')
+  assert.equal(requests[1].label, 'Friend requests')
+  assert.equal(typeof sandbox.__flybot__.social.openAddFriend, 'function')
 })
 
 test('face-to-face auto-send uses MCP whoami / set_auto_approve and ignores REST 403 /v1/me', async (t) => {
@@ -1465,8 +1514,9 @@ test('Friends\' Bots (#83): auto-send toggle in the room header and pending-appr
   assert.ok(header.some(n => n.props['data-flybot'] === 'face-overview'))
   const auto = header.find(n => n.props['data-flybot'] === 'face-auto-send')
   assert.ok(auto)
-  assert.ok(header.some(n => n.type === 'label' && n.children.includes("Auto-send my Bot's room messages")))
-  assert.ok(header.some(n => typeof n.children?.[0] === 'string' && /without asking each time/.test(n.children[0])))
+  assert.ok(header.some(n => n.type === 'label' && n.children.includes('Auto-send')))
+  assert.ok(header.some(n => n.props.title && /without asking each time/.test(n.props.title)))
+  assert.equal(header.some(n => n.type === 'button' && n.children.includes('Turn on auto-send')), false)
   const box = header.find(n => n.type === 'input' && n.props.type === 'checkbox')
   assert.equal(box.props.checked, false)
   await box.props.onChange({ target: { checked: true } })
@@ -1478,19 +1528,14 @@ test('Friends\' Bots (#83): auto-send toggle in the room header and pending-appr
 
   const card = plugin.PendingApprovals({
     items: [{ id: 'apr-face-1', kind: 'face_room_message', from: 'Chief', toName: 'the room', text: 'hello there' }],
-    busy: '',
-    onDecide: (item, decision) => decided.push([item.id, decision]),
+    onOpen: (item) => decided.push([item.id, 'open']),
   })
   const pending = walk(card)
-  assert.ok(pending.some(n => n.props['data-flybot'] === 'face-auto-send'))
-  const turnOn = pending.find(n => n.type === 'button' && n.children.includes('Turn on auto-send'))
-  const always = pending.find(n => n.type === 'button' && n.children.includes('Approve and always auto-send in this room'))
-  assert.ok(turnOn && always)
-  await turnOn.props.onClick()
-  assert.equal(toggled.at(-1).on, true)
-  await always.props.onClick()
-  assert.equal(toggled.at(-1).on, true)
-  assert.deepEqual(decided, [['apr-face-1', 'approve']])
+  assert.equal(pending.some(n => n.props['data-flybot'] === 'face-auto-send'), false)
+  const jump = pending.find(n => n.props['data-flybot'] === 'pending-item')
+  assert.ok(jump)
+  jump.props.onClick()
+  assert.deepEqual(decided, [['apr-face-1', 'open']])
 })
 
 test('Face-to-face room card members use host avatars, not a shared letter badge', () => {
@@ -1526,6 +1571,81 @@ test('Face-to-face room card members use host avatars, not a shared letter badge
   assert.equal(friendChat.props['data-image'], 'https://example.test/coder.png')
   assert.ok(friendSeed, "a friend's Bot without a chat still gets a handle-seeded avatar")
   assert.equal(tree.filter(n => n.props.className === 'fs-avatar' && n.props['data-flybot'] === undefined).length, 0)
+})
+
+test('Face-to-face room card is one compact row with a status chip and no invalid-number line', () => {
+  const { walk, pluginOf } = loadSocialClient(async () => ({}))
+  const plugin = pluginOf([])
+  const tree = walk(plugin.FaceRoomCard({
+    room: {
+      name: 'Kitchen', status: 'open', roomId: 'g1',
+      members: [
+        { id: 'a', handle: '@a.me.home', displayName: 'Chief', remote: false },
+        { handle: '@coder.bob.home', displayName: 'Coder', remote: true },
+        { handle: '@bot.friend.home', displayName: '助手', remote: true },
+        { handle: '@extra.friend.home', displayName: 'Extra', remote: true },
+      ],
+    },
+    actions: { openSession() {} },
+  }))
+  assert.ok(tree.some(n => n.props['data-flybot'] === 'face-room' && n.props.className === 'fs-face-row'))
+  assert.ok(tree.some(n => n.props['data-flybot'] === 'face-status' && n.children.includes('open')))
+  assert.ok(tree.some(n => n.props.className === 'fs-stack-more' && n.children.includes('+1')))
+  assert.ok(tree.some(n => n.type === 'button' && n.children.includes('Open')))
+  assert.ok(tree.some(n => n.type === 'button' && n.children.includes('Leave')))
+  assert.equal(tree.some(n => typeof n.children?.[0] === 'string' && /no longer valid/.test(n.children[0])), false)
+  assert.equal(tree.some(n => n.props['data-flybot'] === 'face-auto-send'), false)
+  assert.match(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), /\.fs-face-row\{[^}]*align-items:center/)
+})
+
+test('Face-to-face past rooms sit under a Past rooms fold; Auto-send is once in the header', () => {
+  const { walk, pluginOf } = loadSocialClient(async () => ({}))
+  const rooms = [
+    { faceRoomId: 'frm_live', roomId: 'g1', name: 'Kitchen', status: 'open', members: [{ handle: '@a', displayName: 'A' }] },
+    { faceRoomId: 'frm_old', roomId: 'g2', name: 'Hall', status: 'closed', members: [] },
+    { faceRoomId: 'frm_left', roomId: 'g3', name: 'Gone', status: 'left', members: [] },
+  ]
+  const plugin = pluginOf([rooms, false, false, '', false])
+  const closed = walk(plugin.FaceRooms({}))
+  assert.ok(closed.some(n => n.props['data-flybot'] === 'face-auto-send'))
+  assert.equal(closed.filter(n => n.props['data-flybot'] === 'face-auto-send').length, 1)
+  assert.ok(closed.some(n => n.props['data-flybot'] === 'face-past'))
+  assert.ok(closed.some(n => n.children?.includes?.('Past rooms') || (Array.isArray(n.children) && n.children.includes('Past rooms'))))
+  assert.ok(closed.some(n => n.props['data-flybot'] === 'face-room' && n.props['data-status'] === 'open'))
+  assert.equal(closed.some(n => n.props['data-status'] === 'closed' || n.props['data-status'] === 'left'), false)
+  const pluginOpen = pluginOf([rooms, false, false, '', true])
+  const opened = walk(pluginOpen.FaceRooms({}))
+  assert.ok(opened.some(n => n.props['data-status'] === 'closed'))
+  assert.ok(opened.some(n => n.props['data-status'] === 'left'))
+})
+
+test('#114: in-chat dock lists drafts with Approve all; others see a waiting line', () => {
+  const { walk, pluginOf } = loadSocialClient(async (endpoint) => {
+    if (endpoint === 'social/status') {
+      return {
+        approvals: [
+          { id: 'apr-1', from: 'Chief', to: '@hsliu.bot', text: 'one' },
+          { id: 'apr-2', from: 'Chief', to: '@hsliu.bot', text: 'two' },
+        ],
+      }
+    }
+    return {}
+  })
+  const plugin = pluginOf([
+    [
+      { id: 'apr-1', from: 'Chief', to: '@hsliu.bot', text: 'one' },
+      { id: 'apr-2', from: 'Chief', to: '@hsliu.bot', text: 'two' },
+    ],
+    [],
+    '',
+  ])
+  const tree = walk(plugin.ChatApprovalDock({ bot: { remote: { handle: '@hsliu.bot' } } }))
+  assert.ok(tree.some(n => n.props['data-flybot'] === 'approve-all' && n.children.includes('Approve all')))
+  assert.equal(tree.filter(n => n.props['data-flybot'] === 'chat-approval').length, 2)
+  assert.ok(tree.some(n => n.props.className === 'fs-draft' && n.children.includes('one')))
+  const waiting = walk(plugin.ChatApprovalDock({ room: { pendingCount: 2 } }))
+  assert.ok(waiting.some(n => n.props['data-role'] === 'other'))
+  assert.ok(waiting.some(n => n.children?.includes?.(WAITING_OTHERS) || (Array.isArray(n.children) && n.children.includes(WAITING_OTHERS))))
 })
 
 test('Bot settings: Manage access lists grants and revokes one', async () => {
@@ -2282,7 +2402,7 @@ test('#90: Friends\' Bots has Remove this Bot; ChatApproval is owner-only', () =
   assert.match(src, /\.fs-row-wrap:focus-within \.fs-remove/)
   assert.match(src, /\.fs-remove\{[^}]*width:20px/)
   remove.props.onClick({ stopPropagation() {} })
-  const owner = plugin.ChatApproval({ item: pending[0], canDecide: true, onDecide: (item, decision) => decided.push([item.id, decision]), autoSend: false, onAutoSend() {} })
+  const owner = plugin.ChatApproval({ item: pending[0], canDecide: true, onDecide: (item, decision) => decided.push([item.id, decision]) })
   const other = plugin.ChatApproval({ item: pending[0], canDecide: false })
   const ownerNodes = []
   const otherNodes = []
@@ -2293,11 +2413,16 @@ test('#90: Friends\' Bots has Remove this Bot; ChatApproval is owner-only', () =
   assert.ok(ownerNodes.some(n => n.children?.includes?.(WAITING_OWNER) || (Array.isArray(n.children) && n.children.includes(WAITING_OWNER))))
   assert.ok(ownerNodes.some(n => n.type === 'button' && n.children.includes('Approve')))
   assert.ok(ownerNodes.some(n => n.type === 'button' && n.children.includes('Reject')))
-  assert.ok(ownerNodes.some(n => n.props['data-flybot'] === 'chat-auto-send'))
+  assert.equal(ownerNodes.some(n => n.props['data-flybot'] === 'chat-auto-send'), false)
   assert.ok(otherNodes.some(n => n.children?.includes?.(WAITING_OTHERS) || (Array.isArray(n.children) && n.children.includes(WAITING_OTHERS))))
   assert.equal(otherNodes.some(n => n.type === 'button' && n.children.includes('Approve')), false)
   ownerNodes.find(n => n.type === 'button' && n.children.includes('Reject')).props.onClick()
   assert.deepEqual(decided.at(-1), ['apr-hold-1', 'reject'])
+  const done = plugin.ChatApproval({ item: { ...pending[0], status: 'approved' } })
+  const doneNodes = []
+  collect(done, doneNodes)
+  assert.ok(doneNodes.some(n => n.props['data-state'] === 'approved'))
+  assert.ok(doneNodes.some(n => n.children?.includes?.('Approved') || (Array.isArray(n.children) && n.children.includes('Approved'))))
 })
 
 test('#90: two Remove clicks keep independent pending state', async () => {

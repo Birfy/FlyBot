@@ -244,6 +244,10 @@ export interface FlyBot {
   roomApprovals: {
     setProvider(fn: ((room: { id?: string; participants?: unknown[]; sharedFrom?: unknown; viewerRole?: string; origin?: string; face?: { roomId?: string } }, actor?: { memberId?: string }) => unknown[]) | undefined): void
   }
+  /** Optional: pending Bot Social approvals for a 1:1 friend's-Bot chat. */
+  chatApprovals: {
+    setProvider(fn: ((bot: { id?: string; remote?: { handle?: string } }, actor?: { memberId?: string }) => unknown[]) | undefined): void
+  }
   /** Face-to-face rooms (#83): host a Bot Social matching room as a normal native room. */
   rooms: {
     /** Every hosted room (native, shared, face-to-face). Used to hide a friend's Bot from groups. */
@@ -344,7 +348,7 @@ export type FlyBotCall = (endpoint: string, payload?: unknown) => Promise<any>
  * - `flybot.session.dock`: a card above the composer in a Bot or group chat (held Bot
  *   Social replies waiting for approval).
  * - `flybot.new-chat.action`: a row in the sidebar '+' new-chat menu, next to
- *   Create group chat (e.g. Face-to-face group). `label` / `hint` are English keys
+ *   Create group chat (e.g. Face-to-face group, Add friend). `label` / `hint` are English keys
  *   looked up with the same `t()` map as the neighbouring rows.
  */
 export interface FlyBotSlots {
