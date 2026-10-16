@@ -1209,14 +1209,10 @@ diff --git a/client.js b/client.js
  .bt-think-text{white-space:pre-wrap;margin-top:6px;padding-left:10px;border-left:2px solid var(--bt-line-2)}
  .bt-event{display:flex;justify-content:center;align-items:center;gap:2px;min-height:24px;margin:2px 0;font-size:12px;line-height:16px;color:var(--bt-ink-2);flex-wrap:wrap}
  .bt-event>span{padding:0 2px}
-@@ -2821,260 +2821,142 @@ function compileFragmentSelectors(text, names) {
- function installCompiledStyles(text, tag) {
-   const style = installStyles("", tag);
-   const cache = /* @__PURE__ */ new WeakMap();
--  const render = () => {
--    const names = /* @__PURE__ */ new Set();
--    for (const sheet of document.styleSheets) {
--      if (sheet.ownerNode?.dataset?.dshBot) continue;
+@@ -2825,256 +2825,138 @@ function installCompiledStyles(text, tag) {
+     const names = /* @__PURE__ */ new Set();
+     for (const sheet of document.styleSheets) {
+       if (sheet.ownerNode?.dataset?.dshBot) continue;
 -      let list = cache.get(sheet);
 -      if (!list) {
 -        list = sheetClassNames(sheet);
@@ -1372,10 +1368,6 @@ diff --git a/client.js b/client.js
 -  }
 -  const half = frame / 2;
 -  return [[0, 0, half], [half, 0, half], [0, half, half], [half, half, half]];
-+  const render = () => {
-+    const names = /* @__PURE__ */ new Set();
-+    for (const sheet of document.styleSheets) {
-+      if (sheet.ownerNode?.dataset?.dshBot) continue;
 +      let list = cache.get(sheet);
 +      if (!list) {
 +        list = sheetClassNames(sheet);
@@ -2483,8 +2475,7 @@ diff --git a/client.js b/client.js
        bot.name,
 -      room2?.admin === bot.id ? (0, import_react6.createElement)("span", { className: "bt-group-role" }, t("Admin")) : null
 +      room2?.admin === bot.id ? (0, import_react7.createElement)("span", { className: "bt-group-role" }, t("Admin")) : null
-     ),
--    (0, import_react6.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room2?.id, msgKey, useUi, lead })
++    ),
 +    (0, import_react7.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room2?.id, msgKey, useUi, lead })
 +  );
 +}
@@ -2519,7 +2510,8 @@ diff --git a/client.js b/client.js
 +      { className: "bt-group-name", style: { color: inkText(colorOf(bot)) } },
 +      name,
 +      (0, import_react7.createElement)("span", { className: "bt-remote-handle", title: source.remote.home ?? handle, "aria-label": t("Friend's Bot") }, (0, import_react7.createElement)(GlobeMark), handle)
-+    ),
+     ),
+-    (0, import_react6.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room2?.id, msgKey, useUi, lead })
 +    (0, import_react7.createElement)(Bubbles, { texts: [stripTrace(text)], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead }),
 +    files.length ? (0, import_react7.createElement)(RemoteFiles, { files, plugin: member?.plugin ?? "social", botId: roster.byId[sessionId]?.id ?? sessionId }) : null
 +  );
@@ -2773,7 +2765,7 @@ diff --git a/client.js b/client.js
      actions.noteTurnTime(sessionId, turn, "first", start);
    }, [sessionId, turn, start]);
    const visit = useUi((state) => state.visits?.[sessionId]);
-@@ -4199,7 +4199,7 @@ function TurnProcessCell({ node, sessionId, turnProcess, useRoster, useUi, useTu
+@@ -4199,11 +4199,29 @@ function TurnProcessCell({ node, sessionId, turnProcess, useRoster, useUi, useTu
      const own = state[sessionId]?.[turn];
      return !hidden && typeof visit?.seen === "number" && own?.first !== void 0 && own.first <= visit.seen && own.end !== void 0 && own.end > visit.seen && own.end <= visit.entered;
    });
@@ -2782,6 +2774,28 @@ diff --git a/client.js b/client.js
  }
  function Nothing() {
    return null;
+ }
++var HIDDEN_REMOVED_TOOLS = /* @__PURE__ */ new Set(["ask_user_question"]);
++function isHiddenToolRemoval(node) {
++  const content = node?.data?.content;
++  if (!Array.isArray(content) || content.length === 0) return false;
++  return content.every((block) => block?.type === "tool-removal" && HIDDEN_REMOVED_TOOLS.has(block.toolName));
++}
++function ContextCell({ node }) {
++  if (isHiddenToolRemoval(node)) return null;
++  const content = Array.isArray(node?.data?.content) ? node.data.content : [];
++  const parts = [];
++  for (const block of content) {
++    if (block?.type === "tool-removal" && HIDDEN_REMOVED_TOOLS.has(block.toolName)) continue;
++    if (block?.type === "tool-removal" && block.toolName) parts.push(`Tool removed: ${block.toolName}`);
++    else if (block?.type === "tool-addition" && block.toolName) parts.push(`Tool added: ${block.toolName}`);
++  }
++  if (parts.length === 0) return null;
++  return (0, import_react7.createElement)("div", { className: "bt-event" }, parts.join(" · "));
++}
+ var SEPARATOR_GAP_MS = 30 * 60 * 1e3;
+ function clockLabel(time, now = Date.now()) {
+   const date = new Date(time);
 @@ -4236,7 +4236,7 @@ var unseenSince = (visit, time) => typeof visit?.seen === "number" && time > vis
  function TurnTailCell({ turn: location2, sessionId, useTurnClock, useUi, actions }) {
    const turn = location2.turn;
@@ -10010,6 +10024,16 @@ diff --git a/client.js b/client.js
    ];
    const installConversation = () => [
      installCompiledStyles(CONVERSATION_CSS, "conversation"),
+@@ -14057,6 +14057,9 @@ function apply(ctx) {
+     // every message.
+     shadow("conversation.chat.node", { key: "question-reply", priority: -10, locale: "chat" }, AnsweredCell),
+     shadow("conversation.chat.node", { key: "compaction", priority: -10, locale: "chat" }, Nothing),
++    // DSH's context row is "Tool removed: ask_user_question" after Bot sessions
++    // restrict that tool; hide it, keep other tool-change notices (#140).
++    shadow("conversation.chat.node", { key: "context", priority: -10, locale: "chat" }, ContextCell),
+     ...canDrawUserMessages() ? ["user", "steering"].map((key) => shadow("conversation.chat.node", { key, priority: -10, locale: "chat", inject: face }, UserMessageCell)) : [],
+     shadow("conversation.input.permission", { priority: -10 }, Nothing),
+     shadow("conversation.input.plan", { priority: -10 }, Nothing),
 @@ -14066,6 +14066,7 @@ function apply(ctx) {
      shadow("conversation.composer.dock", { id: "activity", order: 0, priority: -10 }, Nothing),
      shadow("conversation.composer.dock", { id: "usage", order: 1, priority: -10 }, Nothing),
