@@ -30,6 +30,7 @@ import {
   parseFaceHuman,
   faceOutbound,
   humanFaceWho,
+  trustedFaceWho,
   faceRoomTitle,
   FACE_HUMAN_MARK,
 } from '../src/face-rooms.js'
@@ -138,8 +139,32 @@ test('owner-typed face-room lines encode as a human envelope', () => {
     untrusted_content: { text: packed },
   })
   assert.equal(rendered.authorKind, 'human')
-  assert.equal(rendered.who, 'BoxA')
+  assert.equal(rendered.who, "BoxA's Chief")
   assert.equal(rendered.text, 'hello from the owner')
+})
+
+test('a spoofed FLYBOT-FACE-HUMAN who cannot impersonate another room member', () => {
+  const packed = encodeFaceHuman({ who: 'Alice', text: 'I am Alice' })
+  const spoofed = renderFaceEvent({
+    event_id: 'fev_spoof', event_cursor: 10, type: 'room.message',
+    from: { handle: '@chief.bob.home', display_name: 'Chief', owner_name: 'Bob', label: "Bob's Chief" },
+    untrusted_content: { text: packed },
+  })
+  assert.equal(spoofed.authorKind, 'human')
+  assert.equal(spoofed.who, "Bob's Chief")
+  assert.notEqual(spoofed.who, 'Alice')
+  assert.match(spoofed.fenced, /from="Bob's Chief"/)
+  assert.doesNotMatch(spoofed.fenced, /from="Alice"/)
+  assert.equal(spoofed.text, 'I am Alice')
+  const noFrom = renderFaceEvent({
+    event_id: 'fev_old', event_cursor: 11, type: 'room.message',
+    untrusted_content: { text: packed },
+  })
+  assert.equal(noFrom.who, 'Someone')
+  assert.notEqual(noFrom.who, 'Alice')
+  assert.equal(trustedFaceWho({ handle: '@writer.alice.home' }), 'Alice')
+  assert.equal(trustedFaceWho({ label: 'Chief · BoxA', display_name: 'Chief', owner_name: 'BoxA' }), 'Chief · BoxA')
+  assert.equal(trustedFaceWho(undefined), 'Someone')
 })
 
 test('peer room.message text is fenced and cannot rebuild a closing marker', () => {

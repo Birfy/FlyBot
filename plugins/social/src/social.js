@@ -1982,7 +1982,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       } else if (line.human || line.authorKind === 'human') {
         const local = locals.some(bot => bot.handle && bot.handle === line.authorId)
         if (local) continue
-        const who = humanFaceWho(line, ownerDisplayName(snapshot, hosted))
+        const who = line.who || 'Someone'
         flybot.rooms.applyFaceLine?.(room.id, { ...line, who, remote: true, authorKind: 'human' })
         void flybot.rooms.postNotice?.(room.id, `${who}: ${line.text}`)
       } else {
