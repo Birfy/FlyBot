@@ -334,6 +334,7 @@ export function install(rt) {
             hop: source.hop ?? 0,
             ...(source.late ? { late: true } : {}),
             ...(source.quiet ? { quiet: true } : {}),
+            ...(source.notice ? { notice: true } : {}),
             ...(source.failed ? { failed: source.failed } : {}),
             ...(source.resumed ? { resumed: true } : {}),
             ...(source.again ? { again: true } : {}),

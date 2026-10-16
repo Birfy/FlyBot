@@ -431,6 +431,7 @@ var ZH = {
   // The DSH Agent's own row and Session list. "DSH Agent" is a product name and
   // stays in English.
   "Add DSH Agent": "添加 DSH Agent",
+  "Add Agent": "添加 Agent",
   "Remove DSH Agent": "移除 DSH Agent",
   "New session": "新会话",
   Archive: "归档",
@@ -2826,6 +2827,7 @@ button.bt-q-opt:active{background:var(--bt-active)}
 @media (prefers-reduced-motion:reduce){.bt-q{animation:bt-fade .12s ease-out backwards}.bt-q-settled{animation:none}.bt-q-submit{animation:none}}
 
 .bt-newchat{flex:1;display:flex;flex-direction:column;min-width:0;position:relative;animation:bt-veil-in .18s ease-out}
+.bt-newchat[data-menu] .bt-drop{position:relative;top:0;left:0;width:auto;max-height:none;margin:8px 12px;box-shadow:none}
 .bt-to{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-height:48px;padding:6px 12px;border-bottom:1px solid var(--bt-line);font-size:14px;box-sizing:border-box}
 .bt-to-label{color:var(--bt-ink-2)}
 .bt-to input{flex:1;min-width:120px;border:0;outline:none;background:none;color:var(--bt-ink);font-size:14px;height:26px}
@@ -9160,6 +9162,7 @@ function NewChat({ mode, roster, actions }) {
   const [query, setQuery] = (0, import_react21.useState)("");
   const [picked, setPicked] = (0, import_react21.useState)([]);
   const [group, setGroup] = (0, import_react21.useState)(mode === "group");
+  const [compose, setCompose] = (0, import_react21.useState)(mode !== "new");
   const [admin, setAdmin] = (0, import_react21.useState)(null);
   const [message, setMessage] = (0, import_react21.useState)("");
   const [busy, setBusy] = (0, import_react21.useState)(false);
@@ -9262,11 +9265,20 @@ function NewChat({ mode, roster, actions }) {
     actions.openSession(room2.id);
     close();
   });
+  const menuOnly = mode === "new" && !compose && !group && picked.length === 0 && wanted === "";
   const options = [];
   if (!group && picked.length === 0 && mode !== "search" && wanted === "") {
+    if (menuOnly) {
+      options.push({ key: "chat", icon: (0, import_react21.createElement)(PlusIcon), label: t("New chat"), run: () => {
+        setCompose(true);
+        setCursor(0);
+        setTimeout(() => inputRef.current?.focus());
+      } });
+    }
     options.push({ key: "new", icon: (0, import_react21.createElement)(PlusIcon), label: t("Create new Bot"), run: createBot });
     options.push({ key: "group", icon: (0, import_react21.createElement)(PeopleIcon), label: t("Create group chat"), run: () => {
       setGroup(true);
+      setCompose(true);
       setCursor(0);
       inputRef.current?.focus();
     } });
@@ -9280,7 +9292,7 @@ function NewChat({ mode, roster, actions }) {
       });
     }
     if ((roster.agents ?? []).length === 0) {
-      options.push({ key: "agent", icon: (0, import_react21.createElement)(import_dsh_client_ui_primitives4.FishLogo, { size: 16 }), label: t("Add DSH Agent"), run: () => run(async () => {
+      options.push({ key: "agent", icon: (0, import_react21.createElement)(import_dsh_client_ui_primitives4.FishLogo, { size: 16 }), label: t("Add Agent"), run: () => run(async () => {
         await actions.addAgent();
         close();
       }) });
@@ -9327,8 +9339,13 @@ ${listed}`, { axis: "y", ...QUICK_EDGES });
     { className: "bt-pane", style: { left: paneLeft } },
     (0, import_react21.createElement)(
       "div",
-      { className: "bt-newchat", role: "dialog", "aria-label": mode === "search" ? t("Search") : t("New chat") },
-      (0, import_react21.createElement)(
+      { className: "bt-newchat", role: "dialog", "aria-label": mode === "search" ? t("Search") : t("New chat"), "data-menu": menuOnly || void 0 },
+      menuOnly ? (0, import_react21.createElement)(
+        "div",
+        { className: "bt-to" },
+        (0, import_react21.createElement)("span", { className: "bt-to-label" }, t("New…")),
+        (0, import_react21.createElement)("button", { type: "button", className: "bt-x", "aria-label": t("Close new chat"), onClick: close }, "×")
+      ) : (0, import_react21.createElement)(
         "div",
         { className: "bt-to" },
         (0, import_react21.createElement)("span", { className: "bt-to-label" }, t("To:")),
@@ -9402,9 +9419,9 @@ ${listed}`, { axis: "y", ...QUICK_EDGES });
           option.hint && index === active ? (0, import_react21.createElement)("span", { className: "bt-option-hint" }, option.hint) : null
         ))
       )),
-      (0, import_react21.createElement)("div", { className: "bt-nc-spacer" }),
+      menuOnly ? null : (0, import_react21.createElement)("div", { className: "bt-nc-spacer" }),
       error ? (0, import_react21.createElement)("div", { className: "bt-error" }, error) : null,
-      (0, import_react21.createElement)(
+      menuOnly ? null : (0, import_react21.createElement)(
         "div",
         { className: "bt-nc-compose" },
         (0, import_react21.createElement)(
@@ -9780,6 +9797,10 @@ var ROOM_MODES = [
 ];
 var shownMode = (room2, roster) => roster.byId[room2.admin] ? room2.mode : "everyone";
 function roomSubtitle(room2, roster) {
+  if (room2.origin === "face-to-face") {
+    const live = (room2.presentedParticipants ?? room2.participants ?? []).filter((p) => p.leftSeq === void 0);
+    return t("{count} members", { count: live.length });
+  }
   const admin = roster.byId[room2.admin];
   return [t("{count} members", { count: room2.members.length }), admin ? t("Admin {name}", { name: admin.name }) : t("No admin")].join(" · ");
 }
@@ -12356,8 +12377,8 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
       room2.sharedFrom.invitedAt ? (0, import_react32.createElement)("div", { className: "bt-set-hint" }, t("Invited {when}", { when: new Date(room2.sharedFrom.invitedAt).toLocaleString() })) : null,
       (0, import_react32.createElement)("button", { type: "button", className: "bt-more", onClick: leaveMine }, t("Remove my Bot"))
     ) : face ? null : room2.notice ? (0, import_react32.createElement)(About, { key: "notice", title: "Notice", text: room2.notice }) : (0, import_react32.createElement)("button", { key: "notice", type: "button", className: "bt-more", onClick: openSettings }, t("Add a notice in group settings")),
-    (0, import_react32.createElement)(SharedRoomApprovals, { key: "approvals", room: room2 }),
-    (0, import_react32.createElement)(
+    face ? null : (0, import_react32.createElement)(SharedRoomApprovals, { key: "approvals", room: room2 }),
+    face && (room2.face?.status === "candidate" || room2.face?.status === "joining") ? null : (0, import_react32.createElement)(
       "div",
       { key: "members" },
       (0, import_react32.createElement)("div", { className: "bt-section-title" }, t("Members · {count}", { count: members.length + humans.length + remotes.length })),
@@ -12409,7 +12430,7 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
         })
       ])
     ),
-    (0, import_react32.createElement)(
+    face ? null : (0, import_react32.createElement)(
       "div",
       { key: "mode" },
       (0, import_react32.createElement)("div", { className: "bt-section-title" }, t("Who answers")),

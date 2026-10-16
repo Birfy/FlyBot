@@ -97,6 +97,15 @@ export function humanOwnersOf(room, state) {
   return owners
 }
 
+// Unsigned-in cloud UI has no member session. A face room still has one local owner
+// (the person whose Bots joined); type as that human so the line can fan out.
+export function implicitRoomOwner(room, state) {
+  const owners = humanOwnersOf(room, state)
+  const id = owners.size >= 1 ? [...owners][0] : Object.keys(state?.members || {})[0]
+  if (!id) return undefined
+  return { memberId: id, displayName: displayNameFor(state, id) || 'You' }
+}
+
 export function isCrossOwnerRoom(room, state) {
   return humanOwnersOf(room, state).size > 1
 }
@@ -636,19 +645,23 @@ export function install(rt) {
       const body = String(text ?? '').trim()
       if (body === '') throw invalid('Nothing to send')
       // Actor wins: a forged authorId in the body grants nothing.
-      const kind = actor ? 'human' : authorKind
-      const id = actor?.memberId ?? authorId
+      const implicit = (!actor && !authorId && isFaceRoom(room)) ? implicitRoomOwner(room, state) : undefined
+      const kind = actor ? 'human' : (authorKind || (implicit ? 'human' : authorKind))
+      const id = actor?.memberId ?? authorId ?? implicit?.memberId
       if (!kind || !id) throw forbidden('Sign in first')
       if (rt.authzEnforced?.() && actor && !roomVisibleTo(state, actor, room.id)) {
         throw forbidden('You are not a member of that room')
       }
       if (Array.isArray(room.participants) || actor) {
         materialize(room)
-        if (!participantOf(room, kind, id)) throw forbidden('You are not a member of that room')
+        const here = participantOf(room, kind, id)
+        const faceOwner = isFaceRoom(room) && kind === 'human'
+          && (humanOwnersOf(room, state).has(id) || Object.hasOwn(state.members || {}, id))
+        if (!here && !faceOwner) throw forbidden('You are not a member of that room')
       }
       const remote = kind === 'bot' ? currentParticipants(room).find(p => p.remote && (p.id === id || p.handle === id)) : undefined
       const who = kind === 'human'
-        ? displayNameFor(state, id, actor ? actor.displayName : displayName)
+        ? (actor?.displayName || displayName || implicit?.displayName || displayNameFor(state, id) || 'You')
         : (remote ? remoteBotTitle(remote) : (state.bots?.[id]?.name ?? displayName ?? id))
       const line = append(room, rt.authoredRoomLine(room, {
         who,

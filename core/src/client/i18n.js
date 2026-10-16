@@ -370,6 +370,7 @@ const ZH = {
   // The DSH Agent's own row and Session list. "DSH Agent" is a product name and
   // stays in English.
   'Add DSH Agent': '添加 DSH Agent',
+  'Add Agent': '添加 Agent',
   'Remove DSH Agent': '移除 DSH Agent',
   'New session': '新会话',
   Archive: '归档',

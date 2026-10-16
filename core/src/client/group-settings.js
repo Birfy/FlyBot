@@ -17,6 +17,10 @@ export const ROOM_MODES = [
 export const shownMode = (room, roster) => (roster.byId[room.admin] ? room.mode : 'everyone')
 
 export function roomSubtitle(room, roster) {
+  if (room.origin === 'face-to-face') {
+    const live = (room.presentedParticipants ?? room.participants ?? []).filter(p => p.leftSeq === undefined)
+    return t('{count} members', { count: live.length })
+  }
   const admin = roster.byId[room.admin]
   return [t('{count} members', { count: room.members.length }), admin ? t('Admin {name}', { name: admin.name }) : t('No admin')].join(' · ')
 }

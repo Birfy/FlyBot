@@ -11,6 +11,7 @@ import { install as installAuthz } from '../src/host/authz.js'
 import {
   install as installRooms,
   isFaceRoom,
+  implicitRoomOwner,
   linesVisibleTo,
   ownsInvitedBot,
   presentRoom,
@@ -281,6 +282,12 @@ test('face-to-face room hosts room-only remotes and skips friend fanout', async 
   assert.ok(shown.presentedParticipants.some(p => /Writer A/.test(p.label) && /Alice/.test(p.label)))
   await rt.postRoomMessage('face-1', { text: 'hello', authorId: 'spec-a', authorKind: 'bot' })
   assert.equal(sent.length, 0)
+  const implicit = implicitRoomOwner(room, rt.state)
+  assert.equal(implicit?.memberId, 'owner-1')
+  const human = await rt.postRoomMessage('face-1', { text: 'hello from the owner' })
+  assert.equal(human.authorKind, 'human')
+  assert.equal(human.authorId, 'owner-1')
+  assert.equal(human.text, 'hello from the owner')
   const line = rt.applyFaceRoomLine(room, { kind: 'joined', who: 'Room', text: "Bob's Coder joined; available to this room only", eventId: 'fev_1', eventCursor: 1 })
   assert.equal(line.kind, 'joined')
   assert.equal(rt.applyFaceRoomLine(room, { eventId: 'fev_1', text: 'dup' }), undefined)

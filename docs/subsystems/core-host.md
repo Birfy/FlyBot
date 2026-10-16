@@ -60,6 +60,10 @@ A tracked request with a stable id (`task-<hex>`) and a small state machine, own
 
 - Bot Social conversations are 1:1; it does not list a FlyBot group. When a room gains a granted remote Bot (create-room, addParticipants, or 新建群聊 picking a friend's chat), the host fans out a `FLYBOT-ROOM-SHARE` envelope (`src/shared/room-share.js`) through `flybotSend` (`via: 'room-share'` for join/leave, `via: 'room'` for lines, `meta.roomId` set) so the Bot's owner's FlyBot can project it immediately — including a room with no chat lines yet. Receive is `rt.applyInboundRoomShare` (`origin: 'inbound-share'`, `recordInboundSharedRoom`), labelled **Shared room from \<inviter\>** with the room name stored. A leave envelope, hide, or grant revoke marks it left/hidden. `reach()` allows a local member to message a remote that already sits in that room when `roomId` is on the send. Still not team mode.
 
+### Face-to-face owner send
+
+- Channel `send` on a face-to-face room (`origin: 'face-to-face'`) always `postRoomMessage`s, then shows a quiet local notice (`postToRoom` `quiet`+`notice`). It does not call `sessionController.prompt` unless a local Bot is @mentioned. Unsigned-in cloud UI uses `implicitRoomOwner` (the local human) so the line still fans out over `onFaceLine` / `FLYBOT-FACE-HUMAN` and the other FlyBot instance shows it; that path must not open a bot round (#124). Covered by `core/test/remote-room.test.js` and `core/test/rounds.test.js`.
+
 ### Face-to-face participant look
 
 - `syncFaceParticipants` / `faceRemoteRecord` keep optional `color` / `avatar` from the Bot Social member payload on the remote participant. The client seeds a distinct generated look from the handle when those fields are absent (see [core-client](core-client.md)). Face-room REST still does not require a person-grant.
