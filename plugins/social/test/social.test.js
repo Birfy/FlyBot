@@ -8,13 +8,13 @@ import { test } from 'node:test'
 import { apply as applyDsBot } from 'ds-bot'
 import { fakeContext } from './fake-ctx.js'
 import { apply as applySocial, inject, name } from '../index.js'
-import { approvalView, createSocial, draftText, homeHandleOf, onboard, registerUnavailable, startSocial, unavailableMessage } from '../src/social.js'
-import { createMcpClient, createSocialApi, untrustedText, mapPool, socialHttpAgent, fetchOptions } from '../src/mcp-client.js'
+import { approvalView, createSocial, draftText, homeHandleOf, onboard, onboardHome, nextOnboardDisplayName, mapJoinInviteError, registerUnavailable, startSocial, unavailableMessage } from '../src/social.js'
+import { createMcpClient, createSocialApi, untrustedText, mapPool, socialHttpAgent, fetchOptions, grantPersonView, memberHandleOf, personHomeOf, normalizeGrant } from '../src/mcp-client.js'
 import { encodeRoomShare } from '../../../core/src/shared/room-share.js'
 import { encodeFaceHuman } from '../src/face-rooms.js'
 import {
   hideRemoteInSettings, forgetHiddenIfGone, filterHiddenHomes, presentRemoteHandles,
-  HIDE_GONE_FETCHES, isHomeLevelHandle, isHiddenRemote, clearHiddenRemote, homeOfHiddenHandle,
+  HIDE_GONE_FETCHES, isHomeLevelHandle, isHiddenRemote, clearHiddenRemote, homeOfHiddenHandle, revealHiddenIfPresent,
   approvalsForSession, chatApprovalTitle, WAITING_OWNER, WAITING_OTHERS, REJECT_NOTE,
 } from '../src/hidden-remotes.js'
 
@@ -29,9 +29,13 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
   const uploads = new Map()
   const tools = {
     create_invite: a => ({ code: 'INV123', url: 'https://s/i/INV123', status: 'active', expires_at: '2026-10-21T00:00:00Z', bot: a.bot_id, auto_accept: a.auto_accept }),
-    join_invite: a => (a.code === 'NEEDSOK'
-      ? { relationship_id: 'r9', status: 'pending_requester_owner', awaiting: 'your_owner_approval', approval_id: 'apr9', inviter: { handle: 'eve.home', display_name: 'Eve' } }
-      : { relationship_id: 'r8', status: 'active', awaiting: null, inviter: { handle: 'bob.home', display_name: 'Bob' } }),
+    join_invite: a => {
+      if (a.code === 'USED') throw Object.assign(new Error('Bot Social join_invite: invite is used'), { code: 'invite_used' })
+      if (a.code === 'EXISTS') throw Object.assign(new Error('Bot Social join_invite: relationship_exists'), { code: 'relationship_exists' })
+      return a.code === 'NEEDSOK'
+        ? { relationship_id: 'r9', status: 'pending_requester_owner', awaiting: 'your_owner_approval', approval_id: 'apr9', inviter: { handle: 'eve.home', display_name: 'Eve' }, bot: { handle: '@helper.eve.home', display_name: 'Helper' } }
+        : { relationship_id: 'r8', status: 'active', awaiting: null, inviter: { handle: 'bob.home', display_name: 'Bob' }, bot: { handle: '@coder.bob.home', display_name: 'Coder' } }
+    },
     respond_friend_request: a => (a.confirm_code === undefined ? { status: 'confirmation_required', confirm_code: 'C0DE01' } : a.confirm_code === 'C0DE01' ? { relationship_id: a.relationship_id, status: a.decision === 'accept' ? 'active' : 'declined' } : { error: 'bad code' }),
     decide_approval: a => (a.confirm_code === undefined ? { status: 'confirmation_required', confirm_code: 'C0DE02' } : { approval_id: a.approval_id, decision: a.decision, status: a.decision }),
     list_approvals: () => ({ approvals: [] }),
@@ -445,7 +449,7 @@ test('add friend from the UI: invite link, join by link, and answer requests (ow
   const chiefId = [...server.members.values()].find(m => m.handle === '@chief.danyang.home').bot_id
   const writerId = [...server.members.values()].find(m => m.handle === '@writer.danyang.home').bot_id
   const joined = (await call('flybot/social/join-invite', { code: ' https://other.example/i/ABC?x=1 ' })).value
-  assert.deepEqual(joined, { relationshipId: 'r8', status: 'active', inviter: '@bob.home', inviterName: 'Bob', joinedAs: { botId: 'a', botName: 'Chief', handle: '@chief.danyang.home' } })
+  assert.deepEqual(joined, { relationshipId: 'r8', status: 'active', inviter: '@bob.home', inviterName: 'Bob', inviterBotName: 'Coder', joinedAs: { botId: 'a', botName: 'Chief', handle: '@chief.danyang.home' } })
   assert.deepEqual(server.calls.find(c => c.name === 'join_invite').args, { code: 'ABC', from_bot_id: chiefId })
   const asWriter = (await call('flybot/social/join-invite', { code: 'DEF', botId: 'b' })).value
   assert.equal(asWriter.joinedAs.handle, '@writer.danyang.home')
@@ -696,8 +700,7 @@ test('start failure registers social endpoints instead of Unknown FlyBot endpoin
   assert.equal(result.ok, false)
   assert.equal(result.error.code, 'bot/refused')
   assert.match(result.error.message, /^Social is not running:/)
-  assert.match(result.error.message, /@danyang\.home is taken/)
-  assert.match(result.error.message, /displayName/)
+  assert.match(result.error.message, /is taken/)
   assert.doesNotMatch(result.error.message, /Unknown FlyBot endpoint/)
   const status = await call('flybot/social/status', {})
   assert.equal(status.ok, false)
@@ -874,7 +877,7 @@ test('a friendship scoped to one Bot: the roster shows only the granted Bots and
   const server = mockServer()
   // Bob invited us to Coder only and we joined as Chief: Bob's Writer is not listed by the server.
   server.tools.list_remote_bots = () => ({ homes: [{ relationship_id: 'r1', home: { bot_id: 'h2', handle: '@bob.home', display_name: 'Bob', owner_display_name: 'Bob' }, bots: [{ bot_id: 'x1', handle: '@coder.bob.home', display_name: 'Coder' }], scope: 'member', via: ['@chief.danyang.home'] }] })
-  const social = createSocial(ctx.flybot, { inboxPollMs: 0 }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
+  const social = createSocial(ctx.flybot, { inboxPollMs: 0, autoAccept: true }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
   t.after(() => social.dispose())
   await grantTeam(ctx.flybot)
   await social.registerAll()
@@ -977,6 +980,14 @@ test('approvalView: outbound draft text is sanitized, friend requests stay out',
   assert.equal(raw.from, 'Bot')
   assert.equal(raw.toName, 'the room')
   assert.doesNotMatch(raw.from, /bot_01/)
+  const yours = approvalView({
+    approval_id: 'apr-you',
+    kind: 'outbound_message',
+    via: 'composer',
+    bot_id: 'm1',
+    message: { to: { handle: '@chief.bob.home', display_name: 'Chief' }, payload: { text: 'hi' }, via: 'composer' },
+  }, { localName: () => 'Helper' })
+  assert.equal(yours.from, 'You')
 })
 
 test('Friends\' Bots (#69): a pending approval shows a badge and a one-line jump row', () => {
@@ -1087,7 +1098,7 @@ test('a paused conversation explains the pause and names the console, without re
     }
     return base(url, init)
   }
-  const social = createSocial(ctx.flybot, { server: 'https://social.test', inboxPollMs: 0 }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
+  const social = createSocial(ctx.flybot, { server: 'https://social.test', inboxPollMs: 0, autoAccept: true }, { client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }), home: { id: 'h1', handle: '@danyang.home' } })
   t.after(() => social.dispose())
   await grantTeam(ctx.flybot)
   await social.registerAll()
@@ -2455,6 +2466,8 @@ test('#90: hide helpers persist a handle and forget it only after two successful
   assert.equal(cleared.hiddenRemotes['@coder.bob.home'], undefined)
   const reshared = filterHiddenHomes(homes, gone)
   assert.deepEqual(reshared[0].bots.map(b => b.handle), ['@coder.bob.home', '@writer.bob.home'])
+  const revealed = revealHiddenIfPresent(settings, ['@coder.bob.home'])
+  assert.equal(revealed.hiddenRemotes['@coder.bob.home'], undefined)
 })
 
 test('#90: hide a friend\'s Bot updates the list, leaves rooms, and does not unfriend', async (t) => {
@@ -3065,11 +3078,8 @@ test('#123: approval waiting notice opens a friend Bot 1:1 instead of delivering
   const items = await social.pendingApprovals({ fresh: true })
   assert.equal(items.length, 1)
   assert.equal(items[0].to, '@boxb.home')
-  assert.equal(notes.length, 1)
-  assert.equal(notes[0].handle, '@chief.boxb.home')
-  assert.equal(notes[0].text, WAITING_OTHERS)
-  assert.equal(opened.some(member => member.handle === '@chief.boxb.home'), true)
-  assert.equal(notes.some(note => note.handle === '@boxb.home'), false)
+  assert.equal(notes.length, 0, 'owner 1:1 does not get a waiting-for-approval bubble')
+  assert.equal(opened.length, 0)
 })
 
 test('#123: approval waiting notice skips a home handle with no friend Bot and does not throw', async (t) => {
@@ -3107,4 +3117,224 @@ test('#123: approval waiting notice skips a home handle with no friend Bot and d
   assert.equal(items.length, 1)
   assert.equal(notes.length, 0)
 })
+
+test('#136: onboard retries a taken display name and then starts', async () => {
+  assert.equal(nextOnboardDisplayName('FlyBot', 1), 'FlyBot')
+  assert.equal(nextOnboardDisplayName('FlyBot', 2), 'FlyBot2')
+  const names = []
+  const result = await onboardHome({
+    server: 'https://social.test',
+    displayName: 'FlyBot',
+    fetch: async (_url, init) => {
+      const name = JSON.parse(init.body).display_name
+      names.push(name)
+      if (name === 'FlyBot') {
+        return new Response(JSON.stringify({ error: 'handle_taken', handle: 'flybot.home' }), { status: 409 })
+      }
+      return new Response(JSON.stringify({
+        owner_id: 'o1', connector: { token: 't' }, home: { bot_id: 'h1', handle: '@flybot2.home' }, webhook: null,
+      }), { status: 201 })
+    },
+  })
+  assert.deepEqual(names, ['FlyBot', 'FlyBot2'])
+  assert.equal(result.home.handle, '@flybot2.home')
+  assert.equal(result.displayName, 'FlyBot2')
+})
+
+test('#136 / #138: grant labels use the person home, not a raw member handle', () => {
+  assert.equal(memberHandleOf('Chief@chief.selfb1935.home'), '@chief.selfb1935.home')
+  assert.equal(personHomeOf('Chief@chief.selfb1935.home'), '@selfb1935.home')
+  assert.equal(personHomeOf('@chief.selfb1935.home'), '@selfb1935.home')
+  assert.equal(personHomeOf('@selfb1935.home'), '@selfb1935.home')
+  const view = grantPersonView({ grantee: 'Chief@chief.selfb1935.home', name: 'Chief@chief.selfb1935.home' })
+  assert.equal(view.home, '@selfb1935.home')
+  assert.equal(view.label, 'Selfb1935 (@selfb1935.home)')
+  const named = grantPersonView({ grantee: '@bob.home', name: 'Bob' })
+  assert.equal(named.label, 'Bob (@bob.home)')
+  const normalized = normalizeGrant({ grantee: 'Chief@chief.bob.home', display_name: 'Chief@chief.bob.home' })
+  assert.equal(normalized.home, '@bob.home')
+  assert.equal(normalized.member, '@chief.bob.home')
+})
+
+test('#138: Friends\' Bots drops the joiner\'s Bot from an outgoing invite', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  server.tools.list_bot_grants = () => ({
+    grants: [{ id: 'g-rev', grantee: 'Chief@chief.bob.home', name: 'Chief@chief.bob.home', relationship_id: 'r1' }],
+  })
+  server.tools.list_remote_bots = () => ({
+    homes: [{
+      relationship_id: 'r1',
+      home: { bot_id: 'h2', handle: '@bob.home', display_name: 'Bob', owner_display_name: 'Bob' },
+      bots: [
+        { bot_id: 'x1', handle: '@chief.bob.home', display_name: 'Chief' },
+        { bot_id: 'x2', handle: '@coder.bob.home', display_name: 'Coder' },
+      ],
+    }],
+  })
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0 }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  const listed = (await call('flybot/social/remote-bots', { fresh: true })).value
+  assert.equal(listed.homes[0].bots.some(bot => bot.handle === '@chief.bob.home'), false, 'the Bot that joined our invite is not granted to us')
+  assert.equal(listed.homes[0].bots.some(bot => bot.handle === '@coder.bob.home'), true)
+  const access = (await call('flybot/social/access', { botId: 'a' })).value
+  assert.ok(access.grants.some(g => g.name === 'Bob (@bob.home)' || g.home === '@bob.home'))
+  assert.equal(access.grants.some(g => /Chief@chief/.test(g.name || '') || /Chief@chief/.test(g.grantee || '')), false)
+})
+
+test('#138: joining an invite marks that Bot inbound and does not auto-send', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const social = createSocial(ctx.flybot, { inboxPollMs: 0 }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  const joined = (await call('flybot/social/join-invite', { code: 'ABC' })).value
+  assert.equal(joined.inviterBotName, 'Coder')
+  assert.equal(joined.inviterName, 'Bob')
+  const listed = (await call('flybot/social/remote-bots', { fresh: true })).value
+  assert.equal(listed.homes[0].bots.some(bot => bot.handle === '@coder.bob.home'), true)
+  const settings = (await call('flybot/social/settings', {})).value
+  assert.equal(settings.autoAccept['@bob.home'], false)
+  assert.equal(server.calls.some(c => c.name === 'set_auto_approve' && c.args.auto_approve_chat === true), false)
+})
+
+test('#139: join errors are English and relationship_exists unhides', async (t) => {
+  const { ctx, call, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const settingsPath = join(home, 'flybot-social-settings.json')
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0, settingsPath }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await call('flybot/social/remote-bots', { fresh: true })
+  await call('flybot/social/hide-remote', { handle: '@coder.bob.home' })
+  const used = await call('flybot/social/join-invite', { code: 'USED' })
+  assert.equal(used.ok, false)
+  assert.match(used.error.message, /already used/i)
+  assert.doesNotMatch(used.error.message, /invite is used/)
+  const exists = await call('flybot/social/join-invite', { code: 'EXISTS' })
+  assert.equal(exists.ok, false)
+  assert.match(exists.error.message, /already friends/i)
+  assert.doesNotMatch(exists.error.message, /relationship_exists/)
+  const again = (await call('flybot/social/remote-bots', { fresh: true })).value
+  assert.equal(again.homes[0].bots.some(bot => bot.handle === '@coder.bob.home'), true)
+  assert.equal(mapJoinInviteError(Object.assign(new Error('relationship_exists'), { code: 'relationship_exists' })).message.includes('already friends'), true)
+})
+
+test('#138: leaving a face room drops room-only remotes from Friends\' Bots', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  server.tools.list_remote_bots = () => ({
+    homes: [{
+      home: { bot_id: 'h2', handle: '@bob.home', display_name: 'Bob' },
+      bots: [{ bot_id: 'x1', handle: '@chief.bob.home', display_name: 'Chief' }],
+    }],
+  })
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.registerAll()
+  const joined = (await call('flybot/social/face-join', { code: '123456', botId: 'a' })).value
+  const room = server.face.rooms.get(joined.faceRoomId)
+  room.members.push({ bot_id: 'bot_bob', handle: '@chief.bob.home', display_name: 'Chief', owner_name: 'Bob', published: false })
+  await call('flybot/social/face-rooms', { poll: true })
+  const during = (await call('flybot/social/remote-bots', { fresh: true })).value
+  assert.equal(during.homes.flatMap(entry => entry.bots).some(bot => bot.handle === '@chief.bob.home'), false, 'room-only remotes stay out of Friends\' Bots')
+  await call('flybot/social/face-leave', { faceRoomId: joined.faceRoomId })
+  const after = (await call('flybot/social/remote-bots', { fresh: true })).value
+  assert.equal(after.homes.flatMap(entry => entry.bots).some(bot => bot.handle === '@chief.bob.home'), false)
+})
+
+test('#140: new friends default Auto-send off; settings report false', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const social = createSocial(ctx.flybot, { inboxPollMs: 0 }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await social.remoteBots({ fresh: true })
+  const settings = (await call('flybot/social/settings', {})).value
+  assert.equal(settings.autoAccept['@bob.home'], false)
+  assert.equal(social.approvalFor('a', '@bob.home'), 'hold')
+})
+
+test('createSocialApi prefers list_bot_grants', async () => {
+  const server = mockServer()
+  server.tools.list_bot_grants = () => ({ grants: [{ id: 'g-bot', grantee: '@carol.home', name: 'Carol' }] })
+  const api = createSocialApi({ server: 'https://s', token: 'owner-token', fetch: server.fetch })
+  const listed = await api.listGrants({ botId: 'm1' })
+  assert.ok(listed.some(g => g.grantee === '@carol.home'))
+  assert.equal(server.calls.some(c => c.name === 'list_friends' && c.args?.bot_id === 'm1'), false)
+})
+
+test('#136: Friends\' Bots shows my handle with Copy; Auto-send starts unchecked; Join-as is always offered', () => {
+  const { walk, pluginOf, entries } = loadSocialClient(async () => ({ connected: true, home: '@selfa1935.home', bots: [{ id: 'a', name: 'Chief', isMain: true }], homes: [], rooms: [] }))
+  const plugin = pluginOf([
+    { homes: [{ home: '@bob.home', name: 'Bob', bots: [{ handle: '@coder.bob.home', name: 'Coder' }] }] },
+    '', true, false, {}, {}, '', [], new Set(), false, false, '@selfa1935.home',
+  ])
+  plugin.apply({})
+  const entry = entries.find(([slot]) => slot === 'flybot.sidebar.section')
+  const tree = walk(entry[1].component({}))
+  const me = tree.find(n => n.props['data-flybot'] === 'own-home')
+  assert.ok(me)
+  assert.ok(me.children.some(c => typeof c === 'object' && c.children?.includes?.('@selfa1935.home')))
+  assert.ok(tree.some(n => n.type === 'button' && n.children.includes('Copy')))
+  const box = tree.find(n => n.type === 'input' && n.props.type === 'checkbox' && n.props.checked === true)
+  assert.equal(box, undefined)
+  const add = walk(pluginOf([null, '', null, false, [{ id: 'a', name: 'Chief', isMain: true }], 'a']).AddFriend({}))
+  assert.ok(add.some(n => n.props['data-flybot'] === 'join-as'))
+  assert.match(add.find(n => n.props['data-flybot'] === 'join-as').children.join(''), /not shared/i)
+})
+
+test('#139: Remove asks once; cancelling leaves the Bot', () => {
+  const asked = []
+  const hidden = []
+  const { walk, pluginOf, sandbox, entries } = loadSocialClient(async (endpoint, payload) => {
+    if (endpoint === 'social/hide-remote') { hidden.push(payload); return { handle: payload.handle, hidden: true, homes: [{ home: '@bob.home', name: 'Bob', bots: [] }] } }
+    if (endpoint === 'social/status') return { connected: true, home: '@me.home', approvals: [] }
+    if (endpoint === 'social/remote-bots') return { homes: [{ home: '@bob.home', name: 'Bob', bots: [{ handle: '@coder.bob.home', name: 'Helper' }] }] }
+    if (endpoint === 'social/settings') return { autoAccept: {} }
+    return {}
+  })
+  sandbox.confirm = (text) => { asked.push(text); return false }
+  const plugin = pluginOf([
+    { homes: [{ home: '@bob.home', name: 'Bob', bots: [{ handle: '@coder.bob.home', name: 'Helper' }] }] },
+    '', true, false, {}, {}, '', [], new Set(), false, false, '',
+  ])
+  plugin.apply({})
+  const entry = entries.find(([slot]) => slot === 'flybot.sidebar.section')
+  const tree = walk(entry[1].component({}))
+  const remove = tree.find(n => n.props['data-flybot'] === 'remove-friend-bot')
+  remove.props.onClick({ stopPropagation() {} })
+  assert.equal(asked.length, 1)
+  assert.match(asked[0], /Remove Helper\?/)
+  assert.equal(hidden.length, 0)
+})
+
+test('#138: join success copy names the person and the Bot', () => {
+  const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  assert.match(src, /shared \$\{shared\} with you/)
+  assert.match(src, /Talk through /)
+  assert.match(src, /not shared unless you invite them to it/)
+})
+
 

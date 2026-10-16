@@ -43,6 +43,14 @@ export function homeOfHiddenHandle(handle) {
 
 // Drop a hide at once (an explicit revoke event). Refresh still needs two successful
 // absences before it forgets on its own.
+export function revealHiddenIfPresent(settings, presentHandles) {
+  let next = settings
+  for (const handle of presentHandles ?? []) {
+    if (isHiddenRemote(next, handle)) next = clearHiddenRemote(next, handle)
+  }
+  return next
+}
+
 export function clearHiddenRemote(settings, handle) {
   const key = normHiddenHandle(handle)
   if (!key || key === '@') return settings

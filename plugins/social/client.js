@@ -24,9 +24,12 @@ window.__ModuleLoader__.load({
       if (http) return `The FlyBot host did not answer (HTTP ${http[1]}). Reload the page; if this keeps happening, restart FlyBot web.`
       if (code === 'NETWORK') return 'Could not reach FlyBot. Check that it is still running.'
       if (isSocialMissing(e)) {
-        return 'Social is not running: the plugin did not start. If a home handle was taken, change displayName in the flybot-social config and restart. Otherwise see Settings → Feedback.'
+        return 'Social is not running: the plugin did not start. See Settings → Feedback.'
       }
-      return String(e?.message ?? e)
+      const message = String(e?.message ?? e ?? '')
+      if (/relationship_exists/i.test(message)) return "You're already friends. That Bot is in Friends' Bots again."
+      if (/invite is used|invite_used|already used/i.test(message)) return 'This invite was already used. Ask your friend for a new one.'
+      return message
     }
 
     // Styles reuse ds-bot's sidebar tokens (--bt-ink, --bt-ink-2, --bt-ink-3, --bt-hover, --bt-line,
@@ -85,6 +88,9 @@ window.__ModuleLoader__.load({
 .fs-status[data-tone=error]{color:#e5484d}
 .fs-pending-tag{background:var(--bt-accent,#4d6bfe);color:#fff}
 .fs-refresh{flex:none;font-size:11px;line-height:14px;color:var(--bt-ink-3,rgba(20,20,20,.36));font-weight:400}
+.fs-me{display:flex;align-items:center;gap:6px;padding:0 10px 4px;font-size:11px;line-height:14px;color:var(--bt-ink-3,rgba(20,20,20,.36))}
+.fs-me-handle{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fs-me .fs-link{flex:none}
 .fs-pending{margin:4px 4px 6px;padding:6px 8px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:10px;background:var(--bt-card,#fff);display:flex;flex-direction:column;gap:4px;min-width:0;max-width:100%}
 .fs-pending .fs-label{padding:0}
 .fs-pending-item{display:flex;align-items:center;gap:8px;width:100%;max-width:100%;min-width:0;padding:4px 4px;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;flex-wrap:nowrap}
@@ -676,10 +682,11 @@ window.__ModuleLoader__.load({
     function localHoldView(approval) {
       if (!approval?.id) return undefined
       const to = approval.targetName ?? (typeof approval.request?.to === 'object' ? approval.request.to.handle : approval.request?.to)
+      const composer = approval.request?.via === 'composer'
       return {
         id: approval.id,
         source: 'local',
-        from: approval.senderName,
+        from: composer ? 'You' : approval.senderName,
         to,
         toName: approval.targetName || to,
         text: approval.request?.text || approval.reason,
@@ -972,6 +979,7 @@ window.__ModuleLoader__.load({
       const [hiding, setHiding] = useState(() => new Set())
       const [faceOpen, setFaceOpen] = useState(false)
       const [refreshing, setRefreshing] = useState(false)
+      const [homeHandle, setHomeHandle] = useState('')
       const openRef = useRef(open)
       openRef.current = open
       const load = () => call('social/remote-bots', { fresh: true }).then(value => {
@@ -983,6 +991,7 @@ window.__ModuleLoader__.load({
       const loadApprovals = () => call('social/status', {}).then(value => {
         const items = Array.isArray(value?.approvals) ? value.approvals : []
         setPending(items)
+        if (value?.home) setHomeHandle(value.home)
         if (items.length) setOpen(true)
       }, () => {})
       const loadAll = () => {
@@ -1010,7 +1019,12 @@ window.__ModuleLoader__.load({
       const unavailable = error.startsWith('Social is not running:')
       const toggleAuto = async (home, on) => {
         setSaving(home)
-        try { const r = await call('social/auto-accept', { home, on }); setAuto(value => ({ ...value, [home]: r.autoAccept })) } catch (e) { setError(errorText(e)) } finally { setSaving('') }
+        setAuto(value => ({ ...value, [home]: on }))
+        try { const r = await call('social/auto-accept', { home, on }); setAuto(value => ({ ...value, [home]: r.autoAccept })) } catch (e) { setError(errorText(e)); setAuto(value => ({ ...value, [home]: !on })) } finally { setSaving('') }
+      }
+      const copyHome = () => {
+        const clip = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
+        if (homeHandle && clip?.writeText) void clip.writeText(homeHandle)
       }
       const markHiding = (handle, on) => {
         setHiding(current => {
@@ -1021,6 +1035,10 @@ window.__ModuleLoader__.load({
         })
       }
       const removeBot = async (bot) => {
+        const home = (data?.homes ?? []).find(entry => (entry.bots ?? []).some(item => item.handle === bot.handle))
+        const who = home?.name || home?.owner || home?.home || 'Your friend'
+        const ask = typeof globalThis.confirm === 'function' ? globalThis.confirm : undefined
+        if (ask && !ask(`Remove ${bot.name}? ${who} can share it again.`)) return
         markHiding(bot.handle, true)
         try {
           const result = await call('social/hide-remote', { handle: bot.handle })
@@ -1058,6 +1076,9 @@ window.__ModuleLoader__.load({
             data && !pending.length ? h('span', { className: 'fs-count', title: `${count} ${count === 1 ? 'Bot' : 'Bots'}` }, String(count)) : null),
           pending.length ? h('button', { type: 'button', className: 'fs-tag fs-pending-tag', 'data-flybot': 'pending-badge', title: `${pending.length} outbound ${pending.length === 1 ? 'reply' : 'replies'} waiting for your approval. Opens that chat.`, onClick: openPending }, `${pending.length} to approve`) : null,
           refreshing ? h('span', { className: 'fs-refresh', 'data-flybot': 'roster-refreshing' }, 'Refreshing…') : null),
+        open && homeHandle ? h('div', { className: 'fs-me', 'data-flybot': 'own-home' },
+          h('span', { className: 'fs-me-handle', title: homeHandle }, homeHandle),
+          h('button', { type: 'button', className: 'fs-link', onClick: copyHome }, 'Copy')) : null,
         open ? h('div', { className: 'fs-body' },
           unavailable ? null : h(FaceRooms, { actions, enabled: open, roster, remoteChats }),
           adding && !unavailable ? h(AddFriend, { onChange: () => load().then(loadSettings), onDone: () => setAdding(false) }) : null,
@@ -1073,7 +1094,7 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'fs-home-name' }, entry.name ?? entry.home),
                   entry.name ? h('span', { className: 'fs-home-handle' }, entry.home) : null),
                 h('label', { className: 'fs-auto', title: AUTO_SEND_NOTE },
-                  h('input', { type: 'checkbox', checked: auto[entry.home] !== false, disabled: saving === entry.home, onChange: e => toggleAuto(entry.home, e.target.checked) }),
+                  h('input', { type: 'checkbox', checked: auto[entry.home] === true, disabled: saving === entry.home, onChange: e => toggleAuto(entry.home, e.target.checked) }),
                   'Auto-send')),
               shut ? null : entry.bots.length === 0 ? h('div', { className: 'fs-hint' }, 'No Bots shared yet') : null,
               shut ? null : h('div', { className: 'bt-social-rows' }, rows.map(({ bot, chat }) => h(FriendBotRow, {
@@ -1112,7 +1133,8 @@ window.__ModuleLoader__.load({
           await refresh()
           onChange?.()
         } catch (e) {
-          setStatus({ tone: 'error', text: `${label} failed: ${errorText(e)}` })
+          const text = errorText(e)
+          setStatus({ tone: 'error', text: /already used|already friends/i.test(text) ? text : `${label} failed: ${text}` })
         } finally {
           setBusy(false)
         }
@@ -1139,8 +1161,10 @@ window.__ModuleLoader__.load({
         return run('Joining', async () => {
           const r = await call('social/join-invite', { code, ...(joiner ? { botId: joiner } : {}) })
           setCode('')
-          const as = r.joinedAs ? ` as ${r.joinedAs.botName}` : ''
-          return r.status === 'active' ? `You are now friends with ${r.inviterName ?? r.inviter}${as}.` : `Request sent to ${r.inviterName ?? r.inviter}${as}. They show up here once they accept.`
+          const who = r.inviterName ?? r.inviter ?? 'Your friend'
+          const shared = r.inviterBotName || r.sharedBot
+          if (r.status === 'active') return shared ? `${who} shared ${shared} with you.` : `${who} shared a Bot with you.`
+          return `Request sent to ${who}. They show up here once they accept.`
         })
       }
       const respond = (item, decision) => run(decision === 'accept' ? 'Accepting' : 'Declining', async () => {
@@ -1161,10 +1185,10 @@ window.__ModuleLoader__.load({
           h('div', { className: 'fs-line' },
             h('input', { className: 'fs-input', value: code, placeholder: 'Paste invite link or code', 'aria-label': 'Invite link or code', onChange: e => setCode(e.target.value) }),
             h('button', { type: 'submit', className: 'fs-btn', disabled: busy || !code.trim() }, 'Join')),
-          mine.length > 1 ? h('label', { className: 'fs-line fs-hint', 'data-flybot': 'join-as' }, 'Join as ',
-            h('select', { className: 'fs-input', value: joiner, 'aria-label': 'Which of your Bots joins', onChange: e => setJoiner(e.target.value) },
+          mine.length ? h('label', { className: 'fs-line fs-hint', 'data-flybot': 'join-as' }, 'Talk through ',
+            h('select', { className: 'fs-input', value: joiner, 'aria-label': 'Which of your Bots talks', onChange: e => setJoiner(e.target.value) },
               mine.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name))),
-            ' (your friend sees only this Bot)') : null),
+            ' (not shared unless you invite them to it)') : null),
         status ? h('div', { className: 'fs-status', role: 'status', 'data-tone': status.tone, style: { padding: '2px 10px' } }, status.text) : null,
         incoming.length ? h('div', { className: 'bt-social-requests' },
           h('div', { className: 'fs-label' }, 'Friend requests', h('span', { className: 'fs-count' }, String(incoming.length))),
@@ -1241,7 +1265,9 @@ window.__ModuleLoader__.load({
         grants.map(grant => h('div', { key: grant.id || grant.grantee, className: 'fs-line', 'data-flybot': 'access-grant' },
           h('div', { className: 'fs-col' },
             h('span', { className: 'fs-name' }, grant.name || grant.grantee),
-            h('span', { className: 'fs-sub' }, grant.grantee),
+            grant.home && grant.name && !String(grant.name).includes(grant.home)
+              ? h('span', { className: 'fs-sub' }, grant.home)
+              : null,
             (grant.rooms ?? []).length ? h('span', { className: 'fs-hint' }, `In use: ${(grant.rooms ?? []).map(room => room.name || room.id).join(', ')}`) : null),
           h('button', {
             type: 'button', className: 'fs-btn', disabled: Boolean(busy),
