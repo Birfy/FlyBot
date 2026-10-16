@@ -31,6 +31,7 @@ Everything in `plugins/social/` (entry `plugins/social/index.js` and any helpers
 | `plugins/social/src/mcp-client.js` | Owner MCP client plus isolated grant/invite REST fallbacks (`listGrants`, `revokeGrant`, `updateBotProfile`, `declineGrant`, invites). |
 | `plugins/social/src/look.js` | Map Bot Social profile look fields to FlyBot `{ color, avatar }` (optional on older servers). |
 | `plugins/social/src/face-rooms.js` | Face-to-face REST client (join/list/get/start/leave/messages), error mapping, event rendering, peer-string sanitization. Auto-send is MCP in `social.js`. |
+| `plugins/social/src/face-title.js` | Face-to-face room titles (`Face-to-face · Alice, Bob · 482913`). Ships in the plugin so a packaged install can import (#153); core keeps its own copy for hosted rooms. |
 | `plugins/social/client.js` | Friends' Bots: badge, Remove this Bot, cached roster / Refreshing…, header without + Add; sidebar + Face-to-face group / Add friend / Accept invite / Copy invite link (tile grid, 6-digit join, Enter chat + Leave footer), one-line face-room rows + Past rooms, in-chat Approve / Reject dock, waiting `flybot.room.overview` tile grid then Leave / Auto-send, Bot settings Invite / Manage access, Add friend mint-and-copy. |
 
 ## Entry points
@@ -39,7 +40,7 @@ Everything in `plugins/social/` (entry `plugins/social/index.js` and any helpers
 
 ## Invariants
 
-1. Social code stays inside `plugins/social/`.
+1. Social code stays inside `plugins/social/`. Runtime sources (`index.js`, `client.js`, `src/`) import only files in that package, Node builtins, or declared dependencies (`ds-bot`). They must not reach `core/` or another plugin by relative path: that path is missing after `plugin add …&path:/plugins/social` (#153). Tests may import from `core/` for fixtures. `scripts/lint-plugins.mjs` fails the leak and packs the plugin then imports it.
 2. Uses documented plugin APIs only.
 3. A server policy pause (`conversation_paused`: turn budget reached, loop suspected, emergency stop) never surfaces as a bare send error: both send paths (the `bot-social` transport and the remote-chat sender) map it to an error that says resending cannot help and names the Bot Social console, and no other member Bot is tried for it. Other `sendChat` failures are one short English line with a next step (reconnect, invite, try again) — never `Bot Social send_as_member: …`. A human's own message in a face-to-face or shared room to a friend's Bot that is already a member of that room is delivered as that human in the room (`onFaceLine` / room log); it is not signed or grant-checked as Chief (#143). Chief-originated `bot.send` / `message_friend_bot` to an ungranted friend Bot stays denied.
 4. Access is a per-Bot **grant** (#90, #138): default deny, Chief included. `register` / `registerAll` register a Bot when it is invited, when it joins an invite, when it already has a person-grant or a saved identity, or at face-to-face join (`forFace`, `roomOnly`). `pollOnce` reads inboxes of non-room-only members only. Friends' Bots is `list_remote_bots` (Bots granted **to me**), minus reverse-friends of invites I created and minus face-room-only remotes. Accepting **Invite to this Bot** is the grant the other way; joining does not grant my talk-through Bot back. Join always offers **Talk through** (default Chief). `social/access` + `social/revoke-grant` (via `mcp-client.js` `listGrants` / `revokeGrant`, preferring `list_bot_grants` / `revoke_bot_grant`) list people as `Name (@home)` and revoke one person. Core `reach()` / `flybot.grants` are the unbypassable gate. **Face-to-face join (#83 / #89):** bringing my own Bot by number is an implicit room-scoped grant. If it has no identity, join registers it room-only; friends' `list_remote_bots`, invites, polling and `reach()` outside the room stay denied. When that Bot leaves its last face room or the room closes, the plugin revokes the room-only identity (`remove_home_member`) and drops room-scoped remotes from Friends' Bots. A failed join that created a new room-only identity is revoked too. A later person-grant reuses the handle and drops `roomOnly`.
@@ -90,9 +91,10 @@ Everything in `plugins/social/` (entry `plugins/social/index.js` and any helpers
 
 ## Tests
 
-Covered by the plugin's own tests under `plugins/social/` / core test suite as wired.
+Covered by the plugin's own tests under `plugins/social/` / core test suite as wired. Packaged-install import (#153) is `scripts/lint-plugins.mjs` plus `.github/scripts/plugin-imports.test.mjs`.
 
 ## Common mistakes
 
 - Putting social logic under `core/`.
 - Assuming social owns `web-search.js`.
+- Importing `../../../core/…` from plugin runtime sources (breaks a packaged install, #153).
