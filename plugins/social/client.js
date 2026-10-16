@@ -598,6 +598,30 @@ window.__ModuleLoader__.load({
       }
       return 'open'
     }
+    function shownFaceTitle(room) {
+      const named = String(room?.name || '').trim()
+      if (named && named !== 'Face-to-face room') return named
+      const owners = []
+      const seen = new Set()
+      for (const member of room?.members ?? []) {
+        const owner = String(member.ownerName || member.owner_name || '').trim()
+        const key = owner.toLowerCase()
+        if (!owner || seen.has(key)) continue
+        seen.add(key)
+        owners.push(owner)
+      }
+      const code = String(room?.joinCode || room?.code || '').replace(/\D/g, '').slice(0, 6)
+      const bits = ['Face-to-face']
+      if (owners.length) bits.push(owners.slice(0, 3).join(', '))
+      if (code.length === 6) bits.push(code)
+      else {
+        const at = Date.parse(room?.startedAt || room?.expiresAt || '')
+        const when = Number.isFinite(at) ? new Date(at) : new Date()
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        bits.push(`${months[when.getMonth()]} ${when.getDate()} ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`)
+      }
+      return bits.join(' · ')
+    }
     function FaceRoomCard({ room, actions, onChange, roster, remoteChats, past } = {}) {
       const [busy, setBusy] = useState('')
       const [note, setNote] = useState(null)
@@ -627,7 +651,7 @@ window.__ModuleLoader__.load({
             shown.map(m => h('span', { key: m.handle || m.id, 'data-flybot': 'face-card-member', 'data-handle': m.handle },
               h(FaceAvatar, { bot: look(m), size: 20 }))),
             extra ? h('span', { className: 'fs-stack-more' }, `+${extra}`) : null),
-          h('span', { className: 'fs-name' }, room.name || 'Face-to-face room'),
+          h('span', { className: 'fs-name' }, shownFaceTitle(room)),
           h('span', { className: 'fs-chip', 'data-flybot': 'face-status' }, faceChip(room)),
           h('span', { className: 'fs-face-actions', onClick: event => event.stopPropagation() },
             past
