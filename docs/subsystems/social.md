@@ -56,6 +56,14 @@ Everything in `plugins/social/` (entry `plugins/social/index.js` and any helpers
 - **Leave** after the number is void (`bot_not_found` / room already gone) still drops the room off the active list onto **Past rooms**. Past rows are unique by `faceRoomId` and have one primary action (**Open**); live rows are click-to-open with **Leave** only (no Open/Start/Leave triple in the narrow Friends' Bots column).
 - Sidebar **+** is a short action menu, not the To:/composer. Add friend has one-click **Copy invite link** (mint + clipboard). Friends' Bots keeps the **N to approve** badge and opens that chat; the stacked jump list stays out of the column. Held `face_room_message` drafts show in that face chat with readable names (`Chief → the room`), never raw `bot_01…`.
 
+### Face-room poll identity (#122)
+
+- `list` / `poll` must not persist or send `as=@`. An empty, missing, or literal `@` handle stays empty; GET omits `as` unless it is a real Bot handle. Rooms first seen from `list` seed `asBot` from `my_bots[].handle` (or a local member already in the snapshot). A stored bogus `@` is healed, and `face_room_not_found` for a still-listed room repairs local meta (clear `as`, retry with `my_bots` or no `as`) instead of warning on every poll.
+
+### Approval waiting notice (#123)
+
+- Syncing a held outbound draft into chat must not call `remote.chats.deliver` with a home-level handle (`@box.home`) or with no session. Resolve a listed friend Bot under that home, `chats.open` that 1:1 if needed, then deliver so the waiting line lands. If no Bot/session can be opened, skip with a clear log; never throw into the poll loop.
+
 ### Face-to-face two-instance rooms (#117)
 
 - Friends' Bots polls `social/face-rooms` with `poll: true` about every 5s while the section is open, so an opened room, a new member, and the compact rooms card appear without a reload. While matching, the status chip is a short `10m` / `joining` label so the name and **Start** fit; after **Enter chat** / start the hosted `room.face.status` is `open`. After **Leave**, only **Past rooms** remains — no empty "Face-to-face rooms" header or Auto-send. Waiting tiles use the server `label` (`Chief · BoxB`). A snapshot member that is new on this side still gets a join line when the join event is before the floored `after` cursor. Owner-typed lines in the open room fan out over `onFaceLine`: Bot Social face messages are bot-authored, so FlyBot sends a `FLYBOT-FACE-HUMAN` envelope as the owner's local room Bot (the owner's click/type is consent; a `pending_approval` is decided in that same step) and the other instance applies it as `authorKind: 'human'`. Incoming peer/human bodies are stored fenced in the room log (#98). Join still does not grant the Bot to friends; Friends' Bots also refreshes `social/remote-bots` on its open timer.
