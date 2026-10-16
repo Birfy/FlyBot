@@ -91,6 +91,10 @@ test('remote members: @ rows insert the handle, the sidebar groups by home, bubb
   assert.deepEqual(mentionRows(roster, 'a', 'coder').map(row => row.text), ['@coder.bob.home '])
   assert.deepEqual(remoteMembersByHome(roster).map(home => [home.home, home.name, home.bots.length]), [['@bob.home', 'Bob', 1], ['@eve.home', '@eve.home', 1]])
   assert.equal(remoteMessageText('<untrusted-message from="Coder">\nLGTM\n</untrusted-message>'), 'LGTM')
+  const { failureLabel } = await import('../src/client/diagnostics.js')
+  assert.equal(failureLabel('AUTH'), 'The API key was rejected')
+  assert.equal(failureLabel('PROVIDER', 'llm-deepseek: no API key'), 'This Bot has no model set up yet.')
+  assert.equal(failureLabel('BOOM', 'upstream exploded'), 'This Bot could not answer right now.')
   assert.equal(remoteMembersByHome({}).length, 0)
 })
 

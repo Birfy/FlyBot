@@ -120,16 +120,25 @@ export function isSpecialist(state, botId) {
   return state.bots?.[botId] !== undefined && !isDesignatedChief(state, botId)
 }
 
+const isPlaceholderName = (name) => {
+  const text = String(name ?? '').trim()
+  return !text || /^user$/i.test(text) || /^you$/i.test(text)
+}
+
 export function displayNameFor(state, memberId, fallback) {
-  if (fallback) return fallback
   for (const session of Object.values(state.authSessions || {})) {
-    if (session.memberId === memberId && !session.revokedAt && session.displayName) return session.displayName
+    if (session.memberId === memberId && !session.revokedAt && session.displayName && !isPlaceholderName(session.displayName)) {
+      return session.displayName
+    }
   }
   for (const room of Object.values(state.rooms || {})) {
-    const hit = currentParticipants(room).find(p => p.kind === 'human' && p.id === memberId && p.displayName)
+    const hit = currentParticipants(room).find(p => p.kind === 'human' && p.id === memberId && p.displayName && !isPlaceholderName(p.displayName))
     if (hit) return hit.displayName
   }
-  return state.members?.[memberId]?.id ?? memberId
+  const member = state.members?.[memberId]
+  if (member?.displayName && !isPlaceholderName(member.displayName)) return member.displayName
+  if (fallback && !isPlaceholderName(fallback)) return fallback
+  return fallback || member?.id || memberId
 }
 
 export function invitedBotOf(room, actor, state) {
@@ -442,13 +451,15 @@ export function install(rt) {
       }
     }
     if (line.authorId && line.authorKind) {
-      const name = line.who || (line.authorKind === 'bot' ? state.bots?.[line.authorId]?.name : displayNameFor(state, line.authorId)) || line.authorId
+      const name = line.authorKind === 'human'
+        ? ((!isPlaceholderName(line.who) ? line.who : undefined) || displayNameFor(state, line.authorId) || line.authorId)
+        : (line.who || state.bots?.[line.authorId]?.name || line.authorId)
       const text = remoteLine && line.text ? fenceRemoteText(name, line.text) : line.text
       return { ...line, who: name, text }
     }
     const humans = currentParticipants(room).filter(p => p.kind === 'human')
     const id = line.authorId || (humans.length === 1 ? humans[0].id : undefined)
-    const name = line.who && line.who !== 'User' ? line.who : (id ? displayNameFor(state, id, humans[0]?.displayName) : 'User')
+    const name = !isPlaceholderName(line.who) ? line.who : (id ? displayNameFor(state, id, humans[0]?.displayName) : 'User')
     return { ...line, who: name, ...(id ? { authorId: id, authorKind: 'human' } : {}) }
   }
 

@@ -105,6 +105,12 @@ var ZH = {
   "Paste an invite link or code.": "粘贴邀请链接或邀请码。",
   "Friend requests": "好友请求",
   "Accept or decline incoming requests.": "接受或拒绝收到的请求。",
+  "Accept invite": "接受邀请",
+  "Paste a friend’s invite link or code.": "粘贴朋友的邀请链接或邀请码。",
+  "Copy invite link": "复制邀请链接",
+  "Copy a link a friend can paste in Add friend.": "复制链接，朋友在添加好友里粘贴即可。",
+  "This Bot has no model set up yet.": "这个 Bot 还没有配置模型。",
+  "This Bot could not answer right now.": "这个 Bot 现在没法回答。",
   "Refreshing…": "正在刷新…",
   "Delete group": "删除群聊",
   "Open {name}'s chat": "打开 {name} 的对话",
@@ -1101,7 +1107,12 @@ var FAILURES = {
 };
 function failureLabel(code, message) {
   if (FAILURES[code]) return t(FAILURES[code]);
-  return message || code || t("Unknown error");
+  const raw = String(message ?? "");
+  if (/api key|no api key|missing (?:api )?key|not configured|no model/i.test(raw)) {
+    return t("This Bot has no model set up yet.");
+  }
+  if (raw || code) return t("This Bot could not answer right now.");
+  return t("Unknown error");
 }
 var URL_LIMIT = 7e3;
 var WHAT_MAX = 2e3;
@@ -5106,7 +5117,7 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
     replies.map((reply, index) => {
       const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? "gray" };
       if (reply.kind === "user") {
-        const who = reply.name || reply.authorId;
+        const who = reply.name && reply.name !== "User" ? reply.name : reply.authorId;
         return (0, import_react7.createElement)(
           "div",
           { key: `user-${index}`, className: "bt-urow", "data-author": reply.authorId, "data-author-name": who },
@@ -5114,14 +5125,14 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
           (0, import_react7.createElement)(
             "div",
             { className: "bt-ububble" },
-            (0, import_react7.createElement)(import_dsh_client_ui_primitives.MarkdownText, { text: reply.text, labels: mdLabels(), variant: "compact" })
+            (0, import_react7.createElement)(import_dsh_client_ui_primitives.MarkdownText, { text: remoteMessageText(reply.text), labels: mdLabels(), variant: "compact" })
           )
         );
       }
       if (reply.kind === "failed") {
         return (0, import_react7.createElement)(
           "div",
-          { key: `${reply.botId}-${index}`, className: "bt-event bt-event-error", role: "status", title: [reply.code, reply.status, reply.text].filter(Boolean).join(" · ") },
+          { key: `${reply.botId}-${index}`, className: "bt-event bt-event-error", role: "status" },
           t("{name} could not answer: {reason}", { name: bot.name, reason: failureLabel(reply.code, reply.text) })
         );
       }
@@ -5157,7 +5168,7 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
         return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("You stopped {name}'s work", { name: bot.name }));
       }
       if (reply.kind === "notice" || reply.kind === "joined" || reply.kind === "left" || reply.kind === "started") {
-        return (0, import_react7.createElement)("div", { key: `notice-${index}`, className: "bt-event", "data-flybot": "face-notice" }, reply.text);
+        return (0, import_react7.createElement)("div", { key: `notice-${index}`, className: "bt-event", "data-flybot": "face-notice" }, remoteMessageText(reply.text));
       }
       const remote = reply.remote || reply.handle && !roster.byId[reply.botId];
       if (remote) {
@@ -9288,7 +9299,12 @@ function NewChat({ mode, roster, actions }) {
         icon: (0, import_react21.createElement)(PeopleIcon),
         label: t(action.label),
         hint: action.hint ? t(action.hint) : void 0,
-        run: () => action.run({ close, actions, roster })
+        run: () => {
+          const done = Promise.resolve().then(() => action.run({ close, actions, roster }));
+          done.then((note) => {
+            if (typeof note === "string" && note) actions.notify?.(note);
+          }).catch((failure) => setError(failure?.message ?? String(failure)));
+        }
       });
     }
     if ((roster.agents ?? []).length === 0) {
@@ -9298,8 +9314,10 @@ function NewChat({ mode, roster, actions }) {
       }) });
     }
   }
-  for (const bot of matches) {
-    options.push({ key: bot.id, bot, label: pickerBotLabel(bot), hint: choosingAdmin ? t("Make admin") : group || picked.length > 0 ? t("Add to group chat") : void 0, run: () => openBot(bot) });
+  if (!menuOnly) {
+    for (const bot of matches) {
+      options.push({ key: bot.id, bot, label: pickerBotLabel(bot), hint: choosingAdmin ? t("Make admin") : group || picked.length > 0 ? t("Add to group chat") : void 0, run: () => openBot(bot) });
+    }
   }
   if (wanted !== "" && !exact && mode !== "search") options.push({ key: "create", icon: (0, import_react21.createElement)(PlusIcon), label: t("Create new Bot “{name}”", { name: query.trim() }), run: createBot });
   const active = Math.min(cursor, Math.max(options.length - 1, 0));

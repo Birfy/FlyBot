@@ -25,7 +25,7 @@ diff --git a/client.js b/client.js
    Add: "添加",
    Close: "关闭",
    Copy: "复制",
-@@ -84,14 +84,34 @@ var ZH = {
+@@ -84,14 +84,40 @@ var ZH = {
    "Remove Main Bot role": "取消主 Bot",
    "Bot settings": "Bot 设置",
    "Create group chat": "新建群聊",
@@ -35,6 +35,12 @@ diff --git a/client.js b/client.js
 +  "Paste an invite link or code.": "粘贴邀请链接或邀请码。",
 +  "Friend requests": "好友请求",
 +  "Accept or decline incoming requests.": "接受或拒绝收到的请求。",
++  "Accept invite": "接受邀请",
++  "Paste a friend’s invite link or code.": "粘贴朋友的邀请链接或邀请码。",
++  "Copy invite link": "复制邀请链接",
++  "Copy a link a friend can paste in Add friend.": "复制链接，朋友在添加好友里粘贴即可。",
++  "This Bot has no model set up yet.": "这个 Bot 还没有配置模型。",
++  "This Bot could not answer right now.": "这个 Bot 现在没法回答。",
 +  "Refreshing…": "正在刷新…",
    "Delete group": "删除群聊",
    "Open {name}'s chat": "打开 {name} 的对话",
@@ -208,7 +214,17 @@ diff --git a/client.js b/client.js
  };
  Object.assign(ZH, HOST_ZH);
  var fill = (text, params) => params ? text.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match) : text;
-@@ -1046,8 +1046,8 @@ function failureLabel(code, message) {
+@@ -1042,12 +1042,17 @@ var FAILURES = {
+ };
+ function failureLabel(code, message) {
+   if (FAILURES[code]) return t(FAILURES[code]);
+-  return message || code || t("Unknown error");
++  const raw = String(message ?? "");
++  if (/api key|no api key|missing (?:api )?key|not configured|no model/i.test(raw)) {
++    return t("This Bot has no model set up yet.");
++  }
++  if (raw || code) return t("This Bot could not answer right now.");
++  return t("Unknown error");
  }
  var URL_LIMIT = 7e3;
  var WHAT_MAX = 2e3;
@@ -1177,12 +1193,10 @@ diff --git a/client.js b/client.js
  .bt-think-text{white-space:pre-wrap;margin-top:6px;padding-left:10px;border-left:2px solid var(--bt-line-2)}
  .bt-event{display:flex;justify-content:center;align-items:center;gap:2px;min-height:24px;margin:2px 0;font-size:12px;line-height:16px;color:var(--bt-ink-2);flex-wrap:wrap}
  .bt-event>span{padding:0 2px}
-@@ -2819,262 +2819,144 @@ function compileFragmentSelectors(text, names) {
-   });
- }
+@@ -2821,260 +2821,142 @@ function compileFragmentSelectors(text, names) {
  function installCompiledStyles(text, tag) {
--  const style = installStyles("", tag);
--  const cache = /* @__PURE__ */ new WeakMap();
+   const style = installStyles("", tag);
+   const cache = /* @__PURE__ */ new WeakMap();
 -  const render = () => {
 -    const names = /* @__PURE__ */ new Set();
 -    for (const sheet of document.styleSheets) {
@@ -1342,8 +1356,6 @@ diff --git a/client.js b/client.js
 -  }
 -  const half = frame / 2;
 -  return [[0, 0, half], [half, 0, half], [0, half, half], [half, half, half]];
-+  const style = installStyles("", tag);
-+  const cache = /* @__PURE__ */ new WeakMap();
 +  const render = () => {
 +    const names = /* @__PURE__ */ new Set();
 +    for (const sheet of document.styleSheets) {
@@ -2455,7 +2467,8 @@ diff --git a/client.js b/client.js
        bot.name,
 -      room2?.admin === bot.id ? (0, import_react6.createElement)("span", { className: "bt-group-role" }, t("Admin")) : null
 +      room2?.admin === bot.id ? (0, import_react7.createElement)("span", { className: "bt-group-role" }, t("Admin")) : null
-+    ),
+     ),
+-    (0, import_react6.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room2?.id, msgKey, useUi, lead })
 +    (0, import_react7.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room2?.id, msgKey, useUi, lead })
 +  );
 +}
@@ -2490,8 +2503,7 @@ diff --git a/client.js b/client.js
 +      { className: "bt-group-name", style: { color: inkText(colorOf(bot)) } },
 +      name,
 +      (0, import_react7.createElement)("span", { className: "bt-remote-handle", title: source.remote.home ?? handle, "aria-label": t("Friend's Bot") }, (0, import_react7.createElement)(GlobeMark), handle)
-     ),
--    (0, import_react6.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room2?.id, msgKey, useUi, lead })
++    ),
 +    (0, import_react7.createElement)(Bubbles, { texts: [stripTrace(text)], roster, selfId: bot.id, actions, sessionId, msgKey, useUi, lead }),
 +    files.length ? (0, import_react7.createElement)(RemoteFiles, { files, plugin: member?.plugin ?? "social", botId: roster.byId[sessionId]?.id ?? sessionId }) : null
 +  );
@@ -2815,7 +2827,7 @@ diff --git a/client.js b/client.js
        const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? "gray" };
        if (reply.kind === "user") {
 -        return (0, import_react6.createElement)("div", { key: `user-${index}`, className: "bt-urow" }, (0, import_react6.createElement)(
-+        const who = reply.name || reply.authorId;
++        const who = reply.name && reply.name !== "User" ? reply.name : reply.authorId;
 +        return (0, import_react7.createElement)(
            "div",
 -          { className: "bt-ububble" },
@@ -2826,7 +2838,7 @@ diff --git a/client.js b/client.js
 +          (0, import_react7.createElement)(
 +            "div",
 +            { className: "bt-ububble" },
-+            (0, import_react7.createElement)(import_dsh_client_ui_primitives.MarkdownText, { text: reply.text, labels: mdLabels(), variant: "compact" })
++            (0, import_react7.createElement)(import_dsh_client_ui_primitives.MarkdownText, { text: remoteMessageText(reply.text), labels: mdLabels(), variant: "compact" })
 +          )
 +        );
        }
@@ -2834,7 +2846,8 @@ diff --git a/client.js b/client.js
 -        return (0, import_react6.createElement)(
 +        return (0, import_react7.createElement)(
            "div",
-           { key: `${reply.botId}-${index}`, className: "bt-event bt-event-error", role: "status", title: [reply.code, reply.status, reply.text].filter(Boolean).join(" · ") },
+-          { key: `${reply.botId}-${index}`, className: "bt-event bt-event-error", role: "status", title: [reply.code, reply.status, reply.text].filter(Boolean).join(" · ") },
++          { key: `${reply.botId}-${index}`, className: "bt-event bt-event-error", role: "status" },
            t("{name} could not answer: {reason}", { name: bot.name, reason: failureLabel(reply.code, reply.text) })
          );
        }
@@ -2879,7 +2892,7 @@ diff --git a/client.js b/client.js
 +        return (0, import_react7.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("You stopped {name}'s work", { name: bot.name }));
 +      }
 +      if (reply.kind === "notice" || reply.kind === "joined" || reply.kind === "left" || reply.kind === "started") {
-+        return (0, import_react7.createElement)("div", { key: `notice-${index}`, className: "bt-event", "data-flybot": "face-notice" }, reply.text);
++        return (0, import_react7.createElement)("div", { key: `notice-${index}`, className: "bt-event", "data-flybot": "face-notice" }, remoteMessageText(reply.text));
 +      }
 +      const remote = reply.remote || reply.handle && !roster.byId[reply.botId];
 +      if (remote) {
@@ -6372,7 +6385,7 @@ diff --git a/client.js b/client.js
      if (text) await actions.send(room2.id, text);
      actions.openSession(room2.id);
      close();
-@@ -8411,42 +8411,65 @@ function NewChat({ mode, roster, actions }) {
+@@ -8411,42 +8411,72 @@ function NewChat({ mode, roster, actions }) {
        close();
        return;
      }
@@ -6412,7 +6425,12 @@ diff --git a/client.js b/client.js
 +        icon: (0, import_react21.createElement)(PeopleIcon),
 +        label: t(action.label),
 +        hint: action.hint ? t(action.hint) : void 0,
-+        run: () => action.run({ close, actions, roster })
++        run: () => {
++          const done = Promise.resolve().then(() => action.run({ close, actions, roster }));
++          done.then((note) => {
++            if (typeof note === "string" && note) actions.notify?.(note);
++          }).catch((failure) => setError(failure?.message ?? String(failure)));
++        }
 +      });
 +    }
      if ((roster.agents ?? []).length === 0) {
@@ -6423,9 +6441,12 @@ diff --git a/client.js b/client.js
        }) });
      }
    }
-   for (const bot of matches) {
+-  for (const bot of matches) {
 -    options.push({ key: bot.id, bot, label: bot.name, hint: choosingAdmin ? t("Make admin") : group || picked.length > 0 ? t("Add to group chat") : void 0, run: () => openBot(bot) });
-+    options.push({ key: bot.id, bot, label: pickerBotLabel(bot), hint: choosingAdmin ? t("Make admin") : group || picked.length > 0 ? t("Add to group chat") : void 0, run: () => openBot(bot) });
++  if (!menuOnly) {
++    for (const bot of matches) {
++      options.push({ key: bot.id, bot, label: pickerBotLabel(bot), hint: choosingAdmin ? t("Make admin") : group || picked.length > 0 ? t("Add to group chat") : void 0, run: () => openBot(bot) });
++    }
    }
 -  if (wanted !== "" && !exact && mode !== "search") options.push({ key: "create", icon: (0, import_react20.createElement)(PlusIcon), label: t("Create new Bot “{name}”", { name: query.trim() }), run: createBot });
 +  if (wanted !== "" && !exact && mode !== "search") options.push({ key: "create", icon: (0, import_react21.createElement)(PlusIcon), label: t("Create new Bot “{name}”", { name: query.trim() }), run: createBot });

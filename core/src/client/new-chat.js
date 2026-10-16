@@ -122,7 +122,12 @@ export function NewChat({ mode, roster, actions }) {
         icon: h(PeopleIcon),
         label: t(action.label),
         hint: action.hint ? t(action.hint) : undefined,
-        run: () => action.run({ close, actions, roster }),
+        run: () => {
+          const done = Promise.resolve().then(() => action.run({ close, actions, roster }))
+          done.then((note) => {
+            if (typeof note === 'string' && note) actions.notify?.(note)
+          }).catch((failure) => setError(failure?.message ?? String(failure)))
+        },
       })
     }
     // A team holds at most one Agent; the entry exists only while there is none.
@@ -130,8 +135,12 @@ export function NewChat({ mode, roster, actions }) {
       options.push({ key: 'agent', icon: h(FishLogo, { size: 16 }), label: t('Add Agent'), run: () => run(async () => { await actions.addAgent(); close() }) })
     }
   }
-  for (const bot of matches) {
-    options.push({ key: bot.id, bot, label: pickerBotLabel(bot), hint: choosingAdmin ? t('Make admin') : group || picked.length > 0 ? t('Add to group chat') : undefined, run: () => openBot(bot) })
+  // The + menu is a short action list. Individual Bots (Chief and the rest) belong on
+  // New chat, not mixed in with Add friend / Face-to-face.
+  if (!menuOnly) {
+    for (const bot of matches) {
+      options.push({ key: bot.id, bot, label: pickerBotLabel(bot), hint: choosingAdmin ? t('Make admin') : group || picked.length > 0 ? t('Add to group chat') : undefined, run: () => openBot(bot) })
+    }
   }
   if (wanted !== '' && !exact && mode !== 'search') options.push({ key: 'create', icon: h(PlusIcon), label: t('Create new Bot “{name}”', { name: query.trim() }), run: createBot })
   const active = Math.min(cursor, Math.max(options.length - 1, 0))
