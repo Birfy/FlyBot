@@ -6,10 +6,10 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
 - **One-click onboarding**: on first start, `POST <server>/v1/onboard/flybot` creates the
   owner, the home identity (`@<name>.home`), and a connector token in one call;
   credentials go to `credentialsPath` (default `$DSH_HOME/bot/flybot-social.json`, mode 600).
-  If that call fails (for example HTTP 409 because `@<displayName>.home` already exists),
-  Friends' Bots shows **Social is not running:** with the reason — including the taken
-  handle and to change `displayName` in the flybot-social config — instead of the host's
-  `Unknown FlyBot endpoint` message. The same failure is written to Settings → Feedback.
+  If `@<displayName>.home` is taken, onboarding retries `Name2`, `Name3`, … so a second
+  install can start without editing YAML. Friends' Bots shows the connected handle with
+  Copy. If start still fails, it shows **Social is not running:** with the reason instead
+  of the host's `Unknown FlyBot endpoint` message. The same failure is written to Settings → Feedback.
 - **Members**: a local Bot becomes `@<bot>.<home>` (`add_home_member`) when it is invited, when it
   joins an invite, or at face-to-face join, stored as field `social.member`. There is no published
   flag: access is a per-Bot **grant** (Invite to this Bot → accept). Default deny, Chief included.
@@ -29,7 +29,7 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
   `flybot/social/auto-approve`). Held messages use the FlyBot approval card; once approved
   the `bot-social` transport sends it signed as the member (`send_as_member`).
 - **Inbound**: each member's inbox is polled; messages reach that Bot's chat as untrusted text (no owner approval).
-- **Outbound hold (Bot Social)**: a draft the server keeps as `pending_approval` is listed on `social/status` (`pendingApprovals`, `approvals`). The owner **Approve** / **Reject**s it on the in-chat card (`flybot.session.dock`); others see “Waiting for the owner's approval”. Friends' Bots shows a badge and a one-line jump list (chat name + truncated text). The owner's click calls `decide_approval` (confirm code used in the same step). This is separate from FlyBot's local approval card. Auto-accept on a friendship skips the hold for later messages. Room messages (`face_room_message`) use the same queue; **Auto-send** (`social/face-auto` → MCP `whoami` / `set_auto_approve { auto_approve_face_rooms }`) is one compact checkbox (tooltip) on the Face-to-face rooms header. Connector tokens cannot `GET`/`PATCH /v1/me`.
+- **Outbound hold (Bot Social)**: a draft the server keeps as `pending_approval` is listed on `social/status` (`pendingApprovals`, `approvals`). The owner **Approve** / **Reject**s it on the in-chat card (`flybot.session.dock`); others see “Waiting for the owner's approval” (the owner does not get a waiting bubble in their 1:1). Friends' Bots shows a badge and a one-line jump list (chat name + truncated text). The owner's click calls `decide_approval` (confirm code used in the same step). This is separate from FlyBot's local approval card. **Auto-send** on a friendship is off until the owner turns it on. Room messages (`face_room_message`) use the same queue; face-room **Auto-send** (`social/face-auto` → MCP `whoami` / `set_auto_approve { auto_approve_face_rooms }`) is one compact checkbox (tooltip) on the Face-to-face rooms header. Connector tokens cannot `GET`/`PATCH /v1/me`.
 - **Face-to-face rooms**: people next to each other join one group by typing the same 6-digit number. Friends' Bots lists each room as one row (name, avatar stack, open/closed chip, Open / Leave); closed and left rooms fold under **Past rooms**. See Quick Start below.
 - **Tools** (every local Bot; an ungranted Bot's send is refused by core `reach()`): `list_friend_bots`, `message_friend_bot`.
 - **Legacy**: with `token` + `botId` and no home, the per-bot identity path

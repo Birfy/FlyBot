@@ -30,7 +30,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, wri
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
-import { createSocialApi, untrustedText, mapPool, GRANT_CONCURRENCY } from './mcp-client.js'
+import { createSocialApi, untrustedText, mapPool, GRANT_CONCURRENCY, grantPersonView, memberHandleOf } from './mcp-client.js'
 import {
   createFaceRoomApi,
   isJoinCode,
@@ -55,6 +55,7 @@ import {
   presentRemoteHandles,
   isHomeLevelHandle,
   isHiddenRemote,
+  revealHiddenIfPresent,
   WAITING_OTHERS,
   REJECT_NOTE,
 } from './hidden-remotes.js'
@@ -88,12 +89,19 @@ export function approvalView(item, { localName } = {}) {
   const payload = item.message?.payload
   const text = draftText(payload && typeof payload === 'object' ? payload.text : payload) || draftText(item.summary)
   const kind = String(item.kind ?? '')
+  const viaComposer = item.via === 'composer'
+    || item.message?.via === 'composer'
+    || item.sender_kind === 'owner'
+    || item.sender_kind === 'human'
+    || item.from_kind === 'human'
   const named = typeof localName === 'function' ? localName(item.bot_id) : ''
-  const fromRaw = named
-    || (typeof item.from === 'string' ? item.from : item.from?.display_name)
-    || item.sender_name
-    || item.bot?.display_name
-  const from = cleanText(fromRaw) || (looksLikeBotId(item.bot_id) ? 'Bot' : cleanText(item.bot_id))
+  const fromRaw = viaComposer
+    ? 'You'
+    : named
+      || (typeof item.from === 'string' ? item.from : item.from?.display_name)
+      || item.sender_name
+      || item.bot?.display_name
+  const from = viaComposer ? 'You' : (cleanText(fromRaw) || (looksLikeBotId(item.bot_id) ? 'Bot' : cleanText(item.bot_id)))
   return {
     id,
     kind,
@@ -154,6 +162,13 @@ function handleFromOnboardError(body, displayName) {
   return typeof raw === 'string' && raw.trim() ? norm(raw) : homeHandleOf(displayName)
 }
 
+export const ONBOARD_TRIES = 12
+
+export function nextOnboardDisplayName(base, attempt) {
+  const name = String(base ?? 'FlyBot').trim() || 'FlyBot'
+  return attempt <= 1 ? name : `${name}${attempt}`
+}
+
 async function onboardError(response, displayName) {
   const status = response.status
   let body
@@ -181,6 +196,36 @@ export async function onboard({ server, displayName, webhookUrl, fetch: fetchImp
   if (!response.ok) throw await onboardError(response, displayName)
   const body = await response.json()
   return { token: body.connector.token, home: { id: body.home.bot_id, handle: body.home.handle }, ownerId: body.owner_id, webhook: body.webhook ?? null }
+}
+
+// First start: if @<displayName>.home is taken, retry FlyBot2, FlyBot3, … rather than
+// failing the plugin and asking the owner to edit YAML (#136).
+export async function onboardHome({ server, displayName, webhookUrl, fetch: fetchImpl = globalThis.fetch } = {}) {
+  const base = String(displayName ?? 'FlyBot').trim() || 'FlyBot'
+  let last
+  for (let attempt = 1; attempt <= ONBOARD_TRIES; attempt++) {
+    const name = nextOnboardDisplayName(base, attempt)
+    try {
+      return { ...(await onboard({ server, displayName: name, webhookUrl, fetch: fetchImpl })), displayName: name }
+    } catch (error) {
+      last = error
+      if (error?.code !== 'handle_taken') throw error
+    }
+  }
+  throw last
+}
+
+export function mapJoinInviteError(error) {
+  const msg = String(error?.message ?? error ?? '')
+  const code = String(error?.code ?? '')
+  const blob = `${code} ${msg}`
+  if (/relationship_exists/i.test(blob)) {
+    return Object.assign(new Error("You're already friends. That Bot is in Friends' Bots again."), { code: 'relationship_exists' })
+  }
+  if (/invite is used|invite_used|already used|max_uses|used_up/i.test(blob)) {
+    return Object.assign(new Error('This invite was already used. Ask your friend for a new one.'), { code: 'invite_used' })
+  }
+  return error
 }
 
 export const startFailureReason = (error) => String(error?.message ?? error ?? 'the plugin did not start').replace(/\s+/g, ' ').trim() || 'the plugin did not start'
@@ -368,17 +413,25 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
 
   // ------------------------------------------------------------ settings (per friend home)
   // autoAccept[home]: messages with that friend go through without the approval hold
-  // (default on for every friendship). via[handle]: the local Bot whose Bot Social
+  // (default off for every new friendship). via[handle]: the local Bot whose Bot Social
   // identity carries the user's own chat with that friend's Bot.
   const settingsPath = config.settingsPath ?? (config.credentialsPath ? join(dirname(config.credentialsPath), 'flybot-social-settings.json') : undefined)
-  let settings = { autoAccept: {}, via: {}, hiddenRemotes: {} }
-  try { if (settingsPath) settings = { autoAccept: {}, via: {}, hiddenRemotes: {}, ...JSON.parse(readFileSync(settingsPath, 'utf8')) } } catch { /* none yet */ }
+  let settings = { autoAccept: {}, via: {}, hiddenRemotes: {}, inboundBots: {}, roomBots: {} }
+  try { if (settingsPath) settings = { autoAccept: {}, via: {}, hiddenRemotes: {}, inboundBots: {}, roomBots: {}, ...JSON.parse(readFileSync(settingsPath, 'utf8')) } } catch { /* none yet */ }
   settings.hiddenRemotes ??= {}
+  settings.inboundBots ??= {}
+  settings.roomBots ??= {}
   const saveSettings = () => { if (settingsPath) { try { writeCredentials(settingsPath, settings) } catch (error) { warn('settings not saved', error) } } }
-  // Unset: on (config.autoAccept: false makes it opt-in instead).
+  // Unset: off. config.autoAccept: true makes it opt-out instead. New friends start in hold (#140).
   // Config keys may be written with or without '@' and in any case.
   const approvalHomes = Object.fromEntries(Object.entries(config.approval?.homes ?? {}).map(([key, value]) => [norm(key), value]))
-  const autoAcceptOf = friendHome => settings.autoAccept[norm(friendHome)] ?? (approvalHomes[norm(friendHome)] ? approvalHomes[norm(friendHome)] === 'auto' : config.autoAccept !== false)
+  const autoAcceptOf = (friendHome) => {
+    const key = norm(friendHome)
+    const stored = settings.autoAccept[key]
+    if (stored !== undefined) return stored === true
+    if (approvalHomes[key]) return approvalHomes[key] === 'auto'
+    return config.autoAccept === true
+  }
 
   // ------------------------------------------------------------ members
   const memberOf = botId => flybot.fields.get(botId, 'member')
@@ -483,7 +536,61 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
   // ------------------------------------------------------------ remote roster
   let remote = { homes: [] }
   let fetchedAt = 0
-  function asRemoteHomes(entries) {
+  function rememberInbound(handle) {
+    const key = norm(handle)
+    if (!key || key === '@') return
+    settings.inboundBots ??= {}
+    if (settings.inboundBots[key]) return
+    settings.inboundBots[key] = true
+    saveSettings()
+  }
+  function markRoomRemote(handle, faceId) {
+    const key = norm(handle)
+    const room = String(faceId ?? '')
+    if (!key || key === '@' || !room) return
+    if (settings.inboundBots?.[key]) return
+    settings.roomBots ??= {}
+    const rec = settings.roomBots[key] ?? { rooms: {} }
+    if (rec.rooms?.[room]) return
+    settings.roomBots[key] = { rooms: { ...rec.rooms, [room]: true } }
+    saveSettings()
+  }
+  function dropRoomRemotes(faceId) {
+    const room = String(faceId ?? '')
+    if (!room || !settings.roomBots) return
+    let changed = false
+    for (const handle of Object.keys(settings.roomBots)) {
+      if (!settings.roomBots[handle]?.rooms?.[room]) continue
+      const rooms = { ...settings.roomBots[handle].rooms }
+      delete rooms[room]
+      // Keep the handle so a server leak after leave does not put the Bot back in Friends' Bots.
+      settings.roomBots[handle] = { rooms, leftover: true }
+      changed = true
+    }
+    if (changed) saveSettings()
+  }
+  function outgoingPeerHandles() {
+    const keys = new Set()
+    if (typeof flybot.grants?.of !== 'function') return keys
+    for (const bot of flybot.bot.list()) {
+      for (const grant of flybot.grants.of(bot.id) ?? []) {
+        if (grant.roomId) continue
+        const member = memberHandleOf(grant.member || grant.grantee)
+        if (!member || isHomeLevelHandle(member)) continue
+        keys.add(member)
+      }
+    }
+    return keys
+  }
+  function keepGrantedRemote(bot) {
+    const key = norm(bot.handle)
+    if (!key) return false
+    if (settings.inboundBots?.[key] || settings.inboundBots?.[bot.home]) return true
+    if (outgoingPeerHandles().has(key)) return false
+    if (settings.roomBots?.[key]) return false
+    return true
+  }
+  function mapRemoteHomes(entries) {
     return (entries ?? []).map(entry => {
       const homeHandle = norm(entry.home.handle)
       return {
@@ -521,7 +628,8 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     try {
       if (home) {
         result = await client.callTool('list_remote_bots', { home: home.id })
-        unfiltered = { homes: asRemoteHomes(result?.homes) }
+        const mapped = mapRemoteHomes(result?.homes)
+        unfiltered = { homes: mapped.map(entry => ({ ...entry, bots: entry.bots.filter(bot => keepGrantedRemote(bot)) })) }
       } else {
         // Per-bot identity (legacy): each active friend is its own "home" of one Bot.
         const overview = await client.callTool('list_friends', config.botId ? { bot_id: config.botId } : {})
@@ -538,9 +646,15 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       throw error
     }
     fetchedAt = now()
+    const rosterAt = fetchedAt
     if (home) void syncServerAutoApprove((result?.homes ?? []))
-    // Grant listing is N HTTP calls; do not block Friends' Bots on it.
-    void syncOutgoingGrants().catch(error => warn('grants not synced', error))
+    // Grant listing is N HTTP calls; do not block Friends' Bots on it. Re-filter
+    // once grants arrive so reverse-friends of our invites drop (#138).
+    void syncOutgoingGrants().then(() => {
+      if (fetchedAt !== rosterAt || !home || !result) return
+      const mapped = mapRemoteHomes(result.homes)
+      applyRemoteRoster({ homes: mapped.map(entry => ({ ...entry, bots: entry.bots.filter(bot => keepGrantedRemote(bot)) })) }, { source, ok: true })
+    }).catch(error => warn('grants not synced', error))
     const published = applyRemoteRoster(unfiltered, { source, ok: true })
     if (published && typeof published.then === 'function') await published.catch(error => warn('remote chats not synced', error))
     void leaveMissingRemotes().catch(error => warn('unpublished remotes not left', error))
@@ -671,12 +785,17 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       try {
         const listed = await api.listGrants({ botId: member.bot_id })
         const roomScoped = (flybot.grants.of?.(bot.id) ?? []).filter(grant => grant.roomId)
-        const people = listed.filter(grant => !grant.roomId).map(grant => ({
-          id: grant.id || grant.relationshipId || `${bot.id}:${grant.grantee}`,
-          grantee: grant.grantee,
-          ...(grant.name ? { name: grant.name } : {}),
-          ...(grant.relationshipId ? { relationshipId: grant.relationshipId } : {}),
-        }))
+        const people = listed.filter(grant => !grant.roomId).map(grant => {
+          const view = grantPersonView(grant)
+          return {
+            id: grant.id || grant.relationshipId || `${bot.id}:${grant.grantee}`,
+            grantee: grant.grantee,
+            ...(view.label ? { name: view.label } : grant.name ? { name: grant.name } : {}),
+            ...(view.home ? { home: view.home } : {}),
+            ...(view.member ? { member: view.member } : {}),
+            ...(grant.relationshipId ? { relationshipId: grant.relationshipId } : {}),
+          }
+        })
         await flybot.grants.set(bot.id, [...people, ...roomScoped])
       } catch (error) {
         warn(`${bot.name} grants not synced`, error)
@@ -706,7 +825,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     const override = typeof fromBotId === 'string' ? flybot.fields.get(fromBotId, 'autoApprove')?.[friendHome] : undefined
     if (override === true) return 'auto'
     if (override === false) return 'hold'
-    // Auto-accept (on unless the owner switched it off for this friend in the Friends panel).
+    // Auto-send (off unless the owner switched it on for this friend in Friends' Bots).
     if (autoAcceptOf(friendHome)) return 'auto'
     const homeSetting = approvalHomes[norm(friendHome)]
     if (homeSetting) return homeSetting
@@ -1082,25 +1201,62 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       from = { from_bot_id: member.bot_id }
       joinedAs = { botId: bot.id, botName: bot.name, handle: norm(member.handle) }
     }
-    const joined = await client.callTool('join_invite', { code: value.replace(/^.*\/i\//, '').replace(/[?#].*$/, ''), ...from })
+    const before = new Set(listedRemoteBots().map(bot => bot.handle))
+    let joined
+    try {
+      joined = await client.callTool('join_invite', { code: value.replace(/^.*\/i\//, '').replace(/[?#].*$/, ''), ...from })
+    } catch (error) {
+      const mapped = mapJoinInviteError(error)
+      if (mapped.code === 'relationship_exists' && home) {
+        try {
+          const result = await client.callTool('list_remote_bots', { home: home.id })
+          const homes = mapRemoteHomes(result?.homes)
+          const next = revealHiddenIfPresent(settings, presentRemoteHandles(homes))
+          if (next !== settings) { settings = next; saveSettings() }
+          fetchedAt = 0
+          await remoteBots({ fresh: true }).catch(() => {})
+        } catch (revealError) {
+          warn('could not unhide after relationship_exists', revealError)
+        }
+      }
+      throw mapped
+    }
     let status = joined.status
     if (joined.awaiting === 'your_owner_approval' && joined.approval_id) {
       await confirmedCall('decide_approval', { approval_id: joined.approval_id, decision: 'approved' })
       status = 'pending_target'
     }
     fetchedAt = 0
-    void remoteBots({ fresh: true }).catch(() => {})
-    // A new friendship starts with auto-accept on (switchable per friend in Friends' Bots).
-    const inviterHome = joined.inviter?.handle ? homeOfPeer(joined.inviter.handle) : undefined
-    if (joined.relationship_id && (inviterHome === undefined || autoAcceptOf(inviterHome))) await serverAutoApprove(joined.relationship_id, true)
-    return { relationshipId: joined.relationship_id, status, inviter: joined.inviter?.handle ? norm(joined.inviter.handle) : undefined, inviterName: joined.inviter?.display_name, ...(joinedAs ? { joinedAs } : {}) }
+    const roster = await remoteBots({ fresh: true }).catch(() => remote)
+    const added = (roster?.homes ?? []).flatMap(entry => entry.bots).filter(bot => !before.has(bot.handle))
+    for (const bot of added) rememberInbound(bot.handle)
+    const offered = joined.bot ?? joined.inviter?.bot ?? joined.offered_bot
+    if (offered?.handle) rememberInbound(offered.handle)
+    const inviterHome = joined.inviter?.handle ? homeOfPeer(joined.inviter.handle) : added[0]?.home
+    const inviterName = cleanText(joined.inviter?.display_name || joined.inviter?.owner_display_name || added[0]?.owner || added[0]?.homeName)
+    const inviterBotName = cleanText(offered?.display_name || offered?.name || (added.length === 1 ? added[0].name : ''))
+    // A new friendship starts with Auto-send off; only push server auto-approve if the owner already opted in.
+    if (joined.relationship_id && autoAcceptOf(inviterHome)) await serverAutoApprove(joined.relationship_id, true)
+    return {
+      relationshipId: joined.relationship_id,
+      status,
+      inviter: joined.inviter?.handle ? norm(joined.inviter.handle) : undefined,
+      inviterName: inviterName || undefined,
+      ...(inviterBotName ? { inviterBotName } : {}),
+      ...(joinedAs ? { joinedAs } : {}),
+    }
   }))
   disposers.push(flybot.api.handle('social/respond', async ({ relationshipId, decision } = {}) => {
     if (decision !== 'accept' && decision !== 'decline') throw new Error('decision is accept or decline')
     const result = await confirmedCall('respond_friend_request', { relationship_id: String(relationshipId ?? ''), decision, ...(decision === 'accept' ? { grant_capabilities: ['chat.public'] } : {}) })
     if (decision === 'accept') {
-      void remoteBots({ fresh: true }).catch(() => {})
-      await serverAutoApprove(String(relationshipId ?? ''), true)
+      const before = new Set(listedRemoteBots().map(bot => bot.handle))
+      const roster = await remoteBots({ fresh: true }).catch(() => remote)
+      for (const bot of (roster?.homes ?? []).flatMap(entry => entry.bots)) {
+        if (!before.has(bot.handle)) rememberInbound(bot.handle)
+      }
+      const peerHome = roster?.homes?.find(entry => entry.bots?.length)?.home
+      if (autoAcceptOf(peerHome)) await serverAutoApprove(String(relationshipId ?? ''), true)
     }
     return { relationshipId, status: result?.status ?? (decision === 'accept' ? 'active' : 'declined') }
   }))
@@ -1124,13 +1280,17 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       botId: bot.id,
       botName: bot.name,
       granted: hasPersonGrant(bot.id),
-      grants: grants.map(grant => ({
-        id: grant.id,
-        grantee: grant.grantee,
-        name: grant.name,
-        relationshipId: grant.relationshipId,
-        rooms: roomsUsing(bot.id, grant.grantee),
-      })),
+      grants: grants.map(grant => {
+        const view = grantPersonView(grant)
+        return {
+          id: grant.id,
+          grantee: view.home || grant.home || grant.grantee,
+          name: view.label || grant.name,
+          home: view.home || grant.home,
+          relationshipId: grant.relationshipId,
+          rooms: roomsUsing(bot.id, grant.grantee),
+        }
+      }),
       rooms,
     }
   }, { read: true }))
@@ -1248,10 +1408,11 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     }
     return pick(openable)
   }
-  async function postChatNote(item, text) {
+  async function postChatNote(item, text, { chats: toChats = true } = {}) {
     for (const room of roomsForApproval(item)) {
       try { flybot.rooms.postNotice?.(room.id, text) } catch (error) { warn('approval notice not posted', error) }
     }
+    if (!toChats) return
     const chats = service.remote?.chats ?? flybot.remote?.chats
     const deliver = chats?.deliver
     if (!item?.to || !deliver) return
@@ -1271,7 +1432,8 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     let changed = false
     for (const item of items ?? []) {
       if (settings.approvalNotices[item.id]) continue
-      await postChatNote(item, WAITING_OTHERS)
+      // Owner 1:1 chats use the Approve / Reject dock. Do not post a waiting bubble there (#140).
+      await postChatNote(item, WAITING_OTHERS, { chats: false })
       settings.approvalNotices[item.id] = { at: now(), kind: 'waiting' }
       changed = true
     }
@@ -1587,8 +1749,10 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       }
       if (event.eventCursor) settings.faceRooms[snapshot.roomId].cursor = Math.max(settings.faceRooms[snapshot.roomId].cursor, event.eventCursor)
     }
+    const localHandles = new Set(locals.map(bot => bot.handle).filter(Boolean))
     for (const member of snapshot.members ?? []) {
       const handle = norm(member.handle)
+      if (handle && !localHandles.has(handle)) markRoomRemote(handle, snapshot.roomId)
       const key = `join:${handle}`
       if (!handle || previousLive.has(handle) || joinedFromEvents.has(handle) || seen.includes(key)) continue
       seen = rememberEvent(seen, key)
@@ -1654,6 +1818,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
             || { faceRoomId: serverId, roomId: meta?.localRoomId, name: 'Face-to-face room', status: 'closed', members: [] })
           if (meta?.localRoomId) await flybot.rooms.dropFace?.(meta.localRoomId).catch(() => {})
           delete settings.faceRooms[serverId]
+          dropRoomRemotes(serverId)
           for (const handle of asBotsOf(meta)) {
             const left = botByHandle(handle)
             if (left) await releaseRoomOnlyIdentity(left.id)
@@ -1727,11 +1892,14 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       await flybot.rooms.dropFace?.(meta.localRoomId).catch(() => {})
     }
     delete settings.faceRooms[id]
+    dropRoomRemotes(id)
     for (const handle of asBotsOf(meta)) {
       const left = botByHandle(handle)
       if (left) await releaseRoomOnlyIdentity(left.id)
     }
     saveSettings()
+    fetchedAt = 0
+    void remoteBots({ fresh: true }).catch(() => {})
     armSocialPoll()
     return { roomId: meta?.localRoomId, faceRoomId: id, status: result?.status || 'left' }
   }
@@ -1836,7 +2004,7 @@ export async function startSocial(service, config = {}) {
     }
   }
   if (credentials === undefined && explicit === undefined && config.server && config.onboard !== false) {
-    credentials = { ...(await onboard({ server: config.server, displayName: config.displayName ?? 'FlyBot', webhookUrl: config.webhookUrl, fetch: config.fetch })), server: serverKey(config.server) }
+    credentials = { ...(await onboardHome({ server: config.server, displayName: config.displayName ?? 'FlyBot', webhookUrl: config.webhookUrl, fetch: config.fetch })), server: serverKey(config.server) }
     if (config.credentialsPath) {
       // Another server's credentials stay, under their server, for switching back.
       const previous = readCredentials(config.credentialsPath)

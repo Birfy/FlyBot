@@ -119,9 +119,9 @@ Point FlyBot at that server in `~/.dsh/profiles/web/cordis.patch.yml`, then rest
     displayName: Your Name
 ```
 
-On first start FlyBot registers your home. No Bot is shared until you grant it. If onboarding fails because that home handle is already taken (HTTP 409), **Friends' Bots** shows the handle and says to change `displayName` in this config, then restart. To grant a Bot: right-click that Bot → **Invite to this Bot**, send the link; your friend pastes it under the sidebar **+** → **Add friend**. Accepting the invite grants that Bot only.
+On first start FlyBot registers your home. No Bot is shared until you grant it. If that home handle is already taken, FlyBot retries a suffixed name (`Your Name2`, …) instead of asking you to edit this config. **Friends' Bots** shows your connected handle with Copy. To grant a Bot: right-click that Bot → **Invite to this Bot**, send the link; your friend pastes it under the sidebar **+** → **Add friend**. Accepting the invite grants that Bot only.
 
-A friend's inbound messages arrive immediately. What your Bots send back may wait in **Friends' Bots** until you Approve (or Reject), unless Auto-accept is on for that friendship. If a friend sees no reply, look for the **to approve** badge there.
+A friend's inbound messages arrive immediately. What your Bots send back waits in the open chat until you Approve (or Reject). Auto-send for a new friend is off until you turn it on. If a friend sees no reply, look for the **to approve** badge in **Friends' Bots**.
 
 Without a `server`, the social plugin stays idle by design. Tree works without Bot Social.
 

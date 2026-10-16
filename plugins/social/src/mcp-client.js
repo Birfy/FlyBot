@@ -166,15 +166,56 @@ function asList(value) {
   return []
 }
 
+// Chief@chief.selfb1935.home / @chief.selfb1935.home / @selfb1935.home → a comparable handle.
+export function memberHandleOf(value) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  const nested = raw.match(/@([^@\s]+)$/)
+  const body = (nested ? nested[1] : raw).replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 120)
+  return body ? `@${body}` : ''
+}
+
+// A person home from a grant peer: @chief.selfb1935.home → @selfb1935.home.
+export function personHomeOf(handle) {
+  const key = memberHandleOf(handle)
+  if (!key) return ''
+  const parts = key.slice(1).split('.')
+  if (parts.length >= 2 && parts.at(-1) === 'home') return `@${parts.at(-2)}.home`
+  return key
+}
+
+function titleHome(home) {
+  const part = String(home ?? '').replace(/^@/, '').replace(/\.home$/i, '')
+  if (!part) return ''
+  return part.charAt(0).toUpperCase() + part.slice(1)
+}
+
+export function grantPersonView(grant) {
+  const raw = String(grant?.grantee ?? '')
+  const member = memberHandleOf(raw)
+  const home = personHomeOf(raw)
+  const rawName = String(grant?.name ?? '').trim()
+  const nameLooksLikeHandle = /@/.test(rawName) || /[a-z0-9]+@[a-z0-9.]/i.test(rawName)
+  const person = (!nameLooksLikeHandle && rawName) ? rawName.replace(/\s+/g, ' ').trim().slice(0, 60) : titleHome(home)
+  const label = home ? `${person} (${home})` : person
+  return { home, member, person, label }
+}
+
 export function normalizeGrant(item) {
   if (!item || typeof item !== 'object') return undefined
   const grantee = item.grantee ?? item.peer?.handle ?? item.handle ?? item.home
   if (!grantee) return undefined
   const id = item.id ?? item.grant_id ?? item.relationship_id ?? item.relationshipId
+  const view = grantPersonView({
+    grantee,
+    name: item.name ?? item.peer?.display_name ?? item.display_name ?? item.peer?.owner_display_name,
+  })
   return {
     ...(id ? { id: String(id) } : {}),
     grantee: String(grantee),
-    ...(item.name || item.peer?.display_name || item.display_name ? { name: String(item.name ?? item.peer?.display_name ?? item.display_name) } : {}),
+    ...(view.label ? { name: view.label } : {}),
+    ...(view.home ? { home: view.home } : {}),
+    ...(view.member ? { member: view.member } : {}),
     ...(item.relationship_id || item.relationshipId ? { relationshipId: String(item.relationship_id ?? item.relationshipId) } : {}),
     ...(item.room_id || item.roomId ? { roomId: String(item.room_id ?? item.roomId) } : {}),
   }
@@ -185,8 +226,8 @@ export function normalizeGrants(value) {
 }
 
 // Owner MCP + REST grant/invite helpers. Named methods so social.js never builds
-// URLs or tool names inline; a later server can add list_grants / revoke_grant
-// without touching the plugin's grant bookkeeping.
+// URLs or tool names inline. Prefers list_bot_grants / revoke_bot_grant, then
+// list_grants / revoke_grant, then REST / list_friends.
 export function createSocialApi({ server, token, fetch: fetchImpl = socialFetch, timeoutMs = CALL_TIMEOUT_MS, client } = {}) {
   const mcp = client ?? createMcpClient({ server, token, fetch: fetchImpl, timeoutMs })
   const base = String(server ?? '').replace(/\/+$/, '')
@@ -227,13 +268,14 @@ export function createSocialApi({ server, token, fetch: fetchImpl = socialFetch,
       ...(botId ? { bot_id: botId } : {}),
       ...(relationshipId ? { relationship_id: relationshipId } : {}),
     }
-    return normalizeGrants(await tryTool('list_grants', args, async () => {
+    const fromFriends = async () => {
       if (relationshipId && base) {
         try { return await rest('GET', `/v1/relationships/${encodeURIComponent(relationshipId)}/grants`) } catch { /* derive */ }
       }
       const overview = await mcp.callTool('list_friends', botId ? { bot_id: botId } : {})
       return (overview?.friends ?? []).filter(item => item.status === 'active' || item.status === undefined)
-    }))
+    }
+    return normalizeGrants(await tryTool('list_bot_grants', args, () => tryTool('list_grants', args, fromFriends)))
   }
 
   async function revokeGrant({ grantId, relationshipId, botId } = {}) {
@@ -242,7 +284,7 @@ export function createSocialApi({ server, token, fetch: fetchImpl = socialFetch,
       ...(relationshipId ? { relationship_id: relationshipId } : {}),
       ...(botId ? { bot_id: botId } : {}),
     }
-    return tryTool('revoke_grant', args, async () => {
+    const viaRestOrUnfriend = async () => {
       if (grantId && base) {
         try { return await rest('DELETE', `/v1/grants/${encodeURIComponent(grantId)}`) } catch { /* next */ }
       }
@@ -252,7 +294,8 @@ export function createSocialApi({ server, token, fetch: fetchImpl = socialFetch,
       }
       if (!relationshipId) throw new BotSocialError('Bot Social revoke_grant: which grant?', 'invalid')
       return mcp.callTool('remove_friend', { relationship_id: relationshipId })
-    })
+    }
+    return tryTool('revoke_bot_grant', args, () => tryTool('revoke_grant', args, viaRestOrUnfriend))
   }
 
   return {
