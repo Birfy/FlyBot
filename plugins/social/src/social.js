@@ -31,6 +31,7 @@ import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
 import { createSocialApi, untrustedText, mapPool, GRANT_CONCURRENCY, grantPersonView, memberHandleOf } from './mcp-client.js'
+import { lookFromServer, lookToServer, lookFingerprint } from './look.js'
 import {
   createFaceRoomApi,
   isJoinCode,
@@ -235,8 +236,9 @@ export function mapJoinInviteError(error) {
         : {}),
     })
   }
-  if (/invite is used|invite_used|already used|max_uses|used_up/i.test(blob)) {
-    return Object.assign(new Error('This invite was already used. Ask your friend for a new one.'), { code: 'invite_used' })
+  if (/invite_unavailable|invite is used|invite_used|already used|max_uses|used_up/i.test(blob)) {
+    const code = /invite_unavailable/i.test(blob) ? 'invite_unavailable' : 'invite_used'
+    return Object.assign(new Error('This invite was already used. Ask your friend for a new one.'), { code })
   }
   return error
 }
@@ -504,6 +506,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       handle: member.handle,
       ...(forFace ? { roomOnly: true } : {}),
     })
+    void syncBotLook(bot).catch(error => warn('look not synced', error))
     return memberOf(bot.id)
   }
   // Existing identities and granted Bots at startup, once ds-bot's team is loaded.
@@ -530,6 +533,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       }
     }
     await syncOutgoingGrants().catch(error => warn('grants not synced', error))
+    void syncLocalLooks().catch(error => warn('looks not synced', error))
   }
   disposers.push(flybot.on('bot.created', bot => {
     if (hasPersonGrant(bot.id)) void register(bot, { forInvite: true }).catch(error => warn('register failed', error))
@@ -546,9 +550,56 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     if (home && member) void client.callTool('remove_home_member', { home: home.id, member: member.bot_id }).catch(error => warn('revoke failed', error))
   }))
 
+  async function syncBotLook(bot) {
+    const member = memberOf(bot?.id)
+    if (!member?.bot_id || typeof api.updateBotProfile !== 'function') return
+    const patch = lookToServer(bot)
+    const fingerprint = lookFingerprint(bot)
+    if (settings.lookSynced?.[bot.id] === fingerprint) return
+    const empty = !('avatar' in patch) && !('color' in patch)
+    if (empty && !settings.lookSynced?.[bot.id]) return
+    const body = empty ? { avatar: null, color: null } : patch
+    try {
+      const result = await api.updateBotProfile({ botId: member.bot_id, ...body })
+      if (result?.unavailable) return
+    } catch (error) {
+      if (/invalid_avatar|invalid_color|invalid_request/i.test(`${error?.code ?? ''} ${error?.message ?? ''}`)) {
+        settings.lookSynced = { ...(settings.lookSynced ?? {}), [bot.id]: fingerprint }
+        saveSettings()
+        return
+      }
+      throw error
+    }
+    settings.lookSynced = { ...(settings.lookSynced ?? {}), [bot.id]: fingerprint }
+    saveSettings()
+  }
+  async function syncLocalLooks() {
+    for (const bot of flybot.bot.list()) {
+      try { await syncBotLook(bot) } catch (error) { warn(`${bot.name} look not synced`, error) }
+    }
+  }
+
   // ------------------------------------------------------------ remote roster
   let remote = { homes: [] }
   let fetchedAt = 0
+  // Handles we declined this session. Not persisted (that is the old-server local hide).
+  // Keeps a stale grant re-filter or a mock/lagging list_remote_bots from putting the
+  // Bot back before the server drops it. Cleared when the handle is absent from a
+  // successful home fetch, or on an explicit re-share / regranted join.
+  const declinedRemotes = new Set()
+  function unhideDeclined(handles) {
+    for (const handle of handles ?? []) {
+      const key = norm(handle)
+      if (key && key !== '@') declinedRemotes.delete(key)
+    }
+  }
+  function forgetDeclinedIfGone(homes) {
+    if (!declinedRemotes.size) return
+    const present = new Set(presentRemoteHandles(homes))
+    for (const key of [...declinedRemotes]) {
+      if (!present.has(key)) declinedRemotes.delete(key)
+    }
+  }
   function rememberInbound(handle) {
     const key = norm(handle)
     if (!key || key === '@') return
@@ -618,24 +669,37 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
   function keepGrantedRemote(bot) {
     const key = norm(bot.handle)
     if (!key) return false
+    if (declinedRemotes.has(key)) return false
     if (settings.inboundBots?.[key] || settings.inboundBots?.[bot.home]) return true
     if (outgoingPeerHandles().has(key)) return false
     if (settings.roomBots?.[key]) return false
     return true
   }
+  function mapRemoteBot(bot, homeHandle) {
+    const look = lookFromServer({
+      ...bot,
+      ...(bot.peer && typeof bot.peer === 'object' ? bot.peer : {}),
+    })
+    return {
+      handle: norm(bot.handle),
+      name: cleanText(bot.display_name, norm(bot.handle)),
+      home: homeHandle,
+      remote: true,
+      ...(bot.grant_id || bot.grantId ? { grantId: String(bot.grant_id || bot.grantId) } : {}),
+      ...(bot.bot_id ? { botId: String(bot.bot_id) } : {}),
+      ...look,
+    }
+  }
   function mapRemoteHomes(entries) {
     return (entries ?? []).map(entry => {
       const homeHandle = norm(entry.home.handle)
+      const homeLook = lookFromServer(entry.home)
       return {
         home: homeHandle,
         name: cleanText(entry.home.display_name),
         owner: cleanText(entry.home.owner_display_name),
-        bots: (entry.bots ?? []).map(bot => ({
-          handle: norm(bot.handle),
-          name: cleanText(bot.display_name, norm(bot.handle)),
-          home: homeHandle,
-          remote: true,
-        })).filter(bot => !isHomeLevelHandle(bot.handle, homeHandle)),
+        ...(homeLook.color ? { color: homeLook.color } : {}),
+        bots: (entry.bots ?? []).map(bot => mapRemoteBot(bot, homeHandle)).filter(bot => !isHomeLevelHandle(bot.handle, homeHandle)),
         // The friendship covers only these local members (an invite made for one Bot, or joined
         // as one Bot); empty when it covers this whole home. Only they can talk to this friend.
         via: (entry.via ?? []).map(norm),
@@ -643,12 +707,20 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     })
   }
   function listedRemoteBots() {
-    return remote.homes.flatMap(entry => entry.bots.map(bot => ({ handle: bot.handle, name: bot.name, home: entry.home, homeName: entry.name, owner: entry.owner })))
+    return remote.homes.flatMap(entry => entry.bots.map(bot => ({
+      handle: bot.handle, name: bot.name, home: entry.home, homeName: entry.name, owner: entry.owner,
+      ...(bot.color ? { color: bot.color } : {}),
+      ...(bot.avatar ? { avatar: bot.avatar } : {}),
+      ...(bot.avatarUpdatedAt ? { avatarUpdatedAt: bot.avatarUpdatedAt } : {}),
+    })))
   }
   function applyRemoteRoster(unfiltered, { source, ok }) {
     const next = forgetHiddenIfGone(settings, presentRemoteHandles(unfiltered.homes), { source, ok, homes: unfiltered.homes })
     if (next !== settings) { settings = next; saveSettings() }
-    remote = { homes: filterHiddenHomes(unfiltered.homes, settings) }
+    const dropped = declinedRemotes.size
+      ? unfiltered.homes.map(entry => ({ ...entry, bots: (entry.bots ?? []).filter(bot => !declinedRemotes.has(norm(bot.handle))) }))
+      : unfiltered.homes
+    remote = { homes: filterHiddenHomes(dropped, settings) }
     // Hidden and home-level handles stay out of publish, so remote-chat sync marks those
     // sessions gone/hidden instead of putting them back in the picker and sidebar.
     return flybot.remote?.publish(listedRemoteBots()) ?? remote
@@ -662,6 +734,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       if (home) {
         result = await client.callTool('list_remote_bots', { home: home.id })
         const mapped = mapRemoteHomes(result?.homes)
+        forgetDeclinedIfGone(mapped)
         backfillInboundFromRoster(mapped)
         unfiltered = { homes: mapped.map(entry => ({ ...entry, bots: entry.bots.filter(bot => keepGrantedRemote(bot)) })) }
       } else {
@@ -670,7 +743,14 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
         unfiltered = {
           homes: (overview?.friends ?? []).filter(item => item.status === 'active').map(item => ({
             home: norm(item.peer?.handle), name: cleanText(item.peer?.display_name), owner: cleanText(item.peer?.owner_display_name),
-            bots: [{ handle: norm(item.peer?.handle), name: cleanText(item.peer?.display_name, norm(item.peer?.handle)), home: norm(item.peer?.handle), remote: true, conversationId: item.last_conversation?.status === 'active' ? item.last_conversation.conversation_id : undefined }],
+            bots: [{
+              handle: norm(item.peer?.handle),
+              name: cleanText(item.peer?.display_name, norm(item.peer?.handle)),
+              home: norm(item.peer?.handle),
+              remote: true,
+              conversationId: item.last_conversation?.status === 'active' ? item.last_conversation.conversation_id : undefined,
+              ...lookFromServer(item.peer),
+            }],
           })),
         }
       }
@@ -687,11 +767,13 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     void syncOutgoingGrants().then(() => {
       if (fetchedAt !== rosterAt || !home || !result) return
       const mapped = mapRemoteHomes(result.homes)
+      forgetDeclinedIfGone(mapped)
       applyRemoteRoster({ homes: mapped.map(entry => ({ ...entry, bots: entry.bots.filter(bot => keepGrantedRemote(bot)) })) }, { source, ok: true })
     }).catch(error => warn('grants not synced', error))
     const published = applyRemoteRoster(unfiltered, { source, ok: true })
     if (published && typeof published.then === 'function') await published.catch(error => warn('remote chats not synced', error))
     void leaveMissingRemotes().catch(error => warn('unpublished remotes not left', error))
+    void syncLocalLooks().catch(error => warn('looks not synced', error))
     return remote
   }
   const remoteBot = async handle => (await remoteBots()).homes.flatMap(entry => entry.bots).find(bot => bot.handle === norm(handle))
@@ -701,9 +783,10 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     const parts = key.slice(1).split('.')
     return parts.length > 2 ? `@${parts.slice(1).join('.')}` : key
   }
-  // Hide a friend's Bot on this install only: persist, leave every room it is in, do not unfriend.
-  // It stays hidden across refresh while it remains granted. If the owner revokes the grant, the
-  // hide is forgotten; an explicit re-grant (it appears on list_remote_bots again) shows it.
+  // Hide a friend's Bot: decline the grant on Bot Social when we have a grant_id so the
+  // owner's Manage access drops it; an older server (no decline tool) falls back to a
+  // local hide. It stays hidden across refresh while it remains granted. If the owner
+  // revokes, or we declined, a later re-share (list_remote_bots / regranted join) shows it.
   function roomsHolding(key) {
     const listed = []
     for (const [faceId, meta] of Object.entries(settings.faceRooms ?? {})) {
@@ -759,14 +842,32 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
   async function hideRemote(handle) {
     const key = norm(handle)
     if (!key || key === '@') throw new Error('which Bot?')
-    settings = hideRemoteInSettings(settings, key, now())
-    saveSettings()
-    remote = { homes: filterHiddenHomes(remote.homes, settings) }
+    const listed = remote.homes.flatMap(entry => entry.bots).find(bot => bot.handle === key)
+    let localHide = true
+    if (listed?.grantId && typeof api.declineGrant === 'function') {
+      try {
+        const result = await api.declineGrant({ grantId: listed.grantId, botId: listed.botId })
+        if (result && result.unavailable !== true) {
+          localHide = false
+          declinedRemotes.add(key)
+        }
+      } catch (error) {
+        throw Object.assign(new Error('Could not remove that Bot. Try again.'), { cause: error })
+      }
+    }
+    if (localHide) {
+      settings = hideRemoteInSettings(settings, key, now())
+      saveSettings()
+      remote = { homes: filterHiddenHomes(remote.homes, settings) }
+    } else {
+      remote = { homes: remote.homes.map(entry => ({ ...entry, bots: entry.bots.filter(bot => bot.handle !== key) })) }
+    }
+    const homes = remote.homes
     const published = flybot.remote?.publish(listedRemoteBots())
     if (published && typeof published.then === 'function') await published.catch(error => warn('hidden remote chat not synced', error))
     const leftRooms = roomsHolding(key)
     void afterHideRemote(key).catch(error => warn('hide-remote follow-up failed', error))
-    return { handle: key, hidden: true, leftRooms, homes: remote.homes }
+    return { handle: key, hidden: true, leftRooms, homes }
   }
   async function leaveMissingRemotes() {
     if (typeof flybot.rooms?.list !== 'function') return
@@ -998,6 +1099,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     return polling
   }
   async function pollOnce() {
+    void syncLocalLooks().catch(error => warn('looks not synced', error))
     const targets = home
       ? flybot.bot.list().filter(bot => activeMember(bot.id)).map(bot => ({ local: bot, botId: memberOf(bot.id).bot_id }))
       : [{ local: (config.localBot ? flybot.bot.find(config.localBot) : undefined) ?? flybot.bot.list().find(bot => bot.isMain), botId: config.botId }]
@@ -1256,6 +1358,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
               return h === focus || h === homeKey || homeOfPeer(h) === homeKey
             })
             : []
+          if (handles.length) unhideDeclined(handles)
           const next = handles.length ? revealHiddenIfPresent(settings, handles) : settings
           if (next !== settings) { settings = next; saveSettings() }
           fetchedAt = 0
@@ -1271,11 +1374,23 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       await confirmedCall('decide_approval', { approval_id: joined.approval_id, decision: 'approved' })
       status = 'pending_target'
     }
+    const offered = joined.bot ?? joined.inviter?.bot ?? joined.offered_bot
+    const offeredHandle = offered?.handle ? norm(offered.handle) : ''
+    if (offeredHandle) unhideDeclined([offeredHandle])
+    const unhide = revealHiddenIfPresent(settings, offeredHandle ? [offeredHandle] : [])
+    if (unhide !== settings) { settings = unhide; saveSettings() }
     fetchedAt = 0
     const roster = await remoteBots({ fresh: true }).catch(() => remote)
     const added = (roster?.homes ?? []).flatMap(entry => entry.bots).filter(bot => !before.has(bot.handle))
     for (const bot of added) rememberInbound(bot.handle)
-    const offered = joined.bot ?? joined.inviter?.bot ?? joined.offered_bot
+    unhideDeclined(added.map(bot => bot.handle))
+    const again = revealHiddenIfPresent(settings, added.map(bot => bot.handle))
+    if (again !== settings) {
+      settings = again
+      saveSettings()
+      fetchedAt = 0
+      await remoteBots({ fresh: true }).catch(() => {})
+    }
     if (offered?.handle) rememberInbound(offered.handle)
     const inviterHome = joined.inviter?.handle ? homeOfPeer(joined.inviter.handle) : added[0]?.home
     const inviterName = cleanText(joined.inviter?.display_name || joined.inviter?.owner_display_name || added[0]?.owner || added[0]?.homeName)
@@ -1289,6 +1404,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       inviterName: inviterName || undefined,
       ...(inviterBotName ? { inviterBotName } : {}),
       ...(joinedAs ? { joinedAs } : {}),
+      ...(joined.regranted ? { regranted: true } : {}),
     }
   }))
   disposers.push(flybot.api.handle('social/respond', async ({ relationshipId, decision } = {}) => {

@@ -152,10 +152,24 @@ function parseBody(text, type) {
   return JSON.parse(text)
 }
 
-function isUnknownTool(error) {
+export function isUnknownTool(error) {
   const text = String(error?.message ?? error ?? '')
   const code = String(error?.code ?? '')
-  return code === 'unknown' || /unknown tool|no tool|not found|method not found|unrecognized/i.test(text)
+  const blob = `${code} ${text}`
+  if (/grant_not_found/i.test(blob)) return false
+  return code === 'unknown' || /unknown tool|no tool|method not found|unrecognized tool/i.test(text)
+}
+
+export function isGrantNotFound(error) {
+  const blob = `${error?.code ?? ''} ${error?.reason ?? ''} ${error?.message ?? error ?? ''}`
+  return /grant_not_found/i.test(blob)
+}
+
+export function isMissingEndpoint(error) {
+  if (isGrantNotFound(error)) return false
+  const code = String(error?.code ?? '')
+  const text = String(error?.message ?? error ?? '')
+  return code === 'http_404' || code === 'http_405' || /HTTP 404|HTTP 405/i.test(text)
 }
 
 function asList(value) {
@@ -248,7 +262,17 @@ export function createSocialApi({ server, token, fetch: fetchImpl = socialFetch,
     const text = await response.text()
     let data
     try { data = text ? JSON.parse(text) : {} } catch { data = { message: text } }
-    if (!response.ok) throw new BotSocialError(`Bot Social ${method} ${path}: HTTP ${response.status}`, `http_${response.status}`)
+    if (!response.ok) {
+      const reason = data?.code ?? data?.error?.code
+      const err = new BotSocialError(
+        `Bot Social ${method} ${path}: HTTP ${response.status}${reason ? ` ${reason}` : ''}`,
+        reason ? String(reason) : `http_${response.status}`,
+      )
+      err.status = response.status
+      err.detail = data
+      err.reason = reason
+      throw err
+    }
     // Grant REST is a last resort when the MCP tool is missing. Connector tokens are
     // forbidden on those /v1 routes (403 connector_token_rest_forbidden); callers catch
     // and fall through. Face-room REST lives in face-rooms.js and is allowed.
@@ -299,6 +323,67 @@ export function createSocialApi({ server, token, fetch: fetchImpl = socialFetch,
     return tryTool('revoke_bot_grant', args, () => tryTool('revoke_grant', args, viaRestOrUnfriend))
   }
 
+  async function updateBotProfile({ botId, displayName, avatar, color } = {}) {
+    const args = {
+      ...(botId ? { bot_id: botId } : {}),
+      ...(displayName !== undefined ? { display_name: displayName } : {}),
+      ...(avatar !== undefined ? { avatar } : {}),
+      ...(color !== undefined ? { color } : {}),
+    }
+    const body = {
+      ...(displayName !== undefined ? { display_name: displayName } : {}),
+      ...(avatar !== undefined ? { avatar } : {}),
+      ...(color !== undefined ? { color } : {}),
+    }
+    const viaRest = async (error) => {
+      if (!botId || !base) {
+        if (isUnknownTool(error) || isMissingEndpoint(error)) return { unavailable: true }
+        throw error ?? new BotSocialError('Bot Social update_bot_profile: which Bot?', 'invalid')
+      }
+      try {
+        return await rest('PATCH', `/v1/bots/${encodeURIComponent(botId)}/profile`, body)
+      } catch (restErr) {
+        if (isUnknownTool(restErr) || isMissingEndpoint(restErr)) return { unavailable: true }
+        throw restErr
+      }
+    }
+    try {
+      return await tryTool('update_bot_profile', args, viaRest)
+    } catch (error) {
+      if (isUnknownTool(error) || isMissingEndpoint(error)) return { unavailable: true }
+      throw error
+    }
+  }
+
+  async function declineGrant({ grantId, botId } = {}) {
+    if (!grantId) throw new BotSocialError('Bot Social decline_bot_grant: which grant?', 'invalid')
+    const args = {
+      grant_id: grantId,
+      ...(botId ? { bot_id: botId } : {}),
+    }
+    const viaRest = async (error) => {
+      if (!base) {
+        if (isUnknownTool(error) || isMissingEndpoint(error)) return { unavailable: true }
+        throw error ?? new BotSocialError('Bot Social decline_bot_grant: no server URL', 'no_server')
+      }
+      const suffix = botId ? `?bot_id=${encodeURIComponent(botId)}` : ''
+      try {
+        return await rest('DELETE', `/v1/remote-bots/${encodeURIComponent(grantId)}${suffix}`)
+      } catch (restErr) {
+        if (isGrantNotFound(restErr)) return { grant_id: grantId, status: 'declined', gone: true }
+        if (isUnknownTool(restErr) || isMissingEndpoint(restErr)) return { unavailable: true }
+        throw restErr
+      }
+    }
+    try {
+      return await tryTool('decline_bot_grant', args, viaRest)
+    } catch (error) {
+      if (isGrantNotFound(error)) return { grant_id: grantId, status: 'declined', gone: true }
+      if (isUnknownTool(error) || isMissingEndpoint(error)) return { unavailable: true }
+      throw error
+    }
+  }
+
   return {
     callTool: (name, args) => mcp.callTool(name, args),
     rest,
@@ -320,6 +405,8 @@ export function createSocialApi({ server, token, fetch: fetchImpl = socialFetch,
     sendAsMember: args => mcp.callTool('send_as_member', args),
     listGrants,
     revokeGrant,
+    updateBotProfile,
+    declineGrant,
   }
 }
 

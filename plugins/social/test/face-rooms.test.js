@@ -349,6 +349,14 @@ test('viewFaceMember keeps a friend Bot avatar when the payload has one', () => 
   assert.equal(pictured.color, 'green')
   assert.equal(faceMemberLook({ image: 'https://example.test/x.png' }).avatar.image, 'https://example.test/x.png')
   assert.equal(faceMemberLook({ avatar: { image: 'javascript:alert(1)' } }).avatar, undefined)
+  const preset = viewFaceMember({
+    handle: '@coder.bob.home', display_name: 'Coder',
+    avatar: 'star', avatar_kind: 'preset', color: '#2a92fe',
+  })
+  assert.equal(preset.avatar.shape, 'star')
+  assert.equal(preset.color, '#2a92fe')
+  const emoji = faceMemberLook({ avatar: '🌟', avatar_kind: 'emoji' })
+  assert.equal(emoji.avatar.emoji, '🌟')
 })
 
 test('viewMe maps auto_approve_face_rooms; face-room REST still works when /v1/me is 403', async () => {

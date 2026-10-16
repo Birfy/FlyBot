@@ -22,7 +22,10 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
   the handle and drops `roomOnly`. **Manage access** on the Bot lists who has it and **Revoke**.
 - **Remote roster**: `list_remote_bots` → friends' Bots grouped by home; sidebar section
   `flybot.sidebar.section#social` with a remote badge, `@` rows via
-  `flybot.composer.mention#social`. Remote Bots never enter `bot.list()`.
+  `flybot.composer.mention#social`. Remote Bots never enter `bot.list()`. Each row uses
+  the published `avatar` / `color` when the server sends them, else a handle-seeded look.
+  **Remove this Bot** declines that grant (`decline_bot_grant`) so it leaves the owner's
+  Manage access; an older server hides it locally.
 - **Send middleware `social`**: a remote target must be a Bot of a friend home; approval is
   per friend home (`approval: { default: 'hold', homes: { '@bob.home': 'auto' } }`),
   overridden per local Bot by field `social.autoApprove[home]` (UI endpoint
@@ -37,11 +40,14 @@ browser: `client.js`. Design: see "Social design: homes and members" in the root
 
 Server side (Bot Social, local only): `/v1/onboard/flybot`, `/v1/homes/:id/members`,
 `/v1/homes/:id/remote-bots`, `/v1/homes/:id/send`, grant REST (`GET /v1/relationships/{id}/grants`,
-`DELETE /v1/grants/{id}`), and owner MCP tools `add_home_member`,
+`DELETE /v1/grants/{id}`), `PATCH /v1/bots/{id}/profile`, `DELETE /v1/remote-bots/{grantId}`,
+and owner MCP tools `add_home_member`,
 `remove_home_member`, `list_home_members`, `list_remote_bots`, `send_as_member`,
-`create_invite`, `join_invite`, `list_grants`, `revoke_grant`. Grant/invite calls are isolated
+`create_invite`, `join_invite`, `list_grants`, `revoke_grant`, `update_bot_profile`,
+`decline_bot_grant`. Grant/invite/look calls are isolated
 in `src/mcp-client.js` (`createSocialApi`) so a later server can add tools without touching
-the plugin's grant bookkeeping.
+the plugin's grant bookkeeping. Look fields and `decline_bot_grant` are optional: an older
+server is unchanged (local hide; handle-seeded avatars).
 
 Tests (`test/social.test.js`) use a mocked server.
 

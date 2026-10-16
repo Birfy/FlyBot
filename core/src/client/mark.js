@@ -56,7 +56,7 @@ export function BotMark({ bot, look: given, size = 36, state = 'idle', live = fa
   const common = {
     ref,
     className: poked ? 'bt-mark bt-mark-poke' : 'bt-mark',
-    'data-shape': look.image ? 'image' : shapeId(look.shape),
+    'data-shape': look.image ? 'image' : look.emoji ? 'emoji' : shapeId(look.shape),
     'data-state': STATES.includes(state) ? state : 'idle',
     'data-live': live ? '' : undefined,
     'data-fidget': live ? FIDGETS[fnv1a(`${bot?.id ?? ''}:fidget`) % FIDGETS.length] : undefined,
@@ -70,6 +70,12 @@ export function BotMark({ bot, look: given, size = 36, state = 'idle', live = fa
     onAnimationEnd: poked ? (event) => { if (/^bt-poke/.test(event.animationName)) setPoked(false) } : undefined,
   }
   if (look.image) return h('span', common, h('img', { className: 'bt-mark-img', src: look.image, alt: '', draggable: false }))
+  if (look.emoji) {
+    return h('span', common, h('span', {
+      className: 'bt-mark-emoji',
+      style: { fontSize: Math.max(12, Math.round(size * 0.62)), lineHeight: 1 },
+    }, look.emoji))
+  }
   const box = shapeOf(look.shape).size
   return h('span', common, h('svg', { viewBox: `0 0 ${box} ${box}`, dangerouslySetInnerHTML: { __html: characterMarkup(look.shape, look.color).replaceAll(MASK_ID, maskId.current) } }))
 }

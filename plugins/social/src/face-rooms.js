@@ -10,6 +10,7 @@
 // (joined / left / started) is sanitized the same way as a display name.
 
 import { socialFetch } from './mcp-client.js'
+import { lookFromServer } from './look.js'
 
 export const FACE_JOIN_CODE = /^\d{6}$/
 export const FACE_MAX_MEMBERS = 8
@@ -305,18 +306,21 @@ export function platformStartedText(reason) {
 // Peer look is optional: only pass through a stored color / avatar when the payload
 // actually has one. Image URLs stay one line, no markup; a missing look is fine — the
 // client then uses the host BotMark seeded by handle.
+const HEX_ONLY = /^#[0-9a-f]{6}$/i
 export function faceMemberLook(member) {
   if (!member || typeof member !== 'object') return {}
   const out = {}
-  const color = typeof member.color === 'string' ? member.color.trim().slice(0, 32) : ''
+  const fromServer = lookFromServer(member)
+  const color = fromServer.color
+    || (typeof member.color === 'string' && !HEX_ONLY.test(member.color) ? member.color.trim().slice(0, 32) : '')
   if (color && !/[\n<>]/.test(color)) out.color = color
   const src = member.avatar && typeof member.avatar === 'object' ? member.avatar : {}
-  const avatar = {}
+  const avatar = { ...(fromServer.avatar ?? {}) }
   if (typeof src.shape === 'string' && /^[a-z][\w-]{0,31}$/.test(src.shape)) avatar.shape = src.shape
   const image = typeof src.image === 'string' ? src.image.trim() : (typeof member.image === 'string' ? member.image.trim() : '')
-  if (image && image.length < 2048 && /^(https?:\/\/|data:image\/)/i.test(image) && !/[\s<>]/.test(image)) avatar.image = image
+  if (image && image.length <= 65536 && /^(https?:\/\/|data:image\/)/i.test(image) && !/[\s<>]/.test(image)) avatar.image = image
   const emoji = typeof src.emoji === 'string' ? src.emoji.trim() : (typeof member.emoji === 'string' ? member.emoji.trim() : '')
-  if (emoji && !/[\n<>]/.test(emoji)) avatar.emoji = emoji.slice(0, 8)
+  if (emoji && !/[\n<>]/.test(emoji)) avatar.emoji = emoji.slice(0, 16)
   if (Object.keys(avatar).length) out.avatar = avatar
   return out
 }

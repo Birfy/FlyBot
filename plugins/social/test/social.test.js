@@ -9,7 +9,8 @@ import { apply as applyDsBot } from 'ds-bot'
 import { fakeContext } from './fake-ctx.js'
 import { apply as applySocial, inject, name } from '../index.js'
 import { approvalView, createSocial, draftText, homeHandleOf, onboard, onboardHome, nextOnboardDisplayName, mapJoinInviteError, registerUnavailable, startSocial, unavailableMessage } from '../src/social.js'
-import { createMcpClient, createSocialApi, untrustedText, mapPool, socialHttpAgent, fetchOptions, grantPersonView, memberHandleOf, personHomeOf, normalizeGrant } from '../src/mcp-client.js'
+import { createMcpClient, createSocialApi, untrustedText, mapPool, socialHttpAgent, fetchOptions, grantPersonView, memberHandleOf, personHomeOf, normalizeGrant, isUnknownTool, isGrantNotFound, isMissingEndpoint } from '../src/mcp-client.js'
+import { lookFromServer, lookToServer, lookFingerprint, hexOfColor } from '../src/look.js'
 import { encodeRoomShare } from '../../../core/src/shared/room-share.js'
 import { encodeFaceHuman } from '../src/face-rooms.js'
 import {
@@ -31,7 +32,9 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
     create_invite: a => ({ code: 'INV123', url: 'https://s/i/INV123', status: 'active', expires_at: '2026-10-21T00:00:00Z', bot: a.bot_id, auto_accept: a.auto_accept }),
     join_invite: a => {
       if (a.code === 'USED') throw Object.assign(new Error('Bot Social join_invite: invite is used'), { code: 'invite_used' })
+      if (a.code === 'UNAVAIL') throw Object.assign(new Error('Bot Social join_invite: invite_unavailable'), { code: 'invite_unavailable' })
       if (a.code === 'EXISTS') throw Object.assign(new Error('Bot Social join_invite: relationship_exists'), { code: 'relationship_exists', peer: { handle: '@bob.home', display_name: 'Bob' }, bot: { handle: '@coder.bob.home', display_name: 'Coder' } })
+      if (a.code === 'REGRANT') return { relationship_id: 'r1', status: 'active', regranted: true, inviter: { handle: 'bob.home', display_name: 'Bob' }, bot: { handle: '@coder.bob.home', display_name: 'Coder' } }
       return a.code === 'NEEDSOK'
         ? { relationship_id: 'r9', status: 'pending_requester_owner', awaiting: 'your_owner_approval', approval_id: 'apr9', inviter: { handle: 'eve.home', display_name: 'Eve' }, bot: { handle: '@helper.eve.home', display_name: 'Helper' } }
         : { relationship_id: 'r8', status: 'active', awaiting: null, inviter: { handle: 'bob.home', display_name: 'Bob' }, bot: { handle: '@coder.bob.home', display_name: 'Coder' } }
@@ -92,6 +95,14 @@ function mockServer({ token = 'owner-token', friends = true } = {}) {
     if (/\/v1\/grants\//.test(String(url)) && init.method === 'DELETE') {
       calls.push({ url, name: 'REST DELETE /v1/grants', args: { id: String(url).split('/').pop() } })
       return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }
+    if (/\/v1\/remote-bots\//.test(String(url)) && init.method === 'DELETE') {
+      calls.push({ url, name: 'REST DELETE /v1/remote-bots', args: { id: String(url).split('/').pop()?.split('?')[0] } })
+      return new Response(JSON.stringify({ error: { code: 'not_found', message: 'no such route' } }), { status: 404 })
+    }
+    if (/\/v1\/bots\/[^/]+\/profile/.test(String(url)) && init.method === 'PATCH') {
+      calls.push({ url, name: 'REST PATCH /v1/bots/profile', args: init.body ? JSON.parse(init.body) : {} })
+      return new Response(JSON.stringify({ error: { code: 'not_found', message: 'no such route' } }), { status: 404 })
     }
     if (String(url).includes('/v1/me')) {
       const meBody = init.body ? JSON.parse(init.body) : {}
@@ -3243,6 +3254,10 @@ test('#139: join errors are English and relationship_exists unhides', async (t) 
   assert.equal(used.ok, false)
   assert.match(used.error.message, /already used/i)
   assert.doesNotMatch(used.error.message, /invite is used/)
+  const unavailable = await call('flybot/social/join-invite', { code: 'UNAVAIL' })
+  assert.equal(unavailable.ok, false)
+  assert.match(unavailable.error.message, /already used/i)
+  assert.doesNotMatch(unavailable.error.message, /invite_unavailable/)
   const exists = await call('flybot/social/join-invite', { code: 'EXISTS' })
   assert.equal(exists.ok, false)
   assert.match(exists.error.message, /already friends/i)
@@ -3408,5 +3423,187 @@ test('#138: join success copy names the person and the Bot', () => {
   assert.match(src, /Talk through /)
   assert.match(src, /not shared unless you invite them to it/)
 })
+
+test('#137: look helpers map preset, emoji, data URL, and named color', () => {
+  assert.equal(hexOfColor('blue'), '#2a92fe')
+  assert.equal(hexOfColor('#ABCDef'), '#abcdef')
+  assert.deepEqual(lookFromServer({
+    avatar: 'star', avatar_kind: 'preset', color: '#2a92fe', avatar_updated_at: '2026-10-16T00:00:00Z',
+  }), { color: '#2a92fe', avatar: { shape: 'star' }, avatarUpdatedAt: '2026-10-16T00:00:00Z' })
+  assert.equal(lookFromServer({ avatar: '🌟', avatar_kind: 'emoji' }).avatar.emoji, '🌟')
+  const data = 'data:image/png;base64,AAAA'
+  assert.equal(lookFromServer({ avatar: data, avatar_kind: 'image' }).avatar.image, data)
+  assert.equal(lookFromServer({}).color, undefined)
+  assert.equal(lookFromServer({ color: 'green' }).color, undefined)
+  const patch = lookToServer({ color: 'deepseek', avatar: { shape: 'whale' } })
+  assert.equal(patch.color, '#4d6bfe')
+  assert.equal(patch.avatar, 'whale')
+  assert.equal(lookToServer({ avatar: { image: 'https://example.test/x.png' } }).avatar, undefined)
+  assert.ok(lookFingerprint({ color: 'blue', avatar: { shape: 'star' } }))
+})
+
+test('#137: list_remote_bots look fields are published and cached by avatar_updated_at', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const at = '2026-10-16T12:00:00Z'
+  server.tools.list_remote_bots = () => ({
+    homes: [{
+      relationship_id: 'r1',
+      home: { bot_id: 'h2', handle: '@bob.home', display_name: 'Bob', owner_display_name: 'Bob' },
+      bots: [{
+        bot_id: 'x1', handle: '@coder.bob.home', display_name: 'Coder', grant_id: 'gr_1',
+        avatar: 'star', avatar_kind: 'preset', color: '#2a92fe', avatar_updated_at: at,
+      }],
+    }],
+  })
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0 }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  const listed = (await call('flybot/social/remote-bots', { fresh: true })).value
+  const coder = listed.homes[0].bots.find(bot => bot.handle === '@coder.bob.home')
+  assert.equal(coder.color, '#2a92fe')
+  assert.equal(coder.avatar.shape, 'star')
+  assert.equal(coder.avatarUpdatedAt, at)
+  assert.equal(coder.grantId, 'gr_1')
+})
+
+test('#137: owner look is sent with update_bot_profile; old servers are skipped', async (t) => {
+  const { ctx, call, home, stop } = await team()
+  t.after(stop)
+  const painted = await call('update-bot', { id: 'a', color: 'deepseek', avatar: { shape: 'whale' } })
+  assert.equal(painted.ok, true, painted.error?.message)
+  const server = mockServer()
+  const settingsPath = join(home, 'flybot-social-settings.json')
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0, settingsPath }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await new Promise(resolve => setTimeout(resolve, 40))
+  let saved = {}
+  try { saved = JSON.parse(readFileSync(settingsPath, 'utf8')) } catch { /* none */ }
+  assert.equal(saved.lookSynced?.a, undefined, 'unknown tool is not a successful sync')
+  const probed = server.calls.filter(c => c.name === 'update_bot_profile').length
+  server.tools.update_bot_profile = (a) => ({ bot_id: a.bot_id, avatar: a.avatar, color: a.color, avatar_kind: 'preset', avatar_updated_at: '2026-10-16T00:00:00Z' })
+  await social.registerAll()
+  await new Promise(resolve => setTimeout(resolve, 40))
+  const sent = server.calls.filter(c => c.name === 'update_bot_profile')
+  assert.ok(sent.length > probed)
+  assert.equal(sent.at(-1).args.avatar, 'whale')
+  assert.equal(sent.at(-1).args.color, '#4d6bfe')
+  assert.ok(JSON.parse(readFileSync(settingsPath, 'utf8')).lookSynced?.a)
+})
+
+test('#139: decline_bot_grant on Remove; grant_not_found is already gone', async (t) => {
+  const { ctx, call, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const declined = []
+  server.tools.list_remote_bots = () => ({
+    homes: [{
+      relationship_id: 'r1',
+      home: { bot_id: 'h2', handle: '@bob.home', display_name: 'Bob', owner_display_name: 'Bob' },
+      bots: [
+        { bot_id: 'x1', handle: '@coder.bob.home', display_name: 'Coder', grant_id: 'gr_coder' },
+        { bot_id: 'x2', handle: '@writer.bob.home', display_name: 'Writer', grant_id: 'gr_writer' },
+      ],
+    }],
+  })
+  server.tools.decline_bot_grant = (a) => {
+    declined.push(a)
+    if (a.grant_id === 'gr_missing') throw Object.assign(new Error('Bot Social decline_bot_grant: grant_not_found'), { code: 'grant_not_found' })
+    return { grant_id: a.grant_id, status: 'declined' }
+  }
+  const settingsPath = join(home, 'flybot-social-settings.json')
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0, settingsPath }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await call('flybot/social/remote-bots', { fresh: true })
+  const hidden = (await call('flybot/social/hide-remote', { handle: '@coder.bob.home' })).value
+  assert.equal(hidden.hidden, true)
+  assert.equal(hidden.homes[0].bots.some(b => b.handle === '@coder.bob.home'), false)
+  assert.deepEqual(declined[0], { grant_id: 'gr_coder', bot_id: 'x1' })
+  const saved = JSON.parse(readFileSync(settingsPath, 'utf8'))
+  assert.equal(saved.hiddenRemotes?.['@coder.bob.home'], undefined, 'a declined grant is not a local hide')
+  const still = (await call('flybot/social/remote-bots', { fresh: true })).value
+  assert.equal(still.homes[0].bots.some(b => b.handle === '@coder.bob.home'), false, 'declined Bot stays off the roster until the server lists it again')
+  server.tools.decline_bot_grant = (a) => {
+    declined.push(a)
+    throw Object.assign(new Error('Bot Social decline_bot_grant: grant_not_found'), { code: 'grant_not_found' })
+  }
+  const gone = (await call('flybot/social/hide-remote', { handle: '@writer.bob.home' })).value
+  assert.equal(gone.homes[0].bots.some(b => b.handle === '@writer.bob.home'), false)
+  assert.equal(JSON.parse(readFileSync(settingsPath, 'utf8')).hiddenRemotes?.['@writer.bob.home'], undefined)
+})
+
+test('#139: old-server decline 404 falls back to local hide', async (t) => {
+  const { ctx, call, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  server.tools.list_remote_bots = () => ({
+    homes: [{
+      relationship_id: 'r1',
+      home: { bot_id: 'h2', handle: '@bob.home', display_name: 'Bob', owner_display_name: 'Bob' },
+      bots: [{ bot_id: 'x1', handle: '@coder.bob.home', display_name: 'Coder', grant_id: 'gr_coder' }],
+    }],
+  })
+  const settingsPath = join(home, 'flybot-social-settings.json')
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0, settingsPath }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await call('flybot/social/remote-bots', { fresh: true })
+  const hidden = (await call('flybot/social/hide-remote', { handle: '@coder.bob.home' })).value
+  assert.equal(hidden.hidden, true)
+  assert.ok(JSON.parse(readFileSync(settingsPath, 'utf8')).hiddenRemotes['@coder.bob.home'])
+})
+
+test('#139: regranted join unhides the Bot', async (t) => {
+  const { ctx, call, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  const settingsPath = join(home, 'flybot-social-settings.json')
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0, settingsPath }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await call('flybot/social/remote-bots', { fresh: true })
+  await call('flybot/social/hide-remote', { handle: '@coder.bob.home' })
+  const joined = (await call('flybot/social/join-invite', { code: 'REGRANT' })).value
+  assert.equal(joined.regranted, true)
+  const listed = (await call('flybot/social/remote-bots', { fresh: true })).value
+  assert.equal(listed.homes[0].bots.some(bot => bot.handle === '@coder.bob.home'), true)
+})
+
+test('createSocialApi updateBotProfile and declineGrant fall back on unknown tools', async () => {
+  const server = mockServer()
+  const api = createSocialApi({ server: 'https://s', token: 'owner-token', fetch: server.fetch })
+  const profile = await api.updateBotProfile({ botId: 'm1', avatar: 'star', color: '#2a92fe' })
+  assert.equal(profile.unavailable, true)
+  const declined = await api.declineGrant({ grantId: 'gr_1', botId: 'x1' })
+  assert.equal(declined.unavailable, true)
+  assert.equal(isUnknownTool(Object.assign(new Error('no tool'), { code: 'unknown' })), true)
+  assert.equal(isGrantNotFound(Object.assign(new Error('grant_not_found'), { code: 'grant_not_found' })), true)
+  assert.equal(isUnknownTool(Object.assign(new Error('grant_not_found'), { code: 'grant_not_found' })), false)
+  assert.equal(isMissingEndpoint(Object.assign(new Error('Bot Social DELETE /x: HTTP 404'), { code: 'http_404' })), true)
+})
+
 
 
