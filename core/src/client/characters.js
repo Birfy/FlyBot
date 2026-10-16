@@ -76,10 +76,11 @@ const lookSeed = bot => (typeof bot?.remote?.handle === 'string' && bot.remote.h
 export function lookBotForRemote(person, roster) {
   const handle = String(person?.handle || person?.remote?.handle || '').trim()
   const chat = handle ? (roster?.bots ?? []).find(bot => bot.remote?.handle === handle) : undefined
-  if (chat) return chat
   const extra = {}
   if (typeof person?.color === 'string') extra.color = person.color
   if (person?.avatar && typeof person.avatar === 'object') extra.avatar = person.avatar
+  // A face-room members[] look (or a published roster look) wins over the chat record.
+  if (chat) return Object.keys(extra).length ? { ...chat, ...extra } : chat
   const name = person?.label || person?.displayName || person?.name || handle || 'Bot'
   if (handle) return { id: remoteSeed(handle), name, remote: { handle }, ...extra }
   return { id: person?.id || 'remote', name, ...extra }
@@ -94,6 +95,7 @@ export function lookOf(bot) {
   return {
     shape: hasShape(avatar.shape) ? avatar.shape : seed !== undefined ? defaultShape(seed) : FALLBACK_SHAPE,
     image: avatar.image,
+    ...(typeof avatar.emoji === 'string' && avatar.emoji ? { emoji: avatar.emoji } : {}),
     color: colorOf(bot),
   }
 }

@@ -887,6 +887,14 @@ diff --git a/src/client/sidebar.js b/src/client/sidebar.js
 diff --git a/src/client/styles.js b/src/client/styles.js
 --- a/src/client/styles.js
 +++ b/src/client/styles.js
+@@ -20,6 +20,7 @@ ${Object.entries(INKS).map(([name, [, dark]]) => `body[data-ds-dark-theme]{--bt-
+ .bt-mark{display:inline-block;flex:none;position:relative;line-height:0}
+ .bt-mark svg{width:100%;height:100%;overflow:visible}
+ .bt-mark-img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;box-shadow:inset 0 0 0 1px var(--bt-line)}
++.bt-mark-emoji{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;line-height:1;user-select:none}
+ .bt-mark .bt-b,.bt-mark .bt-eye,.bt-mark .bt-eyes,.bt-mark .bt-gaze{transform-box:fill-box}
+ .bt-mark .bt-b{transform-origin:50% 100%}
+ .bt-mark .bt-eye,.bt-mark .bt-eyes{transform-origin:center}
 @@ -38,6 +38,14 @@ body[data-bt-motion=lively] .bt-mark[data-live][data-state=idle][data-fidget=loo
  @keyframes bt-fidget-look{0%,22%,100%{transform:none}3%,9%{transform:translateX(-14%)}12%,19%{transform:translateX(14%)}}
  body[data-bt-motion=lively] .bt-badge-alert{right:auto;bottom:auto;left:50%;top:calc(var(--bt-size,36px) * -.14);translate:-50% 0;animation:bt-q-ride 1.3s cubic-bezier(.3,.7,.4,1) infinite}

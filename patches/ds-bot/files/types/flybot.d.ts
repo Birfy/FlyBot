@@ -38,6 +38,10 @@ export interface BotView {
   systemPrompt: string
   /** Every plugin's fields: fields[plugin][key]. Stored as state.bots[id].fields. */
   fields: Record<string, Record<string, Json>>
+  /** Owner-chosen character color (named id or #rrggbb). Omitted when unset. */
+  color?: string
+  /** Owner-chosen avatar ({ shape }, { image }, or { emoji }). Omitted when unset. */
+  avatar?: { shape?: string; image?: string; emoji?: string }
 }
 
 /** 'change' payload. Delivered for the listener's own plugin unless it subscribed with { all: true }. */
@@ -395,7 +399,7 @@ export interface FlyBotClientRegistry {
 }
 
 /** Host Bot look: same component the sidebar / session list / chat header render. */
-export type FlyBotBotMark = (props: { bot?: any; look?: { shape?: string; color?: string; image?: string }; size?: number; [key: string]: unknown }) => any
+export type FlyBotBotMark = (props: { bot?: any; look?: { shape?: string; color?: string; image?: string; emoji?: string }; size?: number; [key: string]: unknown }) => any
 export type FlyBotBotAvatar = (props: { bot?: any; size?: number; badge?: boolean; live?: boolean; [key: string]: unknown }) => any
 export type FlyBotLookOf = (bot?: any) => { shape: string; color: string; image?: string }
 

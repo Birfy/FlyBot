@@ -131,6 +131,8 @@ export function install(rt) {
     id: bot.id, name: bot.name, role: bot.role, isMain: rt.isMain(bot.id), createdBy: bot.createdBy ?? null,
     granted: rt.hasAnyGrant?.(bot.id) === true,
     systemPrompt: bot.systemPrompt ?? '', fields: clone(bot.fields ?? {}),
+    ...(typeof bot.color === 'string' ? { color: bot.color } : {}),
+    ...(bot.avatar && typeof bot.avatar === 'object' ? { avatar: clone(bot.avatar) } : {}),
   })
   const persist = () => rt.save().catch(error => warn('flybot: save failed: %s', error))
 
@@ -660,12 +662,32 @@ export function install(rt) {
     state.flybot.remote ??= {}
     return state.flybot.remote
   }
+  const cleanRemoteLook = (bot) => {
+    const out = {}
+    const color = typeof bot?.color === 'string' ? bot.color.trim().slice(0, 32) : ''
+    if (color && !/[\n<>]/.test(color)) out.color = color
+    const src = bot?.avatar && typeof bot.avatar === 'object' ? bot.avatar : {}
+    const avatar = {}
+    if (typeof src.shape === 'string' && /^[a-z0-9][a-z0-9_-]{0,31}$/.test(src.shape)) avatar.shape = src.shape
+    if (typeof src.image === 'string') {
+      const image = src.image.trim()
+      if (image.length <= 65536 && /^(https?:\/\/|data:image\/)/i.test(image) && !/[\s<>]/.test(image)) avatar.image = image
+    }
+    if (typeof src.emoji === 'string') {
+      const emoji = src.emoji.trim()
+      if (emoji && !/[\n<>]/.test(emoji)) avatar.emoji = emoji.slice(0, 16)
+    }
+    if (Object.keys(avatar).length) out.avatar = avatar
+    const at = typeof bot?.avatarUpdatedAt === 'string' ? bot.avatarUpdatedAt.trim() : ''
+    if (at && !/[\n<>]/.test(at)) out.avatarUpdatedAt = at.slice(0, 40)
+    return out
+  }
   const cleanRemote = (plugin, bot) => {
     const remote = toRemote(bot.handle)
     const name = cleanPublishedName(bot.name) || cleanPublishedName(remote.handle) || 'a remote Bot'
     const homeName = cleanPublishedName(bot.homeName)
     const owner = cleanPublishedName(bot.owner)
-    return { handle: remote.handle, home: bot.home ? toRemote(bot.home).handle : remote.home, name, ...(homeName ? { homeName } : {}), ...(owner ? { owner } : {}), plugin, remote: true }
+    return { handle: remote.handle, home: bot.home ? toRemote(bot.home).handle : remote.home, name, ...(homeName ? { homeName } : {}), ...(owner ? { owner } : {}), plugin, remote: true, ...cleanRemoteLook(bot) }
   }
   const remoteMembers = {
     // Replaces this plugin's list; saves only when it changed.

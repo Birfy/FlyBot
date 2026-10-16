@@ -113,6 +113,12 @@ test('lookBotForRemote seeds a distinct look from the handle when there is no ch
   assert.equal(lookOf(pictured).image, 'https://example.test/friend.png')
   const chat = { id: 'session-f', name: '助手', remote: { handle: '@bot.friend.home' }, color: 'green' }
   assert.equal(lookBotForRemote(person, { bots: [chat] }), chat)
+  const overlaid = lookBotForRemote({
+    handle: '@bot.friend.home', displayName: '助手', color: '#2a92fe', avatar: { shape: 'star' },
+  }, { bots: [chat] })
+  assert.equal(overlaid.color, '#2a92fe')
+  assert.equal(overlaid.avatar.shape, 'star')
+  assert.equal(lookOf({ id: 'e', avatar: { emoji: '🌟' } }).emoji, '🌟')
 })
 
 test('room avatars include live remote face-to-face members', () => {

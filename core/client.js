@@ -1540,10 +1540,10 @@ var lookSeed = (bot) => typeof bot?.remote?.handle === "string" && bot.remote.ha
 function lookBotForRemote(person, roster) {
   const handle = String(person?.handle || person?.remote?.handle || "").trim();
   const chat = handle ? (roster?.bots ?? []).find((bot) => bot.remote?.handle === handle) : void 0;
-  if (chat) return chat;
   const extra = {};
   if (typeof person?.color === "string") extra.color = person.color;
   if (person?.avatar && typeof person.avatar === "object") extra.avatar = person.avatar;
+  if (chat) return Object.keys(extra).length ? { ...chat, ...extra } : chat;
   const name = person?.label || person?.displayName || person?.name || handle || "Bot";
   if (handle) return { id: remoteSeed(handle), name, remote: { handle }, ...extra };
   return { id: person?.id || "remote", name, ...extra };
@@ -1555,6 +1555,7 @@ function lookOf(bot) {
   return {
     shape: hasShape(avatar.shape) ? avatar.shape : seed !== void 0 ? defaultShape(seed) : FALLBACK_SHAPE,
     image: avatar.image,
+    ...typeof avatar.emoji === "string" && avatar.emoji ? { emoji: avatar.emoji } : {},
     color: colorOf(bot)
   };
 }
@@ -1662,7 +1663,7 @@ function BotMark({ bot, look: given, size = 36, state = "idle", live = false, ga
   const common = {
     ref,
     className: poked ? "bt-mark bt-mark-poke" : "bt-mark",
-    "data-shape": look.image ? "image" : shapeId(look.shape),
+    "data-shape": look.image ? "image" : look.emoji ? "emoji" : shapeId(look.shape),
     "data-state": STATES.includes(state) ? state : "idle",
     "data-live": live ? "" : void 0,
     "data-fidget": live ? FIDGETS[fnv1a(`${bot?.id ?? ""}:fidget`) % FIDGETS.length] : void 0,
@@ -1678,6 +1679,12 @@ function BotMark({ bot, look: given, size = 36, state = "idle", live = false, ga
     } : void 0
   };
   if (look.image) return (0, import_react.createElement)("span", common, (0, import_react.createElement)("img", { className: "bt-mark-img", src: look.image, alt: "", draggable: false }));
+  if (look.emoji) {
+    return (0, import_react.createElement)("span", common, (0, import_react.createElement)("span", {
+      className: "bt-mark-emoji",
+      style: { fontSize: Math.max(12, Math.round(size * 0.62)), lineHeight: 1 }
+    }, look.emoji));
+  }
   const box = shapeOf(look.shape).size;
   return (0, import_react.createElement)("span", common, (0, import_react.createElement)("svg", { viewBox: `0 0 ${box} ${box}`, dangerouslySetInnerHTML: { __html: characterMarkup(look.shape, look.color).replaceAll(MASK_ID, maskId.current) } }));
 }
@@ -2574,6 +2581,7 @@ ${Object.entries(INKS).map(([name, [, dark]]) => `body[data-ds-dark-theme]{--bt-
 .bt-mark{display:inline-block;flex:none;position:relative;line-height:0}
 .bt-mark svg{width:100%;height:100%;overflow:visible}
 .bt-mark-img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;box-shadow:inset 0 0 0 1px var(--bt-line)}
+.bt-mark-emoji{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;line-height:1;user-select:none}
 .bt-mark .bt-b,.bt-mark .bt-eye,.bt-mark .bt-eyes,.bt-mark .bt-gaze{transform-box:fill-box}
 .bt-mark .bt-b{transform-origin:50% 100%}
 .bt-mark .bt-eye,.bt-mark .bt-eyes{transform-origin:center}

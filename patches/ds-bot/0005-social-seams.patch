@@ -3,7 +3,7 @@ FlyBot patch 0005-social-seams on Fei2411/DeepSeek-Bot@2b10c70 (ds-bot/). Genera
 diff --git a/src/client/characters.js b/src/client/characters.js
 --- a/src/client/characters.js
 +++ b/src/client/characters.js
-@@ -63,12 +63,36 @@ export function defaultShape(id) {
+@@ -63,13 +63,39 @@ export function defaultShape(id) {
    return DEFAULT_SHAPES[((value ^ (value >>> 16)) >>> 0) % DEFAULT_SHAPES.length]
  }
  
@@ -22,10 +22,11 @@ diff --git a/src/client/characters.js b/src/client/characters.js
 +export function lookBotForRemote(person, roster) {
 +  const handle = String(person?.handle || person?.remote?.handle || '').trim()
 +  const chat = handle ? (roster?.bots ?? []).find(bot => bot.remote?.handle === handle) : undefined
-+  if (chat) return chat
 +  const extra = {}
 +  if (typeof person?.color === 'string') extra.color = person.color
 +  if (person?.avatar && typeof person.avatar === 'object') extra.avatar = person.avatar
++  // A face-room members[] look (or a published roster look) wins over the chat record.
++  if (chat) return Object.keys(extra).length ? { ...chat, ...extra } : chat
 +  const name = person?.label || person?.displayName || person?.name || handle || 'Bot'
 +  if (handle) return { id: remoteSeed(handle), name, remote: { handle }, ...extra }
 +  return { id: person?.id || 'remote', name, ...extra }
@@ -41,8 +42,10 @@ diff --git a/src/client/characters.js b/src/client/characters.js
 -    shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? defaultShape(String(bot.id)) : FALLBACK_SHAPE,
 +    shape: hasShape(avatar.shape) ? avatar.shape : seed !== undefined ? defaultShape(seed) : FALLBACK_SHAPE,
      image: avatar.image,
++    ...(typeof avatar.emoji === 'string' && avatar.emoji ? { emoji: avatar.emoji } : {}),
      color: colorOf(bot),
    }
+ }
 diff --git a/src/client/mark.js b/src/client/mark.js
 --- a/src/client/mark.js
 +++ b/src/client/mark.js
@@ -57,6 +60,28 @@ diff --git a/src/client/mark.js b/src/client/mark.js
  
  // -------------------------------------------------------------------------
  // Bot mark: the Bot's character (or its uploaded photo), looked up by lookOf.
+@@ -56,7 +56,7 @@ export function BotMark({ bot, look: given, size = 36, state = 'idle', live = fa
+   const common = {
+     ref,
+     className: poked ? 'bt-mark bt-mark-poke' : 'bt-mark',
+-    'data-shape': look.image ? 'image' : shapeId(look.shape),
++    'data-shape': look.image ? 'image' : look.emoji ? 'emoji' : shapeId(look.shape),
+     'data-state': STATES.includes(state) ? state : 'idle',
+     'data-live': live ? '' : undefined,
+     'data-fidget': live ? FIDGETS[fnv1a(`${bot?.id ?? ''}:fidget`) % FIDGETS.length] : undefined,
+@@ -70,6 +70,12 @@ export function BotMark({ bot, look: given, size = 36, state = 'idle', live = fa
+     onAnimationEnd: poked ? (event) => { if (/^bt-poke/.test(event.animationName)) setPoked(false) } : undefined,
+   }
+   if (look.image) return h('span', common, h('img', { className: 'bt-mark-img', src: look.image, alt: '', draggable: false }))
++  if (look.emoji) {
++    return h('span', common, h('span', {
++      className: 'bt-mark-emoji',
++      style: { fontSize: Math.max(12, Math.round(size * 0.62)), lineHeight: 1 },
++    }, look.emoji))
++  }
+   const box = shapeOf(look.shape).size
+   return h('span', common, h('svg', { viewBox: `0 0 ${box} ${box}`, dangerouslySetInnerHTML: { __html: characterMarkup(look.shape, look.color).replaceAll(MASK_ID, maskId.current) } }))
+ }
 @@ -130,10 +130,42 @@ function clusterSeats(count, frame) {
    return [[0, 0, half], [half, 0, half], [0, half, half], [half, half, half]]
  }

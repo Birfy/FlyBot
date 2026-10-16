@@ -542,7 +542,7 @@ diff --git a/client.js b/client.js
  // src/client/inks.js
  var INKS = {
    deepseek: ["#4D6BFE", "#6A84FF"],
-@@ -1177,11 +1177,25 @@ function defaultShape(id) {
+@@ -1177,12 +1177,27 @@ function defaultShape(id) {
    value = Math.imul(value ^ value >>> 13, 3266489909);
    return DEFAULT_SHAPES[((value ^ value >>> 16) >>> 0) % DEFAULT_SHAPES.length];
  }
@@ -552,10 +552,10 @@ diff --git a/client.js b/client.js
 +function lookBotForRemote(person, roster) {
 +  const handle = String(person?.handle || person?.remote?.handle || "").trim();
 +  const chat = handle ? (roster?.bots ?? []).find((bot) => bot.remote?.handle === handle) : void 0;
-+  if (chat) return chat;
 +  const extra = {};
 +  if (typeof person?.color === "string") extra.color = person.color;
 +  if (person?.avatar && typeof person.avatar === "object") extra.avatar = person.avatar;
++  if (chat) return Object.keys(extra).length ? { ...chat, ...extra } : chat;
 +  const name = person?.label || person?.displayName || person?.name || handle || "Bot";
 +  if (handle) return { id: remoteSeed(handle), name, remote: { handle }, ...extra };
 +  return { id: person?.id || "remote", name, ...extra };
@@ -568,8 +568,10 @@ diff --git a/client.js b/client.js
 -    shape: hasShape(avatar.shape) ? avatar.shape : bot?.id ? defaultShape(String(bot.id)) : FALLBACK_SHAPE,
 +    shape: hasShape(avatar.shape) ? avatar.shape : seed !== void 0 ? defaultShape(seed) : FALLBACK_SHAPE,
      image: avatar.image,
++    ...typeof avatar.emoji === "string" && avatar.emoji ? { emoji: avatar.emoji } : {},
      color: colorOf(bot)
    };
+ }
 @@ -1206,8 +1206,8 @@ function bodyOf(def, paint, flat = false) {
      return "";
    }
@@ -581,7 +583,7 @@ diff --git a/client.js b/client.js
  var maskBox = (size) => `maskUnits="userSpaceOnUse" x="${-size}" y="${-size}" width="${size * 3}" height="${size * 3}"`;
  var holes = (def, eyes) => `<rect x="${-def.size}" y="${-def.size}" width="${def.size * 3}" height="${def.size * 3}" fill="#fff"/>${eyes}`;
  var MASK_ID = "%MASK%";
-@@ -1242,6 +1242,350 @@ function maskOf(shape) {
+@@ -1242,6 +1242,356 @@ function maskOf(shape) {
  }
  var DEFAULT_MASK = maskOf(FALLBACK_SHAPE);
  
@@ -633,7 +635,7 @@ diff --git a/client.js b/client.js
 +  const common = {
 +    ref,
 +    className: poked ? "bt-mark bt-mark-poke" : "bt-mark",
-+    "data-shape": look.image ? "image" : shapeId(look.shape),
++    "data-shape": look.image ? "image" : look.emoji ? "emoji" : shapeId(look.shape),
 +    "data-state": STATES.includes(state) ? state : "idle",
 +    "data-live": live ? "" : void 0,
 +    "data-fidget": live ? FIDGETS[fnv1a(`${bot?.id ?? ""}:fidget`) % FIDGETS.length] : void 0,
@@ -649,6 +651,12 @@ diff --git a/client.js b/client.js
 +    } : void 0
 +  };
 +  if (look.image) return (0, import_react.createElement)("span", common, (0, import_react.createElement)("img", { className: "bt-mark-img", src: look.image, alt: "", draggable: false }));
++  if (look.emoji) {
++    return (0, import_react.createElement)("span", common, (0, import_react.createElement)("span", {
++      className: "bt-mark-emoji",
++      style: { fontSize: Math.max(12, Math.round(size * 0.62)), lineHeight: 1 }
++    }, look.emoji));
++  }
 +  const box = shapeOf(look.shape).size;
 +  return (0, import_react.createElement)("span", common, (0, import_react.createElement)("svg", { viewBox: `0 0 ${box} ${box}`, dangerouslySetInnerHTML: { __html: characterMarkup(look.shape, look.color).replaceAll(MASK_ID, maskId.current) } }));
 +}
@@ -1116,6 +1124,14 @@ diff --git a/client.js b/client.js
      if (value) {
        setKept(value);
        return void 0;
+@@ -1838,6 +1838,7 @@ ${Object.entries(INKS).map(([name, [, dark]]) => `body[data-ds-dark-theme]{--bt-
+ .bt-mark{display:inline-block;flex:none;position:relative;line-height:0}
+ .bt-mark svg{width:100%;height:100%;overflow:visible}
+ .bt-mark-img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;box-shadow:inset 0 0 0 1px var(--bt-line)}
++.bt-mark-emoji{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;line-height:1;user-select:none}
+ .bt-mark .bt-b,.bt-mark .bt-eye,.bt-mark .bt-eyes,.bt-mark .bt-gaze{transform-box:fill-box}
+ .bt-mark .bt-b{transform-origin:50% 100%}
+ .bt-mark .bt-eye,.bt-mark .bt-eyes{transform-origin:center}
 @@ -1856,6 +1856,14 @@ body[data-bt-motion=lively] .bt-mark[data-live][data-state=idle][data-fidget=loo
  @keyframes bt-fidget-look{0%,22%,100%{transform:none}3%,9%{transform:translateX(-14%)}12%,19%{transform:translateX(14%)}}
  body[data-bt-motion=lively] .bt-badge-alert{right:auto;bottom:auto;left:50%;top:calc(var(--bt-size,36px) * -.14);translate:-50% 0;animation:bt-q-ride 1.3s cubic-bezier(.3,.7,.4,1) infinite}

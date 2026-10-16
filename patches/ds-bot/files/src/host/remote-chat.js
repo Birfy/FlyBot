@@ -115,8 +115,29 @@ export function install(rt) {
   }
 
   let opening = Promise.resolve()
-  // Creates the chat for a remote Bot (once), or refreshes its name and home label.
-  function open({ handle, name, home, homeName, plugin }) {
+  function applyPublishedLook(bot, member) {
+    if (!bot || !member) return false
+    const at = typeof member.avatarUpdatedAt === 'string' ? member.avatarUpdatedAt : ''
+    if (at && bot.avatarUpdatedAt === at) return false
+    let changed = false
+    if (typeof member.color === 'string' && member.color && bot.color !== member.color) {
+      bot.color = member.color
+      changed = true
+    }
+    if (member.avatar && typeof member.avatar === 'object') {
+      if (JSON.stringify(bot.avatar) !== JSON.stringify(member.avatar)) {
+        bot.avatar = { ...member.avatar }
+        changed = true
+      }
+    }
+    if (at && bot.avatarUpdatedAt !== at) {
+      bot.avatarUpdatedAt = at
+      changed = true
+    }
+    return changed
+  }
+  // Creates the chat for a remote Bot (once), or refreshes its name, home label, and look.
+  function open({ handle, name, home, homeName, plugin, color, avatar, avatarUpdatedAt }) {
     if (isHomeLevelRemote({ handle, home })) return Promise.resolve(undefined)
     const run = opening.then(async () => {
       await rt.load()
@@ -124,7 +145,8 @@ export function install(rt) {
       if (existing !== undefined) {
         const next = { ...existing.remote, home, ...(homeName ? { homeName } : {}), plugin, gone: undefined }
         delete next.gone
-        if (JSON.stringify(next) !== JSON.stringify(existing.remote) || (name && existing.name !== name)) {
+        const lookChanged = applyPublishedLook(existing, { color, avatar, avatarUpdatedAt })
+        if (JSON.stringify(next) !== JSON.stringify(existing.remote) || (name && existing.name !== name) || lookChanged) {
           existing.remote = next
           if (name) existing.name = String(name).slice(0, 40)
           await rt.save()
@@ -134,6 +156,7 @@ export function install(rt) {
       pending.set(handle, name)
       try {
         const bot = await rt.createBot({ name: String(name || handle).slice(0, 40), model: `${REMOTE_PROVIDER}/${handle}`, remote: { handle, home, ...(homeName ? { homeName } : {}), plugin } })
+        if (applyPublishedLook(bot, { color, avatar, avatarUpdatedAt })) await rt.save()
         return bot.id
       } finally { pending.delete(handle) }
     })

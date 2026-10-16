@@ -28,7 +28,7 @@ window.__ModuleLoader__.load({
       }
       const message = String(e?.message ?? e ?? '')
       if (/relationship_exists/i.test(message)) return "You're already friends. That Bot is in Friends' Bots again."
-      if (/invite is used|invite_used|already used/i.test(message)) return 'This invite was already used. Ask your friend for a new one.'
+      if (/invite_unavailable|invite is used|invite_used|already used/i.test(message)) return 'This invite was already used. Ask your friend for a new one.'
       return message
     }
 
@@ -761,7 +761,7 @@ window.__ModuleLoader__.load({
         chat && typeof renderBot === 'function'
           ? renderBot(chat)
           : h('div', { className: 'fs-row', title: bot.handle },
-            h(FaceAvatar, { bot: faceLook({ member: { handle: bot.handle, displayName: bot.name } }), size: 24 }),
+            h(FaceAvatar, { bot: faceLook({ member: { handle: bot.handle, displayName: bot.name, color: bot.color, avatar: bot.avatar } }), size: 24 }),
             h('span', { className: 'fs-text' }, h('span', { className: 'fs-name' }, bot.name), h('span', { className: 'fs-sub' }, bot.handle))),
         h('button', {
           type: 'button',
