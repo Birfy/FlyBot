@@ -1,0 +1,1 @@
+The sidebar + menu is a short list of actions (not a New chat composer). Add friend has one-click Copy invite link. Friends' Bots keeps the N to approve badge and shows holds in that chat with readable names, not raw bot ids. ([#126](https://github.com/ThinkFlowLab/FlyBot/issues/126))
