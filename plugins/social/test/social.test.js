@@ -1923,6 +1923,22 @@ test('Face-to-face room card members use host avatars, not a shared letter badge
   assert.equal(tree.filter(n => n.props.className === 'fs-avatar' && n.props['data-flybot'] === undefined).length, 0)
 })
 
+test('Face-to-face room card titles include people and a distinguisher, not Face-to-face room', () => {
+  const { walk, pluginOf } = loadSocialClient(async () => ({}))
+  const tree = walk(pluginOf([]).FaceRoomCard({
+    room: {
+      name: 'Face-to-face room', status: 'open', joinCode: '482913',
+      members: [
+        { handle: '@a.me.home', displayName: 'Chief', ownerName: 'Alice' },
+        { handle: '@coder.bob.home', displayName: 'Coder', ownerName: 'Bob' },
+      ],
+    },
+  }))
+  const title = tree.find(n => n.props.className === 'fs-name')
+  assert.equal(String(title?.children?.join?.('') ?? ''), 'Face-to-face · Alice, Bob · 482913')
+  assert.equal(tree.some(n => String(n.children?.join?.('') ?? n.children) === 'Face-to-face room'), false)
+})
+
 test('Face-to-face room card is one compact row with a status chip and no invalid-number line', () => {
   const { walk, pluginOf } = loadSocialClient(async () => ({}))
   const plugin = pluginOf([])

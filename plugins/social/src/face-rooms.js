@@ -11,6 +11,7 @@
 
 import { socialFetch } from './mcp-client.js'
 import { lookFromServer } from './look.js'
+import { formatFaceRoomTitle } from '../../../core/src/shared/face-title.js'
 
 export const FACE_JOIN_CODE = /^\d{6}$/
 export const FACE_MAX_MEMBERS = 8
@@ -221,25 +222,18 @@ export function humanFaceWho(line, fallback = 'Someone') {
 }
 
 export function faceRoomTitle(snapshot = {}, { code, room } = {}) {
-  const named = String(snapshot.name || room?.name || '').trim()
-  if (named && named !== 'Face-to-face room') return named
   const owners = []
-  const seen = new Set()
   for (const member of snapshot.members ?? room?.participants ?? []) {
     const owner = cleanFaceName(member.ownerName || member.owner_name, '')
-    const key = owner.toLowerCase()
-    if (!owner || seen.has(key)) continue
-    seen.add(key)
-    owners.push(owner)
+    if (owner) owners.push(owner)
   }
-  if (owners.length) return `Face-to-face · ${owners.slice(0, 3).join(', ')}`
-  const join = String(code || snapshot.joinCode || '').replace(/\D/g, '').slice(0, 6)
-  if (join.length === 6) return `Face-to-face · ${join}`
-  const at = Date.parse(snapshot.startedAt || snapshot.expiresAt || '')
-  const when = Number.isFinite(at) ? new Date(at) : new Date()
-  const hh = String(when.getHours()).padStart(2, '0')
-  const mm = String(when.getMinutes()).padStart(2, '0')
-  return `Face-to-face · ${hh}:${mm}`
+  const at = snapshot.startedAt || snapshot.expiresAt || room?.face?.startedAt || room?.face?.expiresAt || room?.createdAt
+  return formatFaceRoomTitle({
+    name: snapshot.name || room?.name,
+    owners,
+    code: code || snapshot.joinCode,
+    at,
+  })
 }
 
 export function parseFaceHuman(text) {

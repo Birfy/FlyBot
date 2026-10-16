@@ -946,7 +946,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     await flybot.grants.set(botId, [...current, {
       id: `room:${room.id}`,
       grantee: faceRoomId ? `room:${faceRoomId}` : `room:${room.id}`,
-      name: name || room.name || 'Face-to-face room',
+      name: name || faceRoomTitle({}, { room }),
       roomId: String(room.id),
     }])
   }
@@ -2058,7 +2058,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
           if (known.has(serverId)) continue
           const hosted = flybot.rooms.ofFace?.(serverId)
           rememberPastFace(viewHostedFace(hosted, { faceRoomId: serverId, localRoomId: meta?.localRoomId, status: 'closed' })
-            || { faceRoomId: serverId, roomId: meta?.localRoomId, name: 'Face-to-face room', status: 'closed', members: [] })
+            || { faceRoomId: serverId, roomId: meta?.localRoomId, name: faceRoomTitle({}, { code: meta?.joinCode, room: hosted }), status: 'closed', members: [] })
           if (meta?.localRoomId) await flybot.rooms.dropFace?.(meta.localRoomId).catch(() => {})
           delete settings.faceRooms[serverId]
           dropRoomRemotes(serverId)
@@ -2116,7 +2116,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     const meta = settings.faceRooms[id]
     const hosted = flybot.rooms.ofFace?.(id)
     rememberPastFace(viewHostedFace(hosted, { faceRoomId: id, localRoomId: meta?.localRoomId, status: 'left' })
-      || { faceRoomId: id, roomId: meta?.localRoomId, name: 'Face-to-face room', status: 'left', members: [] })
+      || { faceRoomId: id, roomId: meta?.localRoomId, name: faceRoomTitle({}, { code: meta?.joinCode, room: hosted }), status: 'left', members: [] })
     const handles = (Array.isArray(bots) && bots.length ? bots : asBotsOf(meta)).map(norm).filter(Boolean)
     let result
     try {

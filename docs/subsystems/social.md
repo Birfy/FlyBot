@@ -76,7 +76,7 @@ Everything in `plugins/social/` (entry `plugins/social/index.js` and any helpers
 
 ### Past rooms, unique titles, poll, and + (#129–#133)
 
-- Expired matching (`candidate` whose `expiresAt` has passed) and a peer leaving the last remote seat move the hosted room to **Past rooms** on the next poll (`rememberPastFace`, status `closed` / `left`). The local room stays so **Open** still works; **Leave** is not shown on those cards. Face-room names include the other owners, else the 6-digit code, else a clock time — not a pile of identical "Face-to-face room".
+- Expired matching (`candidate` whose `expiresAt` has passed) and a peer leaving the last remote seat move the hosted room to **Past rooms** on the next poll (`rememberPastFace`, status `closed` / `left`). The local room stays so **Open** still works; **Leave** is not shown on those cards. Face-room names are `Face-to-face · Alice, Bob · 482913` (people plus the 6-digit code, or `Oct 16 21:40` when there is no code) so two rooms with the same people stay distinct. The literal `Face-to-face room` is not a fallback.
 - Inbox and face poll share one timer: `facePollMs` (default 4s) while any live face room exists, else `inboxPollMs` (default 15s). The open face overview keeps polling about every 3s after **Enter chat**, not only while matching. Friends' Bots still refreshes rooms about every 5s while that section is open.
 - Sidebar **+** holds Face-to-face group, Add friend, Accept invite, and one-click Copy invite link. Friend requests is not a duplicate + row. Per-friend and face-room hold toggles both say **Auto-send** ("Don't ask each time."). Hold labels resolve the real Bot name (`Chief → the room`), never `bot_01…`.
 
