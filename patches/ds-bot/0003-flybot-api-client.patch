@@ -426,7 +426,7 @@ diff --git a/src/client/index.js b/src/client/index.js
 diff --git a/src/client/new-chat.js b/src/client/new-chat.js
 --- a/src/client/new-chat.js
 +++ b/src/client/new-chat.js
-@@ -6,6 +6,8 @@ import { useEscape, usePaneLeft } from './overlay-hooks.js'
+@@ -6,11 +6,15 @@ import { useEscape, usePaneLeft } from './overlay-hooks.js'
  import { CreateBot } from './create-bot.js'
  import { QUICK_EDGES, useFlip, useGlide, useMorph } from './motion.js'
  import { t } from './i18n.js'
@@ -435,6 +435,13 @@ diff --git a/src/client/new-chat.js b/src/client/new-chat.js
  
  export function NewChat({ mode, roster, actions }) {
    const [query, setQuery] = useState('')
+   const [picked, setPicked] = useState([])
+   const [group, setGroup] = useState(mode === 'group')
++  // Sidebar + starts as a short action menu; the To:/composer opens after New chat.
++  const [compose, setCompose] = useState(mode !== 'new')
+   // A new group chat picks its admin first, then the other members.
+   const [admin, setAdmin] = useState(null)
+   const [message, setMessage] = useState('')
 @@ -24,9 +24,11 @@ export function NewChat({ mode, roster, actions }) {
    useEscape(close)
    const paneLeft = usePaneLeft()
@@ -463,7 +470,7 @@ diff --git a/src/client/new-chat.js b/src/client/new-chat.js
      if (text) await actions.send(room.id, text)
      actions.openSession(room.id)
      close()
-@@ -87,7 +87,12 @@ export function NewChat({ mode, roster, actions }) {
+@@ -87,22 +87,40 @@ export function NewChat({ mode, roster, actions }) {
        close()
        return
      }
@@ -477,10 +484,17 @@ diff --git a/src/client/new-chat.js b/src/client/new-chat.js
      await actions.send(room.id, text)
      actions.openSession(room.id)
      close()
-@@ -96,13 +96,22 @@ export function NewChat({ mode, roster, actions }) {
+   })
++  const menuOnly = mode === 'new' && !compose && !group && picked.length === 0 && wanted === ''
+   const options = []
    if (!group && picked.length === 0 && mode !== 'search' && wanted === '') {
++    if (menuOnly) {
++      options.push({ key: 'chat', icon: h(PlusIcon), label: t('New chat'), run: () => { setCompose(true); setCursor(0); setTimeout(() => inputRef.current?.focus()) } })
++    }
      options.push({ key: 'new', icon: h(PlusIcon), label: t('Create new Bot'), run: createBot })
-     options.push({ key: 'group', icon: h(PeopleIcon), label: t('Create group chat'), run: () => { setGroup(true); setCursor(0); inputRef.current?.focus() } })
+-    options.push({ key: 'group', icon: h(PeopleIcon), label: t('Create group chat'), run: () => { setGroup(true); setCursor(0); inputRef.current?.focus() } })
+-    // A team holds at most one DSH Agent; the entry exists only while there is none.
++    options.push({ key: 'group', icon: h(PeopleIcon), label: t('Create group chat'), run: () => { setGroup(true); setCompose(true); setCursor(0); inputRef.current?.focus() } })
 +    for (const action of newChatActionRows({ mode, group, picked, query, roster })) {
 +      options.push({
 +        key: action.key,
@@ -490,9 +504,10 @@ diff --git a/src/client/new-chat.js b/src/client/new-chat.js
 +        run: () => action.run({ close, actions, roster }),
 +      })
 +    }
-     // A team holds at most one DSH Agent; the entry exists only while there is none.
++    // A team holds at most one Agent; the entry exists only while there is none.
      if ((roster.agents ?? []).length === 0) {
-       options.push({ key: 'agent', icon: h(FishLogo, { size: 16 }), label: t('Add DSH Agent'), run: () => run(async () => { await actions.addAgent(); close() }) })
+-      options.push({ key: 'agent', icon: h(FishLogo, { size: 16 }), label: t('Add DSH Agent'), run: () => run(async () => { await actions.addAgent(); close() }) })
++      options.push({ key: 'agent', icon: h(FishLogo, { size: 16 }), label: t('Add Agent'), run: () => run(async () => { await actions.addAgent(); close() }) })
      }
    }
    for (const bot of matches) {
@@ -501,6 +516,32 @@ diff --git a/src/client/new-chat.js b/src/client/new-chat.js
    }
    if (wanted !== '' && !exact && mode !== 'search') options.push({ key: 'create', icon: h(PlusIcon), label: t('Create new Bot “{name}”', { name: query.trim() }), run: createBot })
    const active = Math.min(cursor, Math.max(options.length - 1, 0))
+@@ -127,8 +127,11 @@ export function NewChat({ mode, roster, actions }) {
+     else if (admin !== null) setAdmin(null)
+   }
+   return h('div', { className: 'bt-pane', style: { left: paneLeft } },
+-    h('div', { className: 'bt-newchat', role: 'dialog', 'aria-label': mode === 'search' ? t('Search') : t('New chat') },
+-      h('div', { className: 'bt-to' },
++    h('div', { className: 'bt-newchat', role: 'dialog', 'aria-label': mode === 'search' ? t('Search') : t('New chat'), 'data-menu': menuOnly || undefined },
++      menuOnly ? h('div', { className: 'bt-to' },
++        h('span', { className: 'bt-to-label' }, t('New…')),
++        h('button', { type: 'button', className: 'bt-x', 'aria-label': t('Close new chat'), onClick: close }, '×'))
++      : h('div', { className: 'bt-to' },
+         h('span', { className: 'bt-to-label' }, t('To:')),
+         adminBot ? h('span', { key: adminBot.id, className: 'bt-token bt-token-admin', title: t('Admin') },
+           h(BotMark, { bot: adminBot, size: 16 }), adminBot.name, h(AdminStar),
+@@ -164,9 +164,9 @@ export function NewChat({ mode, roster, actions }) {
+             option.bot ? h(BotMark, { bot: option.bot, size: 22 }) : h('span', { className: 'bt-option-icon' }, option.icon),
+             h('span', { className: 'bt-option-label' }, option.label),
+             option.hint && index === active ? h('span', { className: 'bt-option-hint' }, option.hint) : null)))),
+-      h('div', { className: 'bt-nc-spacer' }),
++      menuOnly ? null : h('div', { className: 'bt-nc-spacer' }),
+       error ? h('div', { className: 'bt-error' }, error) : null,
+-      h('div', { className: 'bt-nc-compose' },
++      menuOnly ? null : h('div', { className: 'bt-nc-compose' },
+         h('div', { className: 'bt-nc-card' },
+           h('span', { className: 'bt-nc-plus', 'aria-hidden': true }, h(PlusIcon)),
+           h('textarea', {
 diff --git a/src/client/palette.js b/src/client/palette.js
 --- a/src/client/palette.js
 +++ b/src/client/palette.js
@@ -889,6 +930,14 @@ diff --git a/src/client/styles.js b/src/client/styles.js
  
  .bt-head{position:relative;display:flex;justify-content:center;align-items:center;height:40px;flex:none;pointer-events:none}
  .bt-pill{pointer-events:auto;display:inline-flex;align-items:center;gap:8px;height:40px;padding:7.5px 13.5px 7.5px 7.5px;border-radius:999px;background:var(--bt-main);border:.5px solid var(--bt-line-2);box-shadow:0 2px 8px -1px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);color:var(--bt-ink);font-family:inherit;font-size:14px;line-height:20px;cursor:pointer;max-width:70%;box-sizing:border-box;transition:background-color .12s ease,transform ${SPRING_TAP.duration}ms ${SPRING_TAP.easing}}
+@@ -267,6 +267,7 @@ button.bt-q-opt:active{background:var(--bt-active)}
+ @media (prefers-reduced-motion:reduce){.bt-q{animation:bt-fade .12s ease-out backwards}.bt-q-settled{animation:none}.bt-q-submit{animation:none}}
+ 
+ .bt-newchat{flex:1;display:flex;flex-direction:column;min-width:0;position:relative;animation:bt-veil-in .18s ease-out}
++.bt-newchat[data-menu] .bt-drop{position:relative;top:0;left:0;width:auto;max-height:none;margin:8px 12px;box-shadow:none}
+ .bt-to{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-height:48px;padding:6px 12px;border-bottom:1px solid var(--bt-line);font-size:14px;box-sizing:border-box}
+ .bt-to-label{color:var(--bt-ink-2)}
+ .bt-to input{flex:1;min-width:120px;border:0;outline:none;background:none;color:var(--bt-ink);font-size:14px;height:26px}
 @@ -782,6 +782,9 @@ export const CONVERSATION_CSS = `
  .bt-think{font-size:13px;line-height:18px;color:var(--bt-ink-2);margin:2px 0 4px;max-width:min(560px,78%)}
  .bt-think summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px}

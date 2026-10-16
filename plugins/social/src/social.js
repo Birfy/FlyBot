@@ -39,6 +39,7 @@ import {
   renderFaceEvent,
   rememberEvent,
   FaceRoomError,
+  alreadyLeftFace,
   roomOnlyForJoin,
   faceMemberLabel,
   viewMe,
@@ -71,6 +72,7 @@ export const cleanText = (value, fallback = '') => String(value ?? '').replace(/
 // Owner-only draft body: keep punctuation the friend will see; strip controls and cap.
 export const draftText = (value) => String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800)
 // Bot Social list_approvals card → the Friends' Bots queue (outbound drafts only).
+const looksLikeBotId = (value) => /^bot_[a-z0-9]+$/i.test(String(value ?? '').trim())
 export function approvalView(item, { localName } = {}) {
   if (!item || typeof item !== 'object') return undefined
   const id = String(item.approval_id ?? item.id ?? '')
@@ -79,11 +81,17 @@ export function approvalView(item, { localName } = {}) {
   const payload = item.message?.payload
   const text = draftText(payload && typeof payload === 'object' ? payload.text : payload) || draftText(item.summary)
   const kind = String(item.kind ?? '')
+  const named = typeof localName === 'function' ? localName(item.bot_id) : ''
+  const fromRaw = named
+    || (typeof item.from === 'string' ? item.from : item.from?.display_name)
+    || item.sender_name
+    || item.bot?.display_name
+  const from = cleanText(fromRaw) || (looksLikeBotId(item.bot_id) ? 'Bot' : cleanText(item.bot_id))
   return {
     id,
     kind,
     status: String(item.status ?? 'pending'),
-    from: typeof localName === 'function' ? (localName(item.bot_id) || cleanText(item.bot_id)) : cleanText(item.bot_id),
+    from,
     to: to?.handle ? norm(to.handle) : undefined,
     toName: cleanText(to?.display_name) || (kind === 'face_room_message' ? 'the room' : undefined),
     roomId: item.room_id || item.face_room_id || item.message?.room_id,
@@ -1533,7 +1541,15 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     rememberPastFace(viewHostedFace(hosted, { faceRoomId: id, localRoomId: meta?.localRoomId, status: 'left' })
       || { faceRoomId: id, roomId: meta?.localRoomId, name: 'Face-to-face room', status: 'left', members: [] })
     const handles = (Array.isArray(bots) && bots.length ? bots : asBotsOf(meta)).map(norm).filter(Boolean)
-    const result = await faceNeed().leave(id, { bots: handles })
+    let result
+    try {
+      result = await faceNeed().leave(id, { bots: handles })
+    } catch (error) {
+      // Matching already ended, or Bot Social dropped the room-only identity: still
+      // move the room to Past rooms instead of leaving it in the active list.
+      if (!alreadyLeftFace(error)) throw error
+      result = { status: 'left' }
+    }
     if (meta?.localRoomId) {
       for (const handle of asBotsOf(meta)) {
         const leftBot = botByHandle(handle)

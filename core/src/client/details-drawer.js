@@ -176,8 +176,10 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) 
         : room.notice
           ? h(About, { key: 'notice', title: 'Notice', text: room.notice })
           : h('button', { key: 'notice', type: 'button', className: 'bt-more', onClick: openSettings }, t('Add a notice in group settings')),
-    h(SharedRoomApprovals, { key: 'approvals', room }),
-    h('div', { key: 'members' },
+    face ? null : h(SharedRoomApprovals, { key: 'approvals', room }),
+    face && (room.face?.status === 'candidate' || room.face?.status === 'joining')
+      ? null
+      : h('div', { key: 'members' },
       h('div', { className: 'bt-section-title' }, t('Members · {count}', { count: members.length + humans.length + remotes.length })),
       h('div', { className: 'bt-members', role: 'list' }, [
         ...humans.map(person => h('div', { key: person.id, role: 'listitem' },
@@ -201,7 +203,7 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) 
             room.admin === member.id ? h('span', { className: 'bt-chip bt-chip-admin' }, t('Admin')) : null),
           entry ? h(MemberWork, { entry, bot: member, room, roster, actions, now }) : null)
       })])),
-    h('div', { key: 'mode' }, h('div', { className: 'bt-section-title' }, t('Who answers')),
+    face ? null : h('div', { key: 'mode' }, h('div', { className: 'bt-section-title' }, t('Who answers')),
       h('div', { className: 'bt-kv' }, h('span', null, t(ROOM_MODES.find(([id]) => id === shownMode(room, roster))?.[1] ?? 'Everyone')))),
     usage ? h('div', { key: 'usage' }, h('div', { className: 'bt-section-title' }, t('Usage')),
       h('div', { className: 'bt-kv' }, h('span', null, room.name), h('span', null, usage))) : null,

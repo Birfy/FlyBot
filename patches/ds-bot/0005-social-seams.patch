@@ -106,6 +106,15 @@ diff --git a/src/client/mark.js b/src/client/mark.js
 diff --git a/src/host/channel.js b/src/host/channel.js
 --- a/src/host/channel.js
 +++ b/src/host/channel.js
+@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
+ import { createUserMessage } from '@deepseek-ai/dsh-llm'
+ import { questionReply } from './parts.js'
+ import { COLORS, EXTRA_COLORS, ROUTE } from './constants.js'
++import { isFaceRoom } from './room-membership.js'
++import { mentionSpans } from '../shared/mentions.js'
+ 
+ const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
+ 
 @@ -28,7 +28,8 @@ export function install(rt) {
    // Models come from DSH, not state.json, so a provider added in Harness settings
    // changes the view without a new revision.
@@ -305,7 +314,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
          }
          case 'folders':
          case 'folder-pick':
-@@ -278,9 +278,23 @@ export function install(rt) {
+@@ -278,9 +278,36 @@ export function install(rt) {
            const text = String(body.text ?? '').trim()
            if (text === '' || typeof body.sessionId !== 'string') return fail('Nothing to send', 'bot/invalid')
            await rt.load()
@@ -315,7 +324,20 @@ diff --git a/src/host/channel.js b/src/host/channel.js
            const past = rt.pastOwners.get(body.sessionId)
            const sessionId = rt.botOf(body.sessionId) ? rt.chatOf(body.sessionId) : past && past.roomId === undefined ? rt.chatOf(past.botId) : body.sessionId
 +          const room = rt.roomOf(sessionId)
-+          if (room && actor) {
++          if (room && isFaceRoom(room)) {
++            if (actor && rt.authzEnforced() && !rt.roomMemberOf(actor, room.id)) return fail('You are not a member of that room', 'bot/forbidden')
++            // Face rooms must not go through sessionController.prompt: that starts a local
++            // bot round (turns/steps) and never fans the line to the other FlyBot instance.
++            const line = await rt.postRoomMessage(room.id, { text, displayName: actor?.displayName }, actor)
++            const who = line?.who || actor?.displayName || 'You'
++            if (typeof rt.postToRoom === 'function') {
++              await rt.postToRoom(room, { id: 'face-notice', name: who }, `${who}: ${text}`, { quiet: true, notice: true })
++                .catch(error => rt.warn?.('ds-bot: face-room line not shown locally: %s', error))
++            }
++            const bots = (room.members ?? []).map(id => rt.botOf(id)).filter(bot => bot?.name)
++            const named = mentionSpans(text, bots).some(span => span.bot)
++            if (!named) return ok(true)
++          } else if (room && actor) {
 +            if (rt.authzEnforced() && !rt.roomMemberOf(actor, room.id)) return fail('You are not a member of that room', 'bot/forbidden')
 +            await rt.postRoomMessage(room.id, { text, displayName: actor.displayName }, actor)
 +            const agent = await rt.resolveAgent(sessionId)
@@ -520,3 +542,45 @@ diff --git a/src/host/delivery.js b/src/host/delivery.js
        source,
      })
      if (steer) agent.steer(message)
+diff --git a/test/rounds.test.js b/test/rounds.test.js
+--- a/test/rounds.test.js
++++ b/test/rounds.test.js
+@@ -331,6 +331,38 @@ test('a stopped round leaves a waiting message for the next round', async (t) =>
+   assert.equal(inboxOf(room.id).nextTurn.length, 1)
+ })
+ 
++test('a face-to-face send posts a human line and does not start a bot round', async (t) => {
++  const { call, stop, sent, ctx, rt } = start()
++  t.after(stop)
++  await team(call, sent)
++  await rt.load()
++  const prompts = []
++  const orig = ctx.sessionController.prompt
++  ctx.sessionController.prompt = async (request) => {
++    prompts.push(request)
++    return orig(request)
++  }
++  const chief = (await call('state', {})).value.mainBotId
++  const hosted = await rt.upsertFaceRoom({
++    roomId: 'frm_send',
++    localId: 'face-send',
++    status: 'open',
++    members: [{ handle: '@chief.me.home', displayName: 'Chief', ownerName: 'Me', published: false }],
++    localBots: [{ id: chief, handle: '@chief.me.home', name: 'Chief' }],
++  })
++  sent.length = 0
++  const result = await call('send', { sessionId: hosted.id, text: 'hello from the owner' })
++  assert.equal(result.ok, true)
++  assert.equal(prompts.length, 0)
++  const line = hosted.log.find(item => item.text === 'hello from the owner')
++  assert.ok(line)
++  assert.equal(line.authorKind, 'human')
++  assert.equal(sent.some(entry => entry.message?.source?.role === 'room'), false)
++  const named = await call('send', { sessionId: hosted.id, text: '@Chief ping' })
++  assert.equal(named.ok, true)
++  assert.equal(prompts.length, 1)
++})
++
+ test('a message sent between rounds still opens a full round', async (t) => {
+   const { call, emit, userMessage, relay, answer, stop, sent } = start()
+   t.after(stop)

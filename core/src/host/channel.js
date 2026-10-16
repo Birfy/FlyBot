@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { questionReply } from './parts.js'
 import { COLORS, EXTRA_COLORS, ROUTE } from './constants.js'
+import { isFaceRoom } from './room-membership.js'
+import { mentionSpans } from '../shared/mentions.js'
 
 const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
 
@@ -356,7 +358,20 @@ export function install(rt) {
           const past = rt.pastOwners.get(body.sessionId)
           const sessionId = rt.botOf(body.sessionId) ? rt.chatOf(body.sessionId) : past && past.roomId === undefined ? rt.chatOf(past.botId) : body.sessionId
           const room = rt.roomOf(sessionId)
-          if (room && actor) {
+          if (room && isFaceRoom(room)) {
+            if (actor && rt.authzEnforced() && !rt.roomMemberOf(actor, room.id)) return fail('You are not a member of that room', 'bot/forbidden')
+            // Face rooms must not go through sessionController.prompt: that starts a local
+            // bot round (turns/steps) and never fans the line to the other FlyBot instance.
+            const line = await rt.postRoomMessage(room.id, { text, displayName: actor?.displayName }, actor)
+            const who = line?.who || actor?.displayName || 'You'
+            if (typeof rt.postToRoom === 'function') {
+              await rt.postToRoom(room, { id: 'face-notice', name: who }, `${who}: ${text}`, { quiet: true, notice: true })
+                .catch(error => rt.warn?.('ds-bot: face-room line not shown locally: %s', error))
+            }
+            const bots = (room.members ?? []).map(id => rt.botOf(id)).filter(bot => bot?.name)
+            const named = mentionSpans(text, bots).some(span => span.bot)
+            if (!named) return ok(true)
+          } else if (room && actor) {
             if (rt.authzEnforced() && !rt.roomMemberOf(actor, room.id)) return fail('You are not a member of that room', 'bot/forbidden')
             await rt.postRoomMessage(room.id, { text, displayName: actor.displayName }, actor)
             const agent = await rt.resolveAgent(sessionId)

@@ -19,6 +19,8 @@ import {
   platformLeaveText,
   platformStartedText,
   faceMemberLabel,
+  distinctFaceBotName,
+  alreadyLeftFace,
   roomOnlyForJoin,
   publishedForJoin,
   createFaceRoomApi,
@@ -77,7 +79,7 @@ test('error mapping covers the FACE_ROOMS.md codes', () => {
 test('countdown copy for a candidate room', () => {
   const now = Date.parse('2026-10-15T10:00:00.000Z')
   assert.match(countdownLabel('2026-10-15T10:08:00.000Z', now), /8 minutes left/)
-  assert.equal(countdownLabel('2026-10-15T09:00:00.000Z', now), 'The matching window has ended')
+  assert.equal(countdownLabel('2026-10-15T09:00:00.000Z', now), 'Joining has ended')
 })
 
 test('peer names and system copy are sanitized', () => {
@@ -91,11 +93,16 @@ test('peer names and system copy are sanitized', () => {
   assert.doesNotMatch(text, /</)
   assert.match(text, /available to this room only/)
   assert.doesNotMatch(text, /not published/)
-  assert.equal(platformLeaveText({ display_name: 'Coder', owner_name: 'Bob' }), "Bob's Coder left")
+  assert.equal(platformLeaveText({ display_name: 'Coder', owner_name: 'Bob' }), 'Coder · Bob left')
   assert.match(platformStartedText('start'), /no longer valid/)
-  assert.match(platformStartedText('expired'), /matching window ended/)
-  assert.equal(faceMemberLabel({ display_name: 'Writer', owner_name: 'Alice' }), "Writer · Alice's Bot")
+  assert.match(platformStartedText('expired'), /Joining has ended/)
+  assert.equal(faceMemberLabel({ display_name: 'Writer', owner_name: 'Alice' }), 'Writer · Alice')
   assert.equal(faceMemberLabel({ display_name: 'Chief', owner_name: 'Alice' }), "Alice's Chief")
+  assert.equal(distinctFaceBotName({ display_name: 'BoxA', owner_name: 'BoxA', handle: '@chief.boxa.home' }), 'Chief')
+  assert.equal(faceMemberLabel({ display_name: 'BoxA', owner_name: 'BoxA', handle: '@chief.boxa.home' }), "BoxA's Chief")
+  assert.equal(faceMemberLabel({ display_name: 'Bot', owner_name: 'BoxA', handle: '@writer.boxa.home' }), 'Writer · BoxA')
+  assert.equal(alreadyLeftFace({ code: 'bot_not_found', message: 'That Bot is not one of yours on Bot Social.' }), true)
+  assert.equal(alreadyLeftFace({ code: 'nope', message: 'busy' }), false)
 })
 
 test('owner-typed face-room lines encode as a human envelope', () => {
@@ -132,7 +139,7 @@ test('peer room.message text is fenced and cannot rebuild a closing marker', () 
   })
   const line = renderFaceEvent(event)
   assert.equal(line.trust, 'peer_untrusted')
-  assert.match(line.fenced, /<untrusted-message from="Coder · Bob's Bot">/)
+  assert.match(line.fenced, /<untrusted-message from="Coder · Bob">/)
   assert.equal(line.fenced.match(/<\/untrusted-message>/g).length, 1)
   assert.ok(line.fenced.endsWith('</untrusted-message>'))
   assert.doesNotMatch(stripFaceMarkers(line.text), /<\/\s*untrusted-message/i)

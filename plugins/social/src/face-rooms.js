@@ -78,11 +78,18 @@ export function countdownLabel(expiresAt, now = Date.now()) {
   const at = Date.parse(expiresAt)
   if (!Number.isFinite(at)) return ''
   const left = Math.max(0, at - now)
-  if (left <= 0) return 'The matching window has ended'
+  if (left <= 0) return 'Joining has ended'
   const minutes = Math.ceil(left / 60_000)
   if (minutes >= 2) return `${minutes} minutes left to join`
   const seconds = Math.max(1, Math.ceil(left / 1000))
   return seconds === 1 ? '1 second left to join' : `${seconds} seconds left to join`
+}
+
+const ALREADY_LEFT = new Set(['bot_not_found', 'not_a_member', 'room_closed', 'face_room_not_found', 'code_void'])
+export function alreadyLeftFace(error) {
+  const code = String(error?.code ?? '')
+  if (ALREADY_LEFT.has(code)) return true
+  return /not one of yours on Bot Social|no longer in this room|has closed|not available|no longer valid/i.test(String(error?.message ?? error ?? ''))
 }
 
 const FRIENDLY = {
@@ -174,12 +181,28 @@ export function publishedForJoin(bot, isPublished) {
   return !roomOnlyForJoin(bot, typeof isPublished === 'function' ? id => isPublished(id) : undefined)
 }
 
-export function faceMemberLabel(member) {
-  const name = cleanFaceName(member?.display_name || member?.displayName || member?.name, 'Bot')
+export function handleBotName(handle) {
+  const part = String(handle ?? '').replace(/^@/, '').split('.')[0]
+  if (!part || part === 'home' || part === 'bot') return ''
+  return part.charAt(0).toUpperCase() + part.slice(1)
+}
+
+export function distinctFaceBotName(member) {
+  const name = cleanFaceName(member?.display_name || member?.displayName || member?.name, '')
   const owner = cleanFaceName(member?.owner_name || member?.ownerName, '')
-  if (!owner) return name
+  if (/^chief$/i.test(name)) return 'Chief'
+  if (name && name !== 'Bot' && (!owner || name.toLowerCase() !== owner.toLowerCase())) return name
+  const fromHandle = handleBotName(member?.handle)
+  if (fromHandle && (!owner || fromHandle.toLowerCase() !== owner.toLowerCase())) return fromHandle
+  return name && name !== 'Bot' ? name : ''
+}
+
+export function faceMemberLabel(member) {
+  const owner = cleanFaceName(member?.owner_name || member?.ownerName, '')
+  const name = distinctFaceBotName(member) || 'Bot'
+  if (!owner || name.toLowerCase() === owner.toLowerCase()) return name
   if (/^chief$/i.test(name)) return `${owner}'s Chief`
-  return `${name} · ${owner}'s Bot`
+  return `${name} · ${owner}`
 }
 
 export const FACE_HUMAN_MARK = 'FLYBOT-FACE-HUMAN'
@@ -236,21 +259,18 @@ export function faceOutbound(line, { locals = [], asBots = [] } = {}) {
 }
 
 export function platformJoinText(member) {
-  const name = cleanFaceName(member?.display_name || member?.displayName, 'Bot')
-  const owner = cleanFaceName(member?.owner_name || member?.ownerName, 'Someone')
+  const who = faceMemberLabel(member)
   // Server copy; we rebuild from sanitized fields so a poisoned payload cannot instruct.
-  if (member?.roomOnly === true || member?.published !== true) return `${owner}'s ${name} joined; available to this room only`
-  return `${owner}'s ${name} joined`
+  if (member?.roomOnly === true || member?.published !== true) return `${who} joined; available to this room only`
+  return `${who} joined`
 }
 
 export function platformLeaveText(member) {
-  const name = cleanFaceName(member?.display_name || member?.displayName, 'Bot')
-  const owner = cleanFaceName(member?.owner_name || member?.ownerName, 'Someone')
-  return `${owner}'s ${name} left`
+  return `${faceMemberLabel(member)} left`
 }
 
 export function platformStartedText(reason) {
-  if (reason === 'expired') return 'The matching window ended. The room is now open. The number is no longer valid.'
+  if (reason === 'expired') return 'Joining has ended. The room is now open. The number is no longer valid.'
   return 'The room is now open. The number is no longer valid.'
 }
 

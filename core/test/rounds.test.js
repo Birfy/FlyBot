@@ -331,6 +331,38 @@ test('a stopped round leaves a waiting message for the next round', async (t) =>
   assert.equal(inboxOf(room.id).nextTurn.length, 1)
 })
 
+test('a face-to-face send posts a human line and does not start a bot round', async (t) => {
+  const { call, stop, sent, ctx, rt } = start()
+  t.after(stop)
+  await team(call, sent)
+  await rt.load()
+  const prompts = []
+  const orig = ctx.sessionController.prompt
+  ctx.sessionController.prompt = async (request) => {
+    prompts.push(request)
+    return orig(request)
+  }
+  const chief = (await call('state', {})).value.mainBotId
+  const hosted = await rt.upsertFaceRoom({
+    roomId: 'frm_send',
+    localId: 'face-send',
+    status: 'open',
+    members: [{ handle: '@chief.me.home', displayName: 'Chief', ownerName: 'Me', published: false }],
+    localBots: [{ id: chief, handle: '@chief.me.home', name: 'Chief' }],
+  })
+  sent.length = 0
+  const result = await call('send', { sessionId: hosted.id, text: 'hello from the owner' })
+  assert.equal(result.ok, true)
+  assert.equal(prompts.length, 0)
+  const line = hosted.log.find(item => item.text === 'hello from the owner')
+  assert.ok(line)
+  assert.equal(line.authorKind, 'human')
+  assert.equal(sent.some(entry => entry.message?.source?.role === 'room'), false)
+  const named = await call('send', { sessionId: hosted.id, text: '@Chief ping' })
+  assert.equal(named.ok, true)
+  assert.equal(prompts.length, 1)
+})
+
 test('a message sent between rounds still opens a full round', async (t) => {
   const { call, emit, userMessage, relay, answer, stop, sent } = start()
   t.after(stop)

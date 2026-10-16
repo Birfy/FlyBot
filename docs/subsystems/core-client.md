@@ -25,7 +25,7 @@ The browser side of the patched `ds-bot` core (`core/`): sources in `core/src/cl
 | --- | --- |
 | `core/src/client/` | Client sources → build to `core/client.js`. |
 | `core/src/client/new-chat.js` | Sidebar **+** picker. Plugin rows via `flybot.new-chat.action` (`newChatActionRows` in `flybot-registry.js`); social adds Face-to-face group, Add friend, and Friend requests. |
-| `core/test/new-chat.test.js` | Picker filters and the **+** menu order (Create group chat, then plugin actions, then Add DSH Agent). |
+| `core/test/new-chat.test.js` | Picker filters and the **+** short action menu (`data-menu`; New chat, then Create group chat, plugin actions, then Add Agent). |
 
 ## Invariants
 
@@ -76,6 +76,7 @@ The default card (`flybot-slots.js`) shows where a held request came from: `send
 ### New-chat menu
 
 - Slot `flybot.new-chat.action` (`0003-flybot-api-client`, types in `flybot.d.ts`) is a row on the sidebar **+** new-chat menu, next to Create group chat. Plugins register `{ id, order, label, hint?, visible?, run }`; the picker looks `label` / `hint` up with `t()` like the neighbouring rows. Social registers Face-to-face group, Add friend, and Friend requests; see [plugin-runtime](plugin-runtime.md) and [social](social.md).
+- Sidebar **+** (`mode === 'new'`) opens a short action menu (`data-menu`, no To:/composer) until **New chat** or **Create group chat**. The Agent row in that FlyBot menu is **Add Agent**; **Add DSH Agent** stays the DSH product string on Agent rows elsewhere (#126).
 
 ## Tests
 

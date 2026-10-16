@@ -13,6 +13,8 @@ export function NewChat({ mode, roster, actions }) {
   const [query, setQuery] = useState('')
   const [picked, setPicked] = useState([])
   const [group, setGroup] = useState(mode === 'group')
+  // Sidebar + starts as a short action menu; the To:/composer opens after New chat.
+  const [compose, setCompose] = useState(mode !== 'new')
   // A new group chat picks its admin first, then the other members.
   const [admin, setAdmin] = useState(null)
   const [message, setMessage] = useState('')
@@ -106,10 +108,14 @@ export function NewChat({ mode, roster, actions }) {
     actions.openSession(room.id)
     close()
   })
+  const menuOnly = mode === 'new' && !compose && !group && picked.length === 0 && wanted === ''
   const options = []
   if (!group && picked.length === 0 && mode !== 'search' && wanted === '') {
+    if (menuOnly) {
+      options.push({ key: 'chat', icon: h(PlusIcon), label: t('New chat'), run: () => { setCompose(true); setCursor(0); setTimeout(() => inputRef.current?.focus()) } })
+    }
     options.push({ key: 'new', icon: h(PlusIcon), label: t('Create new Bot'), run: createBot })
-    options.push({ key: 'group', icon: h(PeopleIcon), label: t('Create group chat'), run: () => { setGroup(true); setCursor(0); inputRef.current?.focus() } })
+    options.push({ key: 'group', icon: h(PeopleIcon), label: t('Create group chat'), run: () => { setGroup(true); setCompose(true); setCursor(0); inputRef.current?.focus() } })
     for (const action of newChatActionRows({ mode, group, picked, query, roster })) {
       options.push({
         key: action.key,
@@ -119,9 +125,9 @@ export function NewChat({ mode, roster, actions }) {
         run: () => action.run({ close, actions, roster }),
       })
     }
-    // A team holds at most one DSH Agent; the entry exists only while there is none.
+    // A team holds at most one Agent; the entry exists only while there is none.
     if ((roster.agents ?? []).length === 0) {
-      options.push({ key: 'agent', icon: h(FishLogo, { size: 16 }), label: t('Add DSH Agent'), run: () => run(async () => { await actions.addAgent(); close() }) })
+      options.push({ key: 'agent', icon: h(FishLogo, { size: 16 }), label: t('Add Agent'), run: () => run(async () => { await actions.addAgent(); close() }) })
     }
   }
   for (const bot of matches) {
@@ -150,8 +156,11 @@ export function NewChat({ mode, roster, actions }) {
     else if (admin !== null) setAdmin(null)
   }
   return h('div', { className: 'bt-pane', style: { left: paneLeft } },
-    h('div', { className: 'bt-newchat', role: 'dialog', 'aria-label': mode === 'search' ? t('Search') : t('New chat') },
-      h('div', { className: 'bt-to' },
+    h('div', { className: 'bt-newchat', role: 'dialog', 'aria-label': mode === 'search' ? t('Search') : t('New chat'), 'data-menu': menuOnly || undefined },
+      menuOnly ? h('div', { className: 'bt-to' },
+        h('span', { className: 'bt-to-label' }, t('New…')),
+        h('button', { type: 'button', className: 'bt-x', 'aria-label': t('Close new chat'), onClick: close }, '×'))
+      : h('div', { className: 'bt-to' },
         h('span', { className: 'bt-to-label' }, t('To:')),
         adminBot ? h('span', { key: adminBot.id, className: 'bt-token bt-token-admin', title: t('Admin') },
           h(BotMark, { bot: adminBot, size: 16 }), adminBot.name, h(AdminStar),
@@ -187,9 +196,9 @@ export function NewChat({ mode, roster, actions }) {
             option.bot ? h(BotMark, { bot: option.bot, size: 22 }) : h('span', { className: 'bt-option-icon' }, option.icon),
             h('span', { className: 'bt-option-label' }, option.label),
             option.hint && index === active ? h('span', { className: 'bt-option-hint' }, option.hint) : null)))),
-      h('div', { className: 'bt-nc-spacer' }),
+      menuOnly ? null : h('div', { className: 'bt-nc-spacer' }),
       error ? h('div', { className: 'bt-error' }, error) : null,
-      h('div', { className: 'bt-nc-compose' },
+      menuOnly ? null : h('div', { className: 'bt-nc-compose' },
         h('div', { className: 'bt-nc-card' },
           h('span', { className: 'bt-nc-plus', 'aria-hidden': true }, h(PlusIcon)),
           h('textarea', {
