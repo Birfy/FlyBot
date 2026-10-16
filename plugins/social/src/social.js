@@ -45,6 +45,8 @@ import {
   viewMe,
   faceOutbound,
   platformJoinText,
+  humanFaceWho,
+  faceRoomTitle,
 } from './face-rooms.js'
 import {
   hideRemoteInSettings,
@@ -912,13 +914,40 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     }
     return delivered
   }
-  if (config.inboxPollMs > 0) {
-    const timer = every(() => {
-      void pollInbox().catch(() => {})
-      if (now() - fetchedAt >= REMOTE_TTL_MS) void remoteBots({ fresh: true }).catch(() => {})
-    }, config.inboxPollMs)
-    disposers.push(() => clear(timer))
+  function hasLiveFace() {
+    return Object.keys(settings.faceRooms || {}).some((serverId) => {
+      const hosted = flybot.rooms.ofFace?.(serverId)
+      const status = hosted?.face?.status
+      if (status === 'closed' || status === 'left') return false
+      if (status === 'candidate') {
+        const at = Date.parse(hosted?.face?.expiresAt)
+        if (Number.isFinite(at) && at <= now()) return false
+      }
+      return Boolean(hosted)
+    })
   }
+  function socialPollMs() {
+    if (!(config.inboxPollMs > 0)) return 0
+    const idle = config.inboxPollMs
+    const live = config.facePollMs > 0 ? config.facePollMs : 4_000
+    return hasLiveFace() ? Math.min(live, idle) : idle
+  }
+  let pollTimer
+  let lastPollMs
+  function armSocialPoll() {
+    const ms = socialPollMs()
+    if (ms === lastPollMs && pollTimer) return
+    if (pollTimer) { clear(pollTimer); pollTimer = undefined }
+    lastPollMs = ms
+    if (!(ms > 0)) return
+    pollTimer = every(() => {
+      void pollInbox().catch(() => {})
+      void pollFaceRooms().then(() => armSocialPoll()).catch(() => armSocialPoll())
+      if (now() - fetchedAt >= REMOTE_TTL_MS) void remoteBots({ fresh: true }).catch(() => {})
+    }, ms)
+  }
+  disposers.push(() => { if (pollTimer) clear(pollTimer) })
+  armSocialPoll()
 
   // ------------------------------------------------------------ model tools (every local Bot)
   disposers.push(flybot.tools.register({
@@ -1260,7 +1289,16 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
   // cards: the draft already left this process; the friend sees nothing until the owner
   // decides here. Cached briefly so status + the Friends' Bots poll share one fetch.
   let pendingCache = { at: 0, items: [] }
-  const localNameOf = botId => flybot.bot.list().find(bot => memberOf(bot.id)?.bot_id === botId)?.name ?? cleanText(botId)
+  const localNameOf = (botId) => {
+    const id = String(botId ?? '')
+    if (!id) return ''
+    const listed = localFaceBots()
+    const hit = listed.find(bot => bot.botId === id || bot.id === id || (bot.handle && norm(bot.handle) === norm(id)))
+    if (hit?.name) return hit.name
+    const team = flybot.bot.list().find(bot => bot.id === id || memberOf(bot.id)?.bot_id === id)
+    if (team?.name) return team.name
+    return ''
+  }
   async function pendingApprovals({ fresh = false } = {}) {
     if (flybot.readOnly?.()) return []
     if (!fresh && now() - pendingCache.at < 5_000) return pendingCache.items
@@ -1462,6 +1500,25 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       ...extra,
     }
   }
+  function ownerDisplayName(snapshot, hosted) {
+    const locals = new Set(bringable().map(bot => bot.handle).filter(Boolean))
+    const mine = (snapshot?.members ?? hosted?.participants ?? []).find(member => locals.has(norm(member.handle)))
+    return cleanText(mine?.ownerName || mine?.owner_name, '') || 'Someone'
+  }
+  function faceSnapshotPast(snapshot, hosted) {
+    const status = snapshot?.status || hosted?.face?.status
+    if (status === 'closed' || status === 'left') return { status }
+    const expiresAt = snapshot?.expiresAt || hosted?.face?.expiresAt
+    if (status === 'candidate' && expiresAt) {
+      const at = Date.parse(expiresAt)
+      if (Number.isFinite(at) && at <= now()) return { status: 'closed' }
+    }
+    const locals = new Set(bringable().map(bot => bot.handle).filter(Boolean))
+    const previousRemotes = (hosted?.participants ?? []).filter(p => p.leftSeq === undefined && p.remote === true)
+    const currentRemotes = (snapshot?.members ?? []).filter(member => member.handle && !locals.has(norm(member.handle)))
+    if (status === 'open' && previousRemotes.length > 0 && currentRemotes.length === 0) return { status: 'left' }
+    return undefined
+  }
   async function applyFaceSnapshot(snapshot, { asBot } = {}) {
     if (!snapshot?.roomId || !flybot.rooms?.upsertFace) return undefined
     const locals = bringable()
@@ -1470,9 +1527,12 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       .filter(p => p.leftSeq === undefined)
       .map(p => norm(p.handle || p.id))
       .filter(Boolean))
+    const past = faceSnapshotPast(snapshot, hosted)
+    const title = faceRoomTitle(snapshot, { code: settings.faceRooms[snapshot.roomId]?.joinCode, room: hosted })
     const room = await flybot.rooms.upsertFace({
       roomId: snapshot.roomId,
-      status: snapshot.status,
+      name: title,
+      status: past?.status || snapshot.status,
       expiresAt: snapshot.expiresAt,
       startedAt: snapshot.startedAt,
       eventCursor: snapshot.eventCursor,
@@ -1495,6 +1555,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       asBot: prev?.asBot,
       asBots: prev?.asBots,
       seen: prev?.seen ?? [],
+      joinCode: prev?.joinCode,
     }, asBot)
     let seen = settings.faceRooms[snapshot.roomId].seen
     const joinedFromEvents = new Set()
@@ -1516,8 +1577,9 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       } else if (line.human || line.authorKind === 'human') {
         const local = locals.some(bot => bot.handle && bot.handle === line.authorId)
         if (local) continue
-        flybot.rooms.applyFaceLine?.(room.id, { ...line, remote: true, authorKind: 'human' })
-        void flybot.rooms.postNotice?.(room.id, `${line.who}: ${line.text}`)
+        const who = humanFaceWho(line, ownerDisplayName(snapshot, hosted))
+        flybot.rooms.applyFaceLine?.(room.id, { ...line, who, remote: true, authorKind: 'human' })
+        void flybot.rooms.postNotice?.(room.id, `${who}: ${line.text}`)
       } else {
         const local = locals.some(bot => bot.handle && bot.handle === line.authorId)
         if (local) continue
@@ -1535,7 +1597,16 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       void flybot.rooms.postNotice?.(room.id, text)
     }
     settings.faceRooms[snapshot.roomId].seen = seen
+    if (past) {
+      rememberPastFace(viewHostedFace(flybot.rooms.ofFace?.(snapshot.roomId) ?? room, {
+        faceRoomId: snapshot.roomId,
+        localRoomId: room.id,
+        status: past.status,
+        name: title,
+      }))
+    }
     saveSettings()
+    armSocialPoll()
     return flybot.rooms.ofFace?.(snapshot.roomId) ?? room
   }
   async function pollOneFace(serverId, meta, listed) {
@@ -1607,9 +1678,14 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       await registerForFace(local)
       const ready = pickJoiner(bot.id)
       const snapshot = await faceNeed().join({ code: digits, bots: [ready.handle] })
+      const prev = settings.faceRooms[snapshot.roomId]
+      settings.faceRooms[snapshot.roomId] = rememberAsBot({
+        ...(prev ?? {}),
+        joinCode: prev?.joinCode || digits,
+      }, ready.handle)
       const room = await applyFaceSnapshot(snapshot, { asBot: ready.handle })
       saveSettings()
-      if (room) await setRoomGrant(ready.id, room, { faceRoomId: snapshot.roomId, name: snapshot.name || room.name })
+      if (room) await setRoomGrant(ready.id, room, { faceRoomId: snapshot.roomId, name: faceRoomTitle(snapshot, { code: digits, room }) })
       return { ...viewHostedFace(room, { joinedAs: { botId: ready.id, botName: ready.name, handle: ready.handle } }), faceRoomId: snapshot.roomId, status: snapshot.status, expiresAt: snapshot.expiresAt, members: snapshot.members }
     } catch (error) {
       // A brand-new room-only identity that never made it into a room must not block retry
@@ -1656,6 +1732,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       if (left) await releaseRoomOnlyIdentity(left.id)
     }
     saveSettings()
+    armSocialPoll()
     return { roomId: meta?.localRoomId, faceRoomId: id, status: result?.status || 'left' }
   }
   async function startFaceRoom({ roomId, faceRoomId } = {}) {
@@ -1676,6 +1753,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       const outbound = faceOutbound(line, {
         locals: bringable(),
         asBots: asBotsOf(settings.faceRooms[serverId]),
+        who: humanFaceWho(line, ownerDisplayName({ members: room.participants }, room)),
       })
       if (!outbound) return
       try {
@@ -1721,11 +1799,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     return sent
   }))
 
-  if (config.inboxPollMs > 0) {
-    const faceTimer = every(() => { void pollFaceRooms().catch(() => {}) }, config.inboxPollMs)
-    disposers.push(() => clear(faceTimer))
-  }
-  void pollFaceRooms().catch(() => {})
+  void pollFaceRooms().then(() => armSocialPoll()).catch(() => armSocialPoll())
 
   return {
     home,

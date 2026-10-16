@@ -310,7 +310,7 @@ window.__ModuleLoader__.load({
       }, mark, caption)
     }
 
-    const AUTO_SEND_NOTE = 'When this is on, your Bots post in face-to-face rooms without asking each time.'
+    const AUTO_SEND_NOTE = "Don't ask each time."
 
     function FaceAutoSend({ on, busy, onChange, error } = {}) {
       return h('div', { className: 'fs-face-auto-wrap', 'data-flybot': 'face-auto-send' },
@@ -781,7 +781,11 @@ window.__ModuleLoader__.load({
       return seconds === 1 ? '1 second left to join' : `${seconds} seconds left to join`
     }
 
-    const isPastFace = (room) => room?.status === 'closed' || room?.status === 'left'
+    const isPastFace = (room) => {
+      if (!room) return false
+      if (room.status === 'closed' || room.status === 'left') return true
+      return faceChip(room) === 'ended'
+    }
     function uniqueFaceRooms(list) {
       const seen = new Set()
       const out = []
@@ -856,8 +860,9 @@ window.__ModuleLoader__.load({
       const [tick, setTick] = useState(0)
       const [snapshot, setSnapshot] = useState(null)
       const candidate = (snapshot?.status || face?.status) === 'candidate'
+      const live = candidate || (snapshot?.status || face?.status) === 'open'
       useEffect(() => {
-        if (!candidate && face?.status !== 'candidate') return undefined
+        if (!live && face?.status !== 'candidate' && face?.status !== 'open') return undefined
         const load = () => call('social/face-rooms', { poll: true }).then(value => {
           const list = Array.isArray(value?.rooms) ? value.rooms : []
           const next = list.find(item => (face?.roomId && item.faceRoomId === face.roomId) || item.roomId === room.id)
@@ -865,10 +870,10 @@ window.__ModuleLoader__.load({
         }, () => {})
         load()
         if (typeof setInterval !== 'function') return undefined
-        const timer = setInterval(load, 2000)
+        const timer = setInterval(load, 3000)
         timer?.unref?.()
         return () => clearInterval(timer)
-      }, [candidate, face?.roomId, room?.id])
+      }, [live, face?.roomId, room?.id])
       useEffect(() => {
         const expiresAt = snapshot?.expiresAt || face?.expiresAt
         if (!candidate || !expiresAt) return undefined
@@ -1050,7 +1055,7 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', className: 'fs-head-main', 'aria-expanded': open, onClick: () => setOpen(!open) },
             h('span', { className: 'fs-chev', 'aria-hidden': true }, '▾'),
             h('span', { className: 'fs-title' }, 'Friends\' Bots'),
-            data ? h('span', { className: 'fs-count', title: `${count} ${count === 1 ? 'Bot' : 'Bots'}` }, String(count)) : null),
+            data && !pending.length ? h('span', { className: 'fs-count', title: `${count} ${count === 1 ? 'Bot' : 'Bots'}` }, String(count)) : null),
           pending.length ? h('button', { type: 'button', className: 'fs-tag fs-pending-tag', 'data-flybot': 'pending-badge', title: `${pending.length} outbound ${pending.length === 1 ? 'reply' : 'replies'} waiting for your approval. Opens that chat.`, onClick: openPending }, `${pending.length} to approve`) : null,
           refreshing ? h('span', { className: 'fs-refresh', 'data-flybot': 'roster-refreshing' }, 'Refreshing…') : null),
         open ? h('div', { className: 'fs-body' },
@@ -1067,9 +1072,9 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'fs-chev', 'aria-hidden': true, 'data-closed': shut || undefined }, '▾'),
                   h('span', { className: 'fs-home-name' }, entry.name ?? entry.home),
                   entry.name ? h('span', { className: 'fs-home-handle' }, entry.home) : null),
-                h('label', { className: 'fs-auto', title: 'Auto-accept: messages with this friend go through without your approval. Off: what your Bots send on their own waits for you.' },
+                h('label', { className: 'fs-auto', title: AUTO_SEND_NOTE },
                   h('input', { type: 'checkbox', checked: auto[entry.home] !== false, disabled: saving === entry.home, onChange: e => toggleAuto(entry.home, e.target.checked) }),
-                  'Auto-accept')),
+                  'Auto-send')),
               shut ? null : entry.bots.length === 0 ? h('div', { className: 'fs-hint' }, 'No Bots shared yet') : null,
               shut ? null : h('div', { className: 'bt-social-rows' }, rows.map(({ bot, chat }) => h(FriendBotRow, {
                 key: bot.handle, bot, chat, renderBot, busy: hiding instanceof Set ? hiding.has(bot.handle) : hiding === bot.handle, onRemove: removeBot,
@@ -1338,11 +1343,37 @@ window.__ModuleLoader__.load({
               run: ({ close } = {}) => { openAddFriend(); close?.() },
             }),
             slots().register('flybot.new-chat.action', {
-              id: 'social-friend-requests',
+              id: 'social-accept-invite',
               order: 17,
-              label: 'Friend requests',
-              hint: 'Accept or decline incoming requests.',
+              label: 'Accept invite',
+              hint: "Paste a friend’s invite link or code.",
               run: ({ close } = {}) => { openAddFriend(); close?.() },
+            }),
+            slots().register('flybot.new-chat.action', {
+              id: 'social-copy-invite',
+              order: 18,
+              label: 'Copy invite link',
+              hint: 'Copy a link a friend can paste in Add friend.',
+              run: async ({ close } = {}) => {
+                close?.()
+                const status = await call('social/status', {})
+                const bots = status?.bots ?? []
+                const botId = (bots.find(bot => bot.isMain) ?? bots[0])?.id
+                if (!botId) return 'Choose one of your Bots first.'
+                const invite = await call('social/create-invite', { botId })
+                const link = invite?.link || invite?.url
+                if (!link) return 'The invite came back without its link.'
+                const clip = typeof navigator !== 'undefined' ? navigator.clipboard : undefined
+                if (clip?.writeText) {
+                  try {
+                    await clip.writeText(link)
+                    return 'Invite link copied. Send it to a friend.'
+                  } catch {
+                    return `Could not copy. Link: ${link}`
+                  }
+                }
+                return `Invite link: ${link}`
+              },
             }),
             slots().register('flybot.composer.mention', { id: 'social', order: 100, candidates: friendRows }),
             slots().register('flybot.bot.details', { id: 'social-invite', order: 100, component: BotSocialDetails }),

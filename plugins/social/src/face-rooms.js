@@ -213,6 +213,34 @@ export function encodeFaceHuman(payload = {}) {
   return `${FACE_HUMAN_MARK}\n${JSON.stringify({ v: 1, who, text })}`
 }
 
+export function humanFaceWho(line, fallback = 'Someone') {
+  const who = cleanFaceName(line?.who, '')
+  if (who && !/^user$/i.test(who)) return who
+  return cleanFaceName(fallback, 'Someone')
+}
+
+export function faceRoomTitle(snapshot = {}, { code, room } = {}) {
+  const named = String(snapshot.name || room?.name || '').trim()
+  if (named && named !== 'Face-to-face room') return named
+  const owners = []
+  const seen = new Set()
+  for (const member of snapshot.members ?? room?.participants ?? []) {
+    const owner = cleanFaceName(member.ownerName || member.owner_name, '')
+    const key = owner.toLowerCase()
+    if (!owner || seen.has(key)) continue
+    seen.add(key)
+    owners.push(owner)
+  }
+  if (owners.length) return `Face-to-face · ${owners.slice(0, 3).join(', ')}`
+  const join = String(code || snapshot.joinCode || '').replace(/\D/g, '').slice(0, 6)
+  if (join.length === 6) return `Face-to-face · ${join}`
+  const at = Date.parse(snapshot.startedAt || snapshot.expiresAt || '')
+  const when = Number.isFinite(at) ? new Date(at) : new Date()
+  const hh = String(when.getHours()).padStart(2, '0')
+  const mm = String(when.getMinutes()).padStart(2, '0')
+  return `Face-to-face · ${hh}:${mm}`
+}
+
 export function parseFaceHuman(text) {
   const raw = String(text ?? '')
   const at = raw.indexOf(FACE_HUMAN_MARK)
@@ -239,7 +267,7 @@ export function parseFaceHuman(text) {
   }
 }
 
-export function faceOutbound(line, { locals = [], asBots = [] } = {}) {
+export function faceOutbound(line, { locals = [], asBots = [], who } = {}) {
   if (!line || line.kind) return undefined
   if (line.remote === true) return undefined
   const author = line.authorId || line.botId
@@ -250,7 +278,7 @@ export function faceOutbound(line, { locals = [], asBots = [] } = {}) {
       || locals.find(bot => bot.botId)
     if (!speaker?.botId) return undefined
     return {
-      text: encodeFaceHuman({ who: line.who, text: line.text }),
+      text: encodeFaceHuman({ who: humanFaceWho(line, who), text: line.text }),
       botId: speaker.botId,
       human: true,
     }

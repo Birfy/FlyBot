@@ -79,7 +79,8 @@ A tracked request with a stable id (`task-<hex>`) and a small state machine, own
 
 ### Untrusted fences in every shared room
 
-- `authoredRoomLine` fences peer-controlled text by the line's origin, not the room kind (#98): a remote participant, a local remote-chat record (`state.bots[id].remote`), a botId that is no team Bot, or `line.remote`. A friend's Bot speaking in a non-face group is fenced the same way as in a face room. A complete wrap is left as-is so outbound fanout does not nest residue; a mention of the marker in the body still fences. `stripUntrusted` is one fixed-point pass over both `untrusted-message` and `untrusted-file`. Inbound-share lines from the other instance are `remote: true` so owner-typed text is fenced too. Face join/leave notices stay unfenced platform copy.
+- `authoredRoomLine` fences peer-controlled text by the line's origin, not the room kind (#98): a remote participant, a local remote-chat record (`state.bots[id].remote`), a botId that is no team Bot, or `line.remote`. A friend's Bot speaking in a non-face group is fenced the same way as in a face room. A complete wrap is left as-is so outbound fanout does not nest residue; a mention of the marker in the body still fences. `stripUntrusted` is one fixed-point pass over both `untrusted-message` and `untrusted-file`. Inbound-share lines from the other instance are `remote: true` so owner-typed text is fenced too. Face join/leave notices stay unfenced platform copy. Channel room previews use `unwrapUntrusted` so the sidebar never shows the wrap. A human line whose `who` is `User` is rewritten from the signed-in display name before it is stored or fenced.
+- A late group model failure posts a short friendly line into the room (`This Bot could not answer right now.` / `This Bot has no model set up yet.`); `failureLine` stays on Bot-to-Bot deliver and in diagnostics, not in the human transcript.
 
 ### Remote chats and mentions
 

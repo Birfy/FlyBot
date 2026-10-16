@@ -9,7 +9,8 @@
 //   displayName      name for the home on first onboarding
 //   webhookUrl       optional push webhook registered at onboarding
 //   approval         { default: 'hold' | 'auto', homes: { '@bob.home': 'auto' } }
-//   inboxPollMs      poll members' inboxes this often; 0 = off (default 15000)
+//   inboxPollMs      poll members' inboxes this often while idle; 0 = off (default 15000)
+//   facePollMs       faster poll while a live face-to-face room is open (default 4000)
 //   token / botId    legacy per-bot identity (no home): owner connector token + bot id
 import { join } from 'node:path'
 import { registerUnavailable, startFailureReason, startSocial } from './src/social.js'
@@ -22,7 +23,7 @@ export function apply(ctx, config = {}) {
   let stopped = false
   let unavailableOff
   const dshHome = process.env.DSH_HOME ?? join(process.env.HOME ?? '.', '.dsh')
-  const ready = startSocial(ctx.flybot, { inboxPollMs: 15_000, credentialsPath: join(dshHome, 'bot', 'flybot-social.json'), ...config })
+  const ready = startSocial(ctx.flybot, { inboxPollMs: 15_000, facePollMs: 4_000, credentialsPath: join(dshHome, 'bot', 'flybot-social.json'), ...config })
     .then((value) => {
       social = value
       if (stopped) social.dispose()
