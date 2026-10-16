@@ -4,6 +4,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { questionReply } from './parts.js'
 import { COLORS, EXTRA_COLORS, ROUTE } from './constants.js'
 import { isFaceRoom } from './room-membership.js'
+import { unwrapUntrusted } from './delivery.js'
 import { mentionSpans } from '../shared/mentions.js'
 
 const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
@@ -54,7 +55,8 @@ export function install(rt) {
     rooms: Object.values(state.rooms).map(({ log, seen, botRounds, lateRounds, sessions, segments, ...room }) => {
       const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId)]
       const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
-      const previewWho = last && (last.authorKind === 'human' && last.who && last.who !== 'User' ? `${last.who}: ${last.text}` : last.who === 'User' ? last.text : `${last.who}：${last.text}`)
+      const previewText = last ? unwrapUntrusted(last.text) : ''
+      const previewWho = last && (last.authorKind === 'human' && last.who && last.who !== 'User' ? `${last.who}: ${previewText}` : last.who === 'User' ? previewText : `${last.who}：${previewText}`)
       const presented = rt.presentRoom?.({ ...room, log }, actor) ?? room
       const pending = rt.listRoomApprovals?.(presented, actor) ?? []
       return {

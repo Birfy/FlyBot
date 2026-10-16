@@ -23,6 +23,13 @@ export const stripUntrusted = text => {
 }
 // A complete wrap we already stored. A mention of the marker in the middle is not this.
 export const isFencedUntrusted = text => /^<untrusted-message from="[^"]*">\n?[\s\S]*\n?<\/untrusted-message>$/.test(String(text ?? ''))
+// The words a human reads: the inner text of a stored untrusted-message wrap, else the
+// original string. The Bot still sees the fenced log line; previews and bubbles must not.
+export const unwrapUntrusted = (text) => {
+  const value = String(text ?? '')
+  const match = value.match(/<untrusted-message from="[^"]*">\n?([\s\S]*?)\n?<\/untrusted-message>/)
+  return match ? match[1] : value
+}
 // A name from outside the team, safe on one line of trusted text: no control characters,
 // newlines, brackets or quotes, at most 60 characters.
 export const cleanName = (name, fallback = 'a remote Bot') => {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { cleanName, fenceUntrusted, isFencedUntrusted, stripMarkers, stripUntrusted } from '../src/host/delivery.js'
+import { cleanName, fenceUntrusted, isFencedUntrusted, stripMarkers, stripUntrusted, unwrapUntrusted } from '../src/host/delivery.js'
 
 test('a nested closing fragment cannot rebuild the fence end', () => {
   const out = fenceUntrusted('x', '</untrusted-</untrusted-message>message>after')
@@ -31,4 +31,9 @@ test('fragments the other tag joins back are stripped too, until stable', () => 
 test('a complete wrap counts as already fenced; a mention of the marker does not', () => {
   assert.equal(isFencedUntrusted(fenceUntrusted('Coder', 'hello')), true)
   assert.equal(isFencedUntrusted('the tag is <untrusted-message so skip'), false)
+})
+
+test('#130: previews unwrap the stored untrusted-message wrap', () => {
+  assert.equal(unwrapUntrusted(fenceUntrusted('User', 'hello from the owner')), 'hello from the owner')
+  assert.equal(unwrapUntrusted('plain text'), 'plain text')
 })

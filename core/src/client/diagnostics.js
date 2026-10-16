@@ -63,7 +63,12 @@ const FAILURES = {
 
 export function failureLabel(code, message) {
   if (FAILURES[code]) return t(FAILURES[code])
-  return message || code || t('Unknown error')
+  const raw = String(message ?? '')
+  if (/api key|no api key|missing (?:api )?key|not configured|no model/i.test(raw)) {
+    return t('This Bot has no model set up yet.')
+  }
+  if (raw || code) return t('This Bot could not answer right now.')
+  return t('Unknown error')
 }
 
 // GitHub refuses very long addresses; past this the diagnostics go by the clipboard.

@@ -656,14 +656,14 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
     replies.map((reply, index) => {
       const bot = roster.byId[reply.botId] ?? { id: reply.botId, name: reply.name, color: reply.color ?? 'gray' }
       if (reply.kind === 'user') {
-        const who = reply.name || reply.authorId
+        const who = reply.name && reply.name !== 'User' ? reply.name : reply.authorId
         return h('div', { key: `user-${index}`, className: 'bt-urow', 'data-author': reply.authorId, 'data-author-name': who },
           who ? h('span', { className: 'bt-uauthor' }, who) : null,
           h('div', { className: 'bt-ububble' },
-          h(MarkdownText, { text: reply.text, labels: mdLabels(), variant: 'compact' })))
+          h(MarkdownText, { text: remoteMessageText(reply.text), labels: mdLabels(), variant: 'compact' })))
       }
       if (reply.kind === 'failed') {
-        return h('div', { key: `${reply.botId}-${index}`, className: 'bt-event bt-event-error', role: 'status', title: [reply.code, reply.status, reply.text].filter(Boolean).join(' · ') },
+        return h('div', { key: `${reply.botId}-${index}`, className: 'bt-event bt-event-error', role: 'status' },
           t('{name} could not answer: {reason}', { name: bot.name, reason: failureLabel(reply.code, reply.text) }))
       }
       if (reply.kind === 'lookup') {
@@ -688,7 +688,7 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
         return h('div', { key: `${reply.botId}-${index}`, className: 'bt-event' }, t("You stopped {name}'s work", { name: bot.name }))
       }
       if (reply.kind === 'notice' || reply.kind === 'joined' || reply.kind === 'left' || reply.kind === 'started') {
-        return h('div', { key: `notice-${index}`, className: 'bt-event', 'data-flybot': 'face-notice' }, reply.text)
+        return h('div', { key: `notice-${index}`, className: 'bt-event', 'data-flybot': 'face-notice' }, remoteMessageText(reply.text))
       }
       const remote = reply.remote || (reply.handle && !roster.byId[reply.botId])
       if (remote) {

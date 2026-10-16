@@ -650,7 +650,10 @@ export function install(rt) {
     const member = rt.botOf(owner?.botId)
     if (room === undefined || member === undefined || !room.members.includes(member.id)) return
     const { code, status, message } = failure
-    await postToRoom(room, member, `Could not finish: its model call failed (${failureLine(failure)}).`, {
+    const friendly = /api key|no api key|missing (?:api )?key|not configured|no model/i.test(String(message ?? ''))
+      ? 'This Bot has no model set up yet.'
+      : 'This Bot could not answer right now.'
+    await postToRoom(room, member, `Could not finish: ${friendly}`, {
       late: true, quiet: true, failed: { code, ...(status ? { status } : {}), message },
     }).catch(error => rt.warn('ds-bot: late group failure from %s failed: %s', member.name, error))
   }

@@ -106,11 +106,12 @@ diff --git a/src/client/mark.js b/src/client/mark.js
 diff --git a/src/host/channel.js b/src/host/channel.js
 --- a/src/host/channel.js
 +++ b/src/host/channel.js
-@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
+@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto'
  import { createUserMessage } from '@deepseek-ai/dsh-llm'
  import { questionReply } from './parts.js'
  import { COLORS, EXTRA_COLORS, ROUTE } from './constants.js'
 +import { isFaceRoom } from './room-membership.js'
++import { unwrapUntrusted } from './delivery.js'
 +import { mentionSpans } from '../shared/mentions.js'
  
  const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
@@ -125,7 +126,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
      revision: state.revision,
      workspaceId: state.workspaceId ?? null,
      // `mainBotId` is the first Main Bot, which the sidebar shows as its tile.
-@@ -36,17 +36,39 @@ export function install(rt) {
+@@ -36,17 +36,40 @@ export function install(rt) {
      mainBotIds: state.mainBotIds,
      // `sessionId` is the Bot's current own-chat part; `parts` its earlier ones.
      // `waiting`: the Bot holds its greeting until the user picks its model.
@@ -148,7 +149,8 @@ diff --git a/src/host/channel.js b/src/host/channel.js
        const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId)]
        const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
 -      return { ...room, parts, ...(last ? { preview: last.who === 'User' ? last.text : `${last.who}：${last.text}` } : {}) }
-+      const previewWho = last && (last.authorKind === 'human' && last.who && last.who !== 'User' ? `${last.who}: ${last.text}` : last.who === 'User' ? last.text : `${last.who}：${last.text}`)
++      const previewText = last ? unwrapUntrusted(last.text) : ''
++      const previewWho = last && (last.authorKind === 'human' && last.who && last.who !== 'User' ? `${last.who}: ${previewText}` : last.who === 'User' ? previewText : `${last.who}：${previewText}`)
 +      const presented = rt.presentRoom?.({ ...room, log }, actor) ?? room
 +      const pending = rt.listRoomApprovals?.(presented, actor) ?? []
 +      return {
@@ -463,7 +465,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
 diff --git a/src/host/delivery.js b/src/host/delivery.js
 --- a/src/host/delivery.js
 +++ b/src/host/delivery.js
-@@ -3,6 +3,34 @@ import { randomUUID } from 'node:crypto'
+@@ -3,6 +3,41 @@ import { randomUUID } from 'node:crypto'
  import { createUserMessage } from '@deepseek-ai/dsh-llm'
  import { SOURCE_KIND } from './constants.js'
  
@@ -487,6 +489,13 @@ diff --git a/src/host/delivery.js b/src/host/delivery.js
 +}
 +// A complete wrap we already stored. A mention of the marker in the middle is not this.
 +export const isFencedUntrusted = text => /^<untrusted-message from="[^"]*">\n?[\s\S]*\n?<\/untrusted-message>$/.test(String(text ?? ''))
++// The words a human reads: the inner text of a stored untrusted-message wrap, else the
++// original string. The Bot still sees the fenced log line; previews and bubbles must not.
++export const unwrapUntrusted = (text) => {
++  const value = String(text ?? '')
++  const match = value.match(/<untrusted-message from="[^"]*">\n?([\s\S]*?)\n?<\/untrusted-message>/)
++  return match ? match[1] : value
++}
 +// A name from outside the team, safe on one line of trusted text: no control characters,
 +// newlines, brackets or quotes, at most 60 characters.
 +export const cleanName = (name, fallback = 'a remote Bot') => {

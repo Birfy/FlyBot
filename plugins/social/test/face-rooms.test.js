@@ -29,6 +29,8 @@ import {
   encodeFaceHuman,
   parseFaceHuman,
   faceOutbound,
+  humanFaceWho,
+  faceRoomTitle,
   FACE_HUMAN_MARK,
 } from '../src/face-rooms.js'
 
@@ -118,6 +120,11 @@ test('owner-typed face-room lines encode as a human envelope', () => {
   assert.equal(human.human, true)
   assert.equal(human.botId, 'bot_a')
   assert.deepEqual(parseFaceHuman(human.text), { who: 'BoxA', text: 'hi' })
+  const unnamed = faceOutbound({ authorKind: 'human', who: 'User', text: 'hi', authorId: 'owner-1' }, { locals, asBots: ['@chief.boxa.home'], who: 'Alice' })
+  assert.deepEqual(parseFaceHuman(unnamed.text), { who: 'Alice', text: 'hi' })
+  assert.equal(humanFaceWho({ who: 'User' }, 'Alice'), 'Alice')
+  assert.equal(faceRoomTitle({ members: [{ owner_name: 'BoxA' }, { ownerName: 'BoxB' }] }), 'Face-to-face · BoxA, BoxB')
+  assert.equal(faceRoomTitle({}, { code: '123456' }), 'Face-to-face · 123456')
   const rendered = renderFaceEvent({
     event_id: 'fev_h', event_cursor: 9, type: 'room.message',
     from: { handle: '@chief.boxa.home', display_name: 'Chief', owner_name: 'BoxA' },

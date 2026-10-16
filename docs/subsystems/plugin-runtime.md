@@ -60,7 +60,7 @@ FlyBot's plugin API surface on top of the patched core: host hooks, client slots
 
 ### Sidebar + friend actions
 
-- Social may register several `flybot.new-chat.action` rows (Face-to-face group, Add friend, Friend requests). Each `run` closes the picker and opens the matching Friends' Bots flow. Still not team mode.
+- Social may register several `flybot.new-chat.action` rows (Face-to-face group, Add friend, Accept invite, Copy invite link). Each `run` closes the picker; Copy invite link mints and copies in that click and may return a toast string. Still not team mode.
 
 ### Inbound shared rooms on `flybot.rooms`
 
