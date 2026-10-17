@@ -1,0 +1,1 @@
+`@flybot/social` loads after a packaged install (`plugin add …&path:/plugins/social`): face-room titles no longer import a repo-relative `core/` path that is missing from the tarball. ([#153](https://github.com/ThinkFlowLab/FlyBot/issues/153))
