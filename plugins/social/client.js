@@ -123,6 +123,10 @@ window.__ModuleLoader__.load({
 .fs-stack-more{flex:none;font-size:11px;line-height:14px;color:var(--bt-ink-3,rgba(20,20,20,.36));margin-left:4px}
 .fs-chip{flex:none;font-size:11px;line-height:14px;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg,rgba(20,20,20,.06));color:var(--bt-tag-ink,rgba(20,20,20,.56));white-space:nowrap}
 .fs-chip-status{min-width:44px;text-align:center;font-weight:600;letter-spacing:.01em}
+.fs-chip-status[data-status=open],.fs-chip-status[data-status=closed],.fs-chip-status[data-status=left]{font-size:12px;line-height:16px;padding:2px 8px;color:var(--bt-ink-2,rgba(20,20,20,.72));background:var(--bt-hover,rgba(119,119,119,.12))}
+.fs-face-item[data-past] .fs-face-row{gap:8px}
+.fs-face-item[data-past] .fs-chip-status{margin-left:4px}
+.fs-face-item[data-past] .fs-face-actions{margin-left:8px;gap:6px}
 .fs-face-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;width:100%;padding:2px 0 6px}
 .fs-face-head .fs-face-auto-wrap{flex:1 1 auto;min-width:0}
 .fs-face-head .fs-face-actions{flex:none;margin-left:auto}
@@ -692,7 +696,7 @@ window.__ModuleLoader__.load({
     }
     function faceChipLabel(room) {
       const chip = faceChip(room)
-      if (chip === 'open') return 'open'
+      if (chip === 'open') return 'Open'
       if (chip === 'closed') return 'Closed'
       if (chip === 'left') return 'Left'
       if (chip === 'ended') return 'ended'
@@ -1093,7 +1097,7 @@ window.__ModuleLoader__.load({
       }
       const statusRoom = { status: snapshot?.status || face?.status || 'open', expiresAt: snapshot?.expiresAt || face?.expiresAt }
       return h('div', { className: 'fs-face-head', 'data-flybot': 'face-overview' },
-        h('span', { className: 'fs-chip fs-chip-status', 'data-status': faceChip(statusRoom) }, faceChipLabel(statusRoom)),
+        h('span', { className: 'fs-chip fs-chip-status', 'data-flybot': 'face-status', 'data-status': faceChip(statusRoom) }, faceChipLabel(statusRoom)),
         h(FaceAutoSendControl),
         h('span', { className: 'fs-face-actions' },
           h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('leave', () => call('social/face-leave', { roomId: room.id, faceRoomId: face?.roomId })) }, 'Leave')),
