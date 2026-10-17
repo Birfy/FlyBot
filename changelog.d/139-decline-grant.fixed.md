@@ -1,0 +1,1 @@
+Removing a friend's Bot declines that grant on Bot Social so it leaves the owner's Manage access; an older server still hides it locally. Re-join after a decline can restore access (`regranted`). ([#139](https://github.com/ThinkFlowLab/FlyBot/issues/139))

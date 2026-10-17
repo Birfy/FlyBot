@@ -1,0 +1,9 @@
+# Keep LF everywhere, including Windows checkouts: tests compare sources byte for byte
+# and the client bundle check expects the committed line endings.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
