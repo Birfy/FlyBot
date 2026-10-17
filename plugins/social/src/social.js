@@ -100,6 +100,7 @@ export function approvalView(item, { localName } = {}) {
   const to = item.message?.to
   const payload = item.message?.payload
   const text = approvalDraftText(payload && typeof payload === 'object' ? payload.text : payload) || approvalDraftText(item.summary)
+  const rawText = draftText(payload && typeof payload === 'object' ? payload.text : payload)
   const kind = String(item.kind ?? '')
   const viaComposer = item.via === 'composer'
     || item.message?.via === 'composer'
@@ -123,6 +124,8 @@ export function approvalView(item, { localName } = {}) {
     toName: cleanText(to?.display_name) || (kind === 'face_room_message' ? 'the room' : undefined),
     roomId: item.room_id || item.face_room_id || item.message?.room_id,
     text,
+    // A person's own typed room line carried by their Bot (#179): never a card, never held.
+    ...(parseFaceHuman(rawText) ? { human: true } : {}),
     summary: cleanText(item.summary),
     createdAt: item.created_at,
     attachments: (item.message?.attachments ?? []).filter(file => file?.name).map(file => ({ name: safeName(file.name), size: Number(file.size) || 0 })),
@@ -1677,6 +1680,8 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     let changed = false
     for (const item of items ?? []) {
       if (settings.approvalNotices[item.id]) continue
+      // The owner of a held room line sees its Approve card, never "waiting for the owner" (#179).
+      if (item.kind === 'face_room_message') { settings.approvalNotices[item.id] = { at: now(), kind: 'waiting' }; changed = true; continue }
       // Owner 1:1 chats use the Approve / Reject dock. Do not post a waiting bubble there (#140).
       await postChatNote(item, WAITING_OTHERS, { chats: false })
       settings.approvalNotices[item.id] = { at: now(), kind: 'waiting' }
@@ -1706,6 +1711,20 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     if (team?.name) return team.name
     return ''
   }
+  // Typing a line in a room is the approval (#179): a held human envelope that the send path
+  // did not already approve (a restart, a failed call) is approved here without a card.
+  const ownLineApproving = new Set()
+  async function approveOwnLine(item) {
+    if (!item?.id || ownLineApproving.has(item.id)) return
+    ownLineApproving.add(item.id)
+    try {
+      await confirmedCall('decide_approval', { approval_id: item.id, decision: 'approved' })
+    } catch (error) {
+      warn('face-room owner line not approved', error)
+    } finally {
+      setTimeout(() => ownLineApproving.delete(item.id), 30_000).unref?.()
+    }
+  }
   async function pendingApprovals({ fresh = false } = {}) {
     if (flybot.readOnly?.()) return []
     if (!fresh && now() - pendingCache.at < 5_000) return pendingCache.items
@@ -1715,9 +1734,12 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       const items = raw
         .map(item => approvalView(item, { localName: localNameOf }))
         .filter(item => item && (item.kind === 'outbound_message' || item.kind === 'face_room_message') && (item.status === 'pending' || item.status === 'pending_approval'))
-      pendingCache = { at: now(), items }
-      await syncApprovalNotices(items).catch(error => warn('approval notice failed', error))
-      return items
+      const own = items.filter(item => item.human)
+      const held = items.filter(item => !item.human)
+      pendingCache = { at: now(), items: held }
+      for (const item of own) void approveOwnLine(item)
+      await syncApprovalNotices(held).catch(error => warn('approval notice failed', error))
+      return held
     } catch (error) {
       warn('list_approvals failed', error)
       return pendingCache.items
@@ -2037,7 +2059,8 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
         if (local) continue
         const who = line.who || 'Someone'
         flybot.rooms.applyFaceLine?.(room.id, { ...line, who, remote: true, authorKind: 'human' })
-        void flybot.rooms.postNotice?.(room.id, `${who}: ${line.text}`)
+        if (flybot.rooms.postHuman) void flybot.rooms.postHuman(room.id, { authorId: line.authorId, name: who, text: line.text })
+        else void flybot.rooms.postNotice?.(room.id, `${who}: ${line.text}`)
       } else {
         const local = locals.some(bot => bot.handle && bot.handle === line.authorId)
         if (local) continue
@@ -2227,12 +2250,11 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       try {
         const sent = await faceApi.send(serverId, { text: outbound.text, botId: outbound.botId })
         if (sent?.status === 'pending_approval') {
-          // Auto-send is the only owner-line auto-approve. Otherwise the in-chat card
-          // stays until Approve / Always approve / Reject (#159). Decide first so a
-          // poll cannot flash the FLYBOT-FACE-HUMAN envelope.
-          if (outbound.human && sent.approvalId && await faceAutoApprove().catch(() => false)) {
+          // A person's own line is theirs: typing it is the approval, so it goes out at once
+          // with no card (#179). Only Bot-written room lines wait for Approve / Reject.
+          if (outbound.human && sent.approvalId) {
             await confirmedCall('decide_approval', { approval_id: sent.approvalId, decision: 'approved' })
-              .catch(error => warn('face-room owner line not auto-approved', error))
+              .catch(error => warn('face-room owner line not approved', error))
           }
           pendingCache.at = 0
         }
