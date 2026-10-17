@@ -284,6 +284,7 @@ const ZH = {
   'Kept above the other chats.': '排在其他对话上面。',
   'Search still finds it.': '仍然可以搜索到。',
   Manage: '管理',
+  "Send a message. Your friend approves unless Auto-send is on.": '发送消息。除非已开启自动发送，否则好友需要批准。',
 
   // Group chat settings
   'Leave it empty to name the group after its members.': '留空就按成员命名。',
@@ -380,6 +381,7 @@ const ZH = {
   // stays in English.
   'Add DSH Agent': '添加 DSH Agent',
   'Add Agent': '添加 Agent',
+  'Add Bot': '添加 Bot',
   'Remove DSH Agent': '移除 DSH Agent',
   'New session': '新会话',
   Archive: '归档',

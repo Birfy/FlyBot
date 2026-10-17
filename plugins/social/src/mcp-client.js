@@ -221,8 +221,7 @@ export function personHomeOf(handle) {
 
 function titleHome(home) {
   const part = String(home ?? '').replace(/^@/, '').replace(/\.home$/i, '')
-  if (!part) return ''
-  return part.charAt(0).toUpperCase() + part.slice(1)
+  return part || ''
 }
 
 export function grantPersonView(grant) {

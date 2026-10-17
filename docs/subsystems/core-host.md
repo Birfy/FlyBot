@@ -68,6 +68,7 @@ A tracked request with a stable id (`task-<hex>`) and a small state machine, own
 ### Face-to-face participant look
 
 - `syncFaceParticipants` / `faceRemoteRecord` keep optional `color` / `avatar` from the Bot Social member payload on the remote participant. The client seeds a distinct generated look from the handle when those fields are absent (see [core-client](core-client.md)). Face-room REST still does not require a person-grant.
+- `rt.uiLanguage()` defaults to `English` until a browser reports a locale, so the Chief kickoff greets in English instead of Chinese on a fresh home (#173).
 - Face titles (#172): `core/src/shared/face-title.js` lists every participant owner in stable handle order and `isAutoFaceTitle` marks auto titles, so a roster change refreshes an auto-named room but never a renamed one; both homes derive the same title. A hosted face room that falls off the Bot Social list keeps its local transcript (poll cleanup no longer calls `dropFace`), so Past rooms **Open** can reopen it (#171).
 - A member that left and joins again is the same participant record with `leftSeq` cleared and a new `joinedSeq` — not a second live row. `upsertFaceRoom` treats `startedAt` (or an explicit `open`) as an open room so the Friends' Bots card does not stay on the matching countdown after **Enter chat**.
 

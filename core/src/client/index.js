@@ -6,7 +6,7 @@ import { countCards, createSource, EMPTY_ROSTER, indexRoster, isAgentSession } f
 import { themeCss, shellTokens, registry, registerShape, registerTheme, allThemes } from './themes.js'
 import { MENTION_ORIGIN, currentPart } from './text.js'
 import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } from './styles.js'
-import { installBrandChrome } from './brand.js'
+import { brandTitle, installBrandChrome, sessionTabLabel } from './brand.js'
 import { lookOf } from './mark.js'
 import { TeamSidebar, ConnectPlugins, YouAvatar, AccountLauncher, FooterAccount, BrandMark, BrandName, BotReturn, SIDEBAR_CSS, RETURN_CSS, holdShellShortcuts } from './sidebar.js'
 import { HeaderPill } from './header.js'
@@ -50,6 +50,19 @@ export function apply(ctx) {
   } catch {}
   ctx.effect(() => installLocale(ctx.get('locale')), 'ds-bot: interface copy')
   ctx.effect(() => installBrandChrome(), 'ds-bot: brand chrome')
+  ctx.effect(() => {
+    const sessions = ctx.sessions.list
+    const sync = () => {
+      if (typeof document === 'undefined') return
+      const row = Object.values(sessions.getSnapshot().byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)
+      const label = sessionTabLabel(roster.getSnapshot(), row?.id)
+      if (!label) return
+      const next = brandTitle(`${label} — FlyBot`)
+      if (document.title !== next) document.title = next
+    }
+    sync()
+    return sessions.subscribe(sync)
+  }, 'ds-bot: tab title')
   const roster = createSource(EMPTY_ROSTER)
   migrateStorage()
   const UNREAD_KEY = STORAGE.unread
