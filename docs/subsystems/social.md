@@ -67,6 +67,7 @@ Everything in `plugins/social/` (entry `plugins/social/index.js` and any helpers
 - Join notices are remembered by handle and by exact text so a `member.joined` event plus the members loop does not post two identical joined lines.
 - Friend Bot details overview is Auto-send plus a muted **Remove this Bot** link (not a primary button). The DSH settings-shell chrome around empty local panes is unchanged. The host opens that overview via the compact remote Bot settings sheet (`remote-bot-settings`); the sidebar gear is a sibling of the friend's `bt-row`, not nested inside it (#166).
 - Face-to-face room cards use a short status chip (`data-flybot=face-status`): live rooms read **open**; expired matching windows under **Past rooms** read **ended**; candidates show a countdown (`12m` / `45s`); closed/left keep their labels (#166).
+- Status chips on room details and Past rooms (`data-flybot=face-status`) read **Open** / **Closed** in sentence case with readable contrast, and the past-room **Open** button keeps its own spacing from avatar and chip (#170).
 - In-chat approval cards (`flybot.session.dock`) are right-aligned bubbles capped at ~460px: **Waiting for approval**, one `from → to` line, a word-wrapped preview with **Show more**, and **Approve** / **Always approve** / **Reject** on one row (#166).
 - The composer **Message {name}** accessible name is set by core `HeaderPill` (placeholder CSS var plus `aria-label` on `[data-composer-input]`, restored on cleanup); chat-header tok jargon stays in pristine DSH / ds-bot.
 
