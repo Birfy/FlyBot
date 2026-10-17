@@ -48,6 +48,8 @@ window.__ModuleLoader__.load({
 .fs-icon[aria-expanded=true]{background:var(--bt-active,rgba(119,119,119,.17));color:var(--bt-ink,#141414)}
 .fs-body{display:flex;flex-direction:column;gap:2px;padding:2px 0 0}
 .fs-empty,.fs-hint{padding:4px 10px;font-size:12px;line-height:17px;color:var(--bt-ink-2,rgba(20,20,20,.6));overflow-wrap:anywhere}
+.fs-join-as{align-items:baseline;flex-wrap:wrap;overflow-wrap:normal;word-break:normal}
+.fs-join-as-label{flex:none;white-space:nowrap;overflow-wrap:normal;word-break:keep-all}
 .fs-empty{padding:6px 10px 8px;font-size:13px;line-height:18px}
 .fs-label{padding:8px 10px 2px;font-size:11px;line-height:14px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--bt-ink-3,rgba(20,20,20,.36));display:flex;align-items:center;gap:6px}
 .fs-home-head{display:flex;align-items:center;gap:4px;min-width:0;padding:2px 4px 0 0}
@@ -171,6 +173,9 @@ window.__ModuleLoader__.load({
 .fs-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .fs-wait{display:flex;flex-direction:column;gap:8px;flex:1 1 auto;min-height:0;overflow:hidden}
 .fs-wait-count{flex:none;padding:0}
+.fs-wait-code{flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 0 2px}
+.fs-wait-code-label{font-size:11px;line-height:14px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--bt-ink-3,rgba(20,20,20,.36))}
+.fs-wait-code-digits{font-size:28px;line-height:34px;font-weight:600;letter-spacing:.28em;font-variant-numeric:tabular-nums;color:var(--bt-ink,#141414)}
 .fs-wait-body{flex:1 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:4px}
 .fs-wait-foot{display:flex;align-items:stretch;gap:8px;flex:none}
 .fs-wait-foot .fs-btn{height:36px}
@@ -414,6 +419,45 @@ window.__ModuleLoader__.load({
       return (bots ?? []).some(bot => bot.handle === handle)
     }
 
+    function faceWaitCode(room, typed) {
+      const fromRoom = String(room?.joinCode || room?.code || '').replace(/\D/g, '').slice(0, 6)
+      if (fromRoom.length === 6) return fromRoom
+      const fromTyped = String(typed || '').replace(/\D/g, '').slice(0, 6)
+      return fromTyped.length === 6 ? fromTyped : ''
+    }
+    function FaceWaitCode({ code } = {}) {
+      const digits = String(code || '').replace(/\D/g, '').slice(0, 6)
+      if (digits.length !== 6) return null
+      return h('div', { className: 'fs-wait-code', 'data-flybot': 'face-wait-code', 'aria-label': `Room number ${digits}` },
+        h('div', { className: 'fs-wait-code-label' }, 'Room number'),
+        h('div', { className: 'fs-wait-code-digits', 'data-flybot': 'face-wait-code-digits' }, digits))
+    }
+    function shownHoldText(value) {
+      const raw = String(value ?? '')
+      const mark = 'FLYBOT-FACE-HUMAN'
+      const at = raw.indexOf(mark)
+      if (at < 0) return raw
+      const start = raw.indexOf('{', at)
+      if (start < 0) return raw.slice(0, at).trim()
+      let depth = 0
+      let end = -1
+      for (let i = start; i < raw.length; i += 1) {
+        const ch = raw[i]
+        if (ch === '{') depth += 1
+        else if (ch === '}') {
+          depth -= 1
+          if (depth === 0) { end = i; break }
+        }
+      }
+      if (end < 0) return raw.slice(0, at).trim()
+      try {
+        const parsed = JSON.parse(raw.slice(start, end + 1))
+        const text = typeof parsed?.text === 'string' ? parsed.text.trim() : ''
+        if (text) return text
+      } catch { /* fall through */ }
+      return raw.slice(0, at).trim()
+    }
+
     // Separate Face-to-face group screen (#92): pick Bots, join by number, live waiting room.
     function FaceToFaceGroup({ actions, onClose, roster, remoteChats } = {}) {
       const [step, setStep] = useState('setup')
@@ -508,7 +552,7 @@ window.__ModuleLoader__.load({
           setBusy(false)
           return
         }
-        setRoom({ ...last, mineHandles: mine })
+        setRoom({ ...last, mineHandles: mine, joinCode: last.joinCode || digits })
         setStep('waiting')
         setBusy(false)
       }
@@ -554,6 +598,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'fs-name' }, 'Face-to-face group'),
             h('button', { type: 'button', className: 'fs-btn fs-btn-sm', onClick: () => onClose?.() }, 'Close')),
           waiting ? h('div', { className: 'fs-wait', 'data-flybot': 'face-wait' },
+            h(FaceWaitCode, { code: faceWaitCode(room, code) }),
             h('div', { className: 'fs-hint fs-wait-count', 'data-flybot': 'face-wait-count', 'data-tick': tick }, candidate
               ? (room.expiresAt ? countdown(room.expiresAt) : 'Anyone with the number can still join.')
               : 'The room is open. The number is no longer valid.'),
@@ -576,7 +621,7 @@ window.__ModuleLoader__.load({
                 type: 'button', className: 'fs-btn fs-btn-primary', 'data-flybot': 'face-enter',
                 disabled: !!busy || !room.roomId, onClick: enter,
               }, 'Enter chat'))) : h('form', { onSubmit: join, 'data-flybot': 'face-join' },
-            h('div', { className: 'fs-hint' }, 'Choose which of your Bots to bring, then type the same 6-digit number as the people next to you. You join at once — there is no preview.'),
+            h('div', { className: 'fs-hint' }, "Choose which of your Bots to bring, then type the same 6-digit number as the people next to you. You'll wait together until someone enters the chat."),
             h('ul', { className: 'fs-tiles fs-pick', 'data-flybot': 'face-pick', 'aria-label': 'Your Bots' },
               bots.map(bot => h(FaceTile, {
                 key: bot.id,
@@ -710,7 +755,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'fs-name' }, WAITING_OTHERS))
       }
       const { from, to } = holdParties(item)
-      const text = item.text || item.summary || ''
+      const text = shownHoldText(item.text || item.summary || '')
       const long = text.length > 160 || text.split(/\n/).length > 3
       return h('div', { className: 'fs-hold fs-chat-approval', 'data-flybot': 'chat-approval', 'data-role': 'owner', role: 'region', 'aria-label': WAITING_OWNER },
         h('div', { className: 'fs-label' }, WAITING_OWNER),
@@ -963,6 +1008,7 @@ window.__ModuleLoader__.load({
       const expiresAt = snapshot?.expiresAt || face?.expiresAt
       if (candidate) {
         return h('div', { className: 'fs-wait-overview', 'data-flybot': 'face-overview', 'data-wait': true },
+          h(FaceWaitCode, { code: faceWaitCode(snapshot || face || room) }),
           h('div', { className: 'fs-hint fs-wait-count', 'data-tick': tick, 'data-flybot': 'face-wait-count' },
             expiresAt ? countdown(expiresAt) : 'Anyone with the number can still join.'),
           h('ul', { className: 'fs-tiles fs-wait-roster', 'data-flybot': 'face-wait-roster', 'aria-label': 'Who has joined' },
@@ -1149,7 +1195,8 @@ window.__ModuleLoader__.load({
           h('div', { className: 'fs-line' },
             h('input', { className: 'fs-input', value: code, placeholder: 'Paste invite link or code', 'aria-label': 'Invite link or code', onChange: e => setCode(e.target.value) }),
             h('button', { type: 'submit', className: 'fs-btn', disabled: busy || !code.trim() }, 'Join')),
-          mine.length ? h('label', { className: 'fs-line fs-hint', 'data-flybot': 'join-as' }, 'Talk through ',
+          mine.length ? h('label', { className: 'fs-line fs-hint fs-join-as', 'data-flybot': 'join-as' },
+            h('span', { className: 'fs-join-as-label', 'data-flybot': 'talk-through' }, 'Talk through '),
             h('select', { className: 'fs-input', value: joiner, 'aria-label': 'Which of your Bots talks', onChange: e => setJoiner(e.target.value) },
               mine.map(bot => h('option', { key: bot.id, value: bot.id }, bot.name))),
             ' (not shared unless you invite them to it)') : null),
@@ -1244,7 +1291,7 @@ window.__ModuleLoader__.load({
         error ? h('div', { className: 'fs-status', 'data-tone': 'error', role: 'status' }, error) : null)
     }
 
-    function FriendChatSettings({ bot } = {}) {
+    function FriendChatSettings({ bot, actions } = {}) {
       const remote = bot?.remote
       const home = remote?.home
       const handle = remote?.handle
@@ -1280,6 +1327,8 @@ window.__ModuleLoader__.load({
           // social/hide-remote already leaves every room holding this Bot; a second
           // removal from here would race it and show "not in the room" after a good Remove.
           await call('social/hide-remote', { handle })
+          actions?.closeSettings?.()
+          actions?.closeOverlay?.()
         } catch (e) { setError(errorText(e)) } finally { setBusy(false) }
       }
       return h('div', { className: 'fs fs-card', 'data-flybot': 'friend-chat-settings' },
@@ -1301,11 +1350,11 @@ window.__ModuleLoader__.load({
         error ? h('div', { className: 'fs-status', 'data-tone': 'error', role: 'status' }, error) : null)
     }
 
-    function BotSocialDetails({ bot } = {}) {
+    function BotSocialDetails({ bot, actions } = {}) {
       useStyles()
       if (bot?.remote) {
         return h('div', { 'data-flybot': 'bot-social-details' },
-          h(FriendChatSettings, { bot }))
+          h(FriendChatSettings, { bot, actions }))
       }
       return h('div', { 'data-flybot': 'bot-social-details' },
         h(InviteToBot, { bot }),

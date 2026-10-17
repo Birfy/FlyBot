@@ -8,7 +8,7 @@ import { test } from 'node:test'
 import { apply as applyDsBot } from 'ds-bot'
 import { fakeContext } from './fake-ctx.js'
 import { apply as applySocial, inject, name } from '../index.js'
-import { approvalView, createSocial, draftText, homeHandleOf, onboard, onboardHome, nextOnboardDisplayName, mapJoinInviteError, registerUnavailable, startSocial, unavailableMessage } from '../src/social.js'
+import { approvalDraftText, approvalView, createSocial, draftText, homeHandleOf, onboard, onboardHome, nextOnboardDisplayName, mapJoinInviteError, registerUnavailable, startSocial, unavailableMessage } from '../src/social.js'
 import { createMcpClient, createSocialApi, untrustedText, mapPool, socialHttpAgent, fetchOptions, grantPersonView, memberHandleOf, personHomeOf, normalizeGrant, isUnknownTool, isGrantNotFound, isMissingEndpoint } from '../src/mcp-client.js'
 import { lookFromServer, lookToServer, lookFingerprint, hexOfColor } from '../src/look.js'
 import { encodeRoomShare } from '../../../core/src/shared/room-share.js'
@@ -1093,6 +1093,20 @@ test('approvalView: outbound draft text is sanitized, friend requests stay out',
     message: { to: { handle: '@chief.bob.home', display_name: 'Chief' }, payload: { text: 'hi' }, via: 'composer' },
   }, { localName: () => 'Helper' })
   assert.equal(yours.from, 'You')
+  const packed = encodeFaceHuman({ who: 'BoxA', text: 'hello from the owner' })
+  assert.equal(approvalDraftText(packed), 'hello from the owner')
+  assert.equal(approvalDraftText(`To the room: ${packed}`), 'hello from the owner')
+  assert.doesNotMatch(approvalDraftText(packed), /FLYBOT-FACE-HUMAN/)
+  const faceHold = approvalView({
+    approval_id: 'apr-face-human',
+    kind: 'face_room_message',
+    sender_kind: 'human',
+    summary: `To the room: ${packed}`,
+    message: { payload: { text: packed } },
+  })
+  assert.equal(faceHold.from, 'You')
+  assert.equal(faceHold.text, 'hello from the owner')
+  assert.doesNotMatch(faceHold.text, /FLYBOT-FACE-HUMAN/)
 })
 
 test('Friends\' Bots (#69): a pending approval shows a badge and a one-line jump row', () => {
@@ -1304,7 +1318,7 @@ function withFaceRooms(server) {
         return new Response(JSON.stringify(room), { status: 200 })
       }
       if (init.method === 'POST' && path.endsWith('/messages')) {
-        if (body.text === 'hold me') {
+        if (body.text === 'hold me' || (typeof body.text === 'string' && body.text.includes('hold me'))) {
           return new Response(JSON.stringify({ message_id: 'fmd_h', status: 'pending_approval', approval_id: 'apr-face-1', from: room.members[0] }), { status: 202 })
         }
         room.event_cursor += 1
@@ -1533,6 +1547,59 @@ test('a spoofed FLYBOT-FACE-HUMAN who is ignored; the room shows the authenticat
   assert.equal(spoofed.authorKind, 'human')
   assert.match(String(spoofed.who), /Bob/)
   assert.doesNotMatch(String(spoofed.who), /Alice/)
+})
+
+test('#159: owner face line stays held unless face Auto-send is on', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  const packed = encodeFaceHuman({ who: 'BoxA', text: 'hold me' })
+  let queue = [{
+    approval_id: 'apr-face-1',
+    kind: 'face_room_message',
+    status: 'pending',
+    sender_kind: 'human',
+    bot_id: 'm1',
+    room_id: 'frm_123456',
+    message: { payload: { text: packed } },
+    summary: `To the room: ${packed}`,
+  }]
+  server.tools.list_approvals = () => ({ approvals: queue })
+  server.tools.decide_approval = a => {
+    if (a.confirm_code === undefined) return { status: 'confirmation_required', confirm_code: 'C0DE02' }
+    queue = queue.filter(item => item.approval_id !== a.approval_id)
+    return { approval_id: a.approval_id, decision: a.decision }
+  }
+  let fanout
+  const origScope = ctx.flybot.scope.bind(ctx.flybot)
+  ctx.flybot.scope = (name) => {
+    const scoped = origScope(name)
+    const origOn = scoped.rooms.onFaceLine.bind(scoped.rooms)
+    scoped.rooms.onFaceLine = (fn) => {
+      fanout = fn
+      return origOn(fn)
+    }
+    return scoped
+  }
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await call('flybot/social/face-join', { code: '123456' })
+  const room = ctx.flybot.rooms.ofFace('frm_123456')
+  assert.equal(typeof fanout, 'function')
+  await fanout(room, { authorKind: 'human', who: 'Danyang', text: 'hold me', authorId: 'owner-1' })
+  const status = (await call('flybot/social/status', {})).value
+  assert.equal(status.pendingApprovals, 1)
+  assert.equal(status.approvals[0].text, 'hold me')
+  assert.doesNotMatch(String(status.approvals[0].text), /FLYBOT-FACE-HUMAN/)
+  assert.equal(server.calls.some(c => c.name === 'decide_approval'), false, 'Auto-send off: owner line stays in the approval card')
+  await call('flybot/social/face-auto', { on: true })
+  await fanout(room, { authorKind: 'human', who: 'Danyang', text: 'hold me', authorId: 'owner-1' })
+  assert.equal(server.calls.some(c => c.name === 'decide_approval' && c.args?.decision === 'approved'), true)
 })
 
 test('face-to-face send pending_approval uses decide_approval', async (t) => {
@@ -2052,7 +2119,7 @@ test('Face-to-face waiting overview is a tile grid with Leave and Enter chat', (
   const tree = walk(plugin.FaceRoomOverview({
     room: {
       id: 'g1', origin: 'face-to-face',
-      face: { roomId: 'frm_1', status: 'candidate', expiresAt: '2099-01-01T00:00:00.000Z' },
+      face: { roomId: 'frm_1', status: 'candidate', expiresAt: '2099-01-01T00:00:00.000Z', joinCode: '482913' },
       participants: [
         { handle: '@a.me.home', displayName: 'Chief', ownerName: 'Me', remote: false, id: 'a' },
         { handle: '@coder.bob.home', displayName: 'Coder', ownerName: 'Bob', remote: true },
@@ -2066,6 +2133,8 @@ test('Face-to-face waiting overview is a tile grid with Leave and Enter chat', (
   assert.ok(tree.some(n => n.props['data-flybot'] === 'face-owner' && n.children.includes('Me')))
   assert.ok(tree.some(n => n.props['data-flybot'] === 'face-enter' && n.children.includes('Enter chat')))
   assert.ok(tree.some(n => n.props['data-flybot'] === 'face-leave' && n.children.includes('Leave')))
+  assert.ok(tree.some(n => n.props['data-flybot'] === 'face-wait-code'))
+  assert.equal(tree.find(n => n.props['data-flybot'] === 'face-wait-code-digits')?.children.join(''), '482913')
   assert.equal(tree.some(n => n.type === 'button' && n.children.includes('Start')), false)
   assert.equal(tree.some(n => n.props['data-flybot'] === 'face-auto-send'), false)
 })
@@ -2131,6 +2200,19 @@ test('#126: a face-room hold shows in that chat with a readable name', () => {
   assert.equal(tree.filter(n => n.props['data-flybot'] === 'chat-approval').length, 1)
   assert.ok(tree.some(n => n.props.className === 'fs-sub' && n.children.includes('Chief → the room')))
   assert.ok(tree.some(n => n.props.className === 'fs-draft' && n.children.includes('hello there')))
+})
+
+test('#159: a face-room hold never shows the FLYBOT-FACE-HUMAN envelope', () => {
+  const packed = encodeFaceHuman({ who: 'BoxA', text: 'hello from the owner' })
+  const { walk, pluginOf } = loadSocialClient(async () => ({}))
+  const plugin = pluginOf([[], [], ''])
+  const tree = walk(plugin.ChatApproval({
+    item: { id: 'apr-face', kind: 'face_room_message', from: 'You', toName: 'the room', text: packed, summary: `To the room: ${packed}` },
+    canDecide: true,
+  }))
+  const draft = tree.find(n => n.props.className === 'fs-draft')
+  assert.equal(draft?.children.join(''), 'hello from the owner')
+  assert.equal(tree.some(n => /FLYBOT-FACE-HUMAN/.test(String(n.children ?? ''))), false)
 })
 
 test('Face-to-face rooms list polls Bot Social for Past rooms', () => {
@@ -2366,6 +2448,8 @@ test('Face-to-face group (#92): pick Bots, join each once, live roster, Enter ch
   assert.ok(picker.some(n => n.props['data-flybot'] === 'face-group'))
   assert.ok(picker.some(n => n.props['data-flybot'] === 'face-pick' && /\bfs-tiles\b/.test(n.props.className)))
   assert.ok(picker.some(n => n.props['data-flybot'] === 'face-join'))
+  assert.equal(picker.some(n => /no preview/i.test(String(n.children ?? ''))), false)
+  assert.ok(picker.some(n => /wait together/i.test(String(n.children ?? ''))))
   const pickAvatars = picker.filter(n => n.props['data-flybot'] === 'face-avatar')
   assert.equal(pickAvatars.length, 2)
   const chiefMark = picker.find(n => n.props['data-flybot'] === 'bot-avatar' && n.props['data-bot-id'] === 'a')
@@ -2419,6 +2503,8 @@ test('Face-to-face group (#92): pick Bots, join each once, live roster, Enter ch
   }
   const wait = setup(['waiting', bots, ['a'], '123456', false, null, [{ botId: 'b', name: 'Writer', text: 'This Bot cannot join that room.' }], room, 0])
   assert.ok(wait.some(n => n.props['data-flybot'] === 'face-wait'))
+  assert.ok(wait.some(n => n.props['data-flybot'] === 'face-wait-code'))
+  assert.equal(wait.find(n => n.props['data-flybot'] === 'face-wait-code-digits')?.children.join(''), '123456')
   assert.ok(wait.some(n => n.props['data-flybot'] === 'face-wait-roster' && /\bfs-tiles\b/.test(n.props.className)))
   const mine = wait.find(n => n.props['data-flybot'] === 'face-member' && n.props['data-handle'] === '@a.me.home')
   const peer = wait.find(n => n.props['data-flybot'] === 'face-member' && n.props['data-handle'] === '@coder.bob.home')
@@ -3539,7 +3625,7 @@ test('#140: new friends default Auto-send off; settings report false', async (t)
   assert.equal(social.approvalFor('a', '@bob.home'), 'hold')
 })
 
-test('#138 upgrade: backfill inbound keeps reciprocal remotes already on the roster', async (t) => {
+test('#138 upgrade: backfill inbound keeps reciprocal remotes, not the joiner of our invite', async (t) => {
   const { ctx, call, home, stop } = await team()
   t.after(stop)
   const server = mockServer()
@@ -3567,11 +3653,45 @@ test('#138 upgrade: backfill inbound keeps reciprocal remotes already on the ros
   await grantTeam(ctx.flybot)
   await social.registerAll()
   const listed = (await call('flybot/social/remote-bots', { fresh: true })).value
-  assert.equal(listed.homes[0].bots.some(bot => bot.handle === '@chief.bob.home'), true, 'reciprocal Bot kept on upgrade backfill')
-  assert.equal(listed.homes[0].bots.some(bot => bot.handle === '@coder.bob.home'), true)
+  assert.equal(listed.homes[0].bots.some(bot => bot.handle === '@chief.bob.home'), false, 'the Bot that joined our invite is not granted to us')
+  assert.equal(listed.homes[0].bots.some(bot => bot.handle === '@coder.bob.home'), true, 'reciprocal Bot kept on upgrade backfill')
   const saved = JSON.parse(readFileSync(settingsPath, 'utf8'))
   assert.equal(saved.inboundBackfilled, true)
-  assert.equal(saved.inboundBots['@chief.bob.home'], true)
+  assert.equal(saved.inboundBots['@chief.bob.home'], undefined)
+  assert.equal(saved.inboundBots['@coder.bob.home'], true)
+})
+
+test('#161: invite accept does not list the joiner Chief on a fresh install', async (t) => {
+  const { ctx, call, home, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  server.tools.list_bot_grants = () => ({
+    grants: [{ id: 'g-rev', grantee: 'Chief@chief.bob.home', name: 'Chief@chief.bob.home', relationship_id: 'r1' }],
+  })
+  server.tools.list_remote_bots = () => ({
+    homes: [{
+      relationship_id: 'r1',
+      home: { bot_id: 'h2', handle: '@bob.home', display_name: 'Bob', owner_display_name: 'Bob' },
+      bots: [
+        { bot_id: 'x1', handle: '@chief.bob.home', display_name: 'Chief' },
+        { bot_id: 'x2', handle: '@coder.bob.home', display_name: 'Coder' },
+      ],
+    }],
+  })
+  const settingsPath = join(home, 'flybot-social-settings.json')
+  writeFileSync(settingsPath, JSON.stringify({}))
+  const social = createSocial(ctx.flybot, { autoAccept: false, inboxPollMs: 0, settingsPath }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  const listed = (await call('flybot/social/remote-bots', { fresh: true })).value
+  assert.equal(listed.homes[0]?.bots.some(bot => bot.handle === '@chief.bob.home'), false, 'inviter must not see the joiner Chief')
+  assert.equal(listed.homes[0]?.bots.some(bot => bot.handle === '@coder.bob.home'), true)
+  const saved = JSON.parse(readFileSync(settingsPath, 'utf8'))
+  assert.equal(saved.inboundBots?.['@chief.bob.home'], undefined)
 })
 
 test('#140: respond Auto-send follows the accepted relationship, not the first roster home', async (t) => {
@@ -3623,7 +3743,29 @@ test('#136: + Copy my handle copies the home; Auto-send starts unchecked; Join-a
   assert.equal(box.props.checked, false)
   const add = walk(pluginOf([null, '', null, false, [{ id: 'a', name: 'Chief', isMain: true }], 'a']).AddFriend({}))
   assert.ok(add.some(n => n.props['data-flybot'] === 'join-as'))
+  assert.match(add.find(n => n.props['data-flybot'] === 'join-as').props.className, /fs-join-as/)
+  assert.match(add.find(n => n.props['data-flybot'] === 'talk-through').children.join(''), /Talk through/)
   assert.match(add.find(n => n.props['data-flybot'] === 'join-as').children.join(''), /not shared/i)
+})
+
+test('#160: Remove this Bot closes the settings overlay', async () => {
+  const hidden = []
+  const closed = []
+  const { walk, pluginOf, sandbox } = loadSocialClient(async (endpoint, payload) => {
+    if (endpoint === 'social/hide-remote') { hidden.push(payload); return { handle: payload.handle, hidden: true, homes: [] } }
+    if (endpoint === 'social/settings') return { autoAccept: {} }
+    return {}
+  })
+  sandbox.confirm = () => true
+  const tree = walk(pluginOf([false, false, false, '']).FriendChatSettings({
+    bot: { name: 'Helper', remote: { handle: '@coder.bob.home', home: '@bob.home', homeName: 'Bob' } },
+    actions: { closeSettings: () => closed.push('settings'), closeOverlay: () => closed.push('overlay') },
+  }))
+  tree.find(n => n.props['data-flybot'] === 'remove-friend-bot').props.onClick()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(hidden.map(p => p.handle), ['@coder.bob.home'])
+  assert.ok(closed.includes('settings'))
+  assert.ok(closed.includes('overlay'))
 })
 
 test('#139: Remove asks once; cancelling leaves the Bot', () => {
@@ -3650,6 +3792,8 @@ test('#138: join success copy names the person and the Bot', () => {
   assert.match(src, /shared \$\{shared\} with you/)
   assert.match(src, /Talk through /)
   assert.match(src, /not shared unless you invite them to it/)
+  assert.match(src, /\.fs-join-as-label\{[^}]*white-space:nowrap/)
+  assert.doesNotMatch(src, /there is no preview/)
 })
 
 test('#137: look helpers map preset, emoji, data URL, and named color', () => {
