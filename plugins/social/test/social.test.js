@@ -3218,6 +3218,38 @@ test('#90: Remove on a friend\'s Bot stays busy until hide-remote finishes', asy
   assert.equal(done.props['aria-label'], 'Remove this Bot')
 })
 
+test('social/access labels an object-shaped list_bot_grants grantee, not @objectobject', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = mockServer()
+  server.tools.list_bot_grants = () => ({
+    grants: [{
+      grant_id: 'g-obj',
+      grantee: {
+        bot_id: 'bot_x',
+        handle: '@coder.bob.home',
+        display_name: 'Coder',
+        owner_display_name: 'Bob',
+      },
+      relationship_id: 'r1',
+    }],
+  })
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, autoAccept: false, inboxPollMs: 0 }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  const access = (await call('flybot/social/access', { botId: 'b' })).value
+  const row = access.grants.find(g => g.home === '@bob.home' || g.grantee === '@bob.home' || /coder\.bob/.test(String(g.grantee)))
+  assert.ok(row, `expected a Bob grant, got ${JSON.stringify(access.grants)}`)
+  assert.equal(row.home, '@bob.home')
+  assert.equal(row.name, 'Bob (@bob.home)')
+  assert.doesNotMatch(String(row.name), /object/i)
+  assert.doesNotMatch(String(row.grantee), /object/i)
+})
+
 test('#90: social/access lists who has the Bot; revoke uses the isolated grant API', async (t) => {
   const { ctx, call, stop } = await team()
   t.after(stop)
@@ -3488,6 +3520,30 @@ test('#136 / #138: grant labels use the person home, not a raw member handle', (
   assert.equal(normalized.grantee, '@chief.bob.home', 'core grants need a canonical @handle, not decorated text')
 })
 
+test('grantPersonView reads handle and owner name from a Bot Social grantee object', () => {
+  const peer = {
+    bot_id: 'bot_x',
+    handle: '@coder.bob.home',
+    display_name: 'Coder',
+    owner_display_name: 'Bob',
+    owner_verified: true,
+  }
+  assert.equal(memberHandleOf(peer), '@coder.bob.home')
+  assert.equal(personHomeOf(peer), '@bob.home')
+  const view = grantPersonView({ grantee: peer })
+  assert.equal(view.member, '@coder.bob.home')
+  assert.equal(view.home, '@bob.home')
+  assert.equal(view.person, 'Bob')
+  assert.equal(view.label, 'Bob (@bob.home)')
+  assert.doesNotMatch(view.label, /object/i)
+  assert.doesNotMatch(view.home, /object/i)
+  const normalized = normalizeGrant({ grant_id: 'g-obj', grantee: peer, relationship_id: 'r1' })
+  assert.equal(normalized.grantee, '@coder.bob.home')
+  assert.equal(normalized.home, '@bob.home')
+  assert.equal(normalized.name, 'Bob (@bob.home)')
+  assert.doesNotMatch(String(normalized.grantee), /object/i)
+})
+
 test('#138: Friends\' Bots drops the joiner\'s Bot from an outgoing invite', async (t) => {
   const { ctx, call, home, stop } = await team()
   t.after(stop)
@@ -3719,6 +3775,22 @@ test('createSocialApi prefers list_bot_grants', async () => {
   const listed = await api.listGrants({ botId: 'm1' })
   assert.ok(listed.some(g => g.grantee === '@carol.home'))
   assert.equal(server.calls.some(c => c.name === 'list_friends' && c.args?.bot_id === 'm1'), false)
+})
+
+test('createSocialApi listGrants maps an object-shaped grantee to a handle', async () => {
+  const server = mockServer()
+  server.tools.list_bot_grants = () => ({
+    grants: [{
+      grant_id: 'g-obj',
+      grantee: { bot_id: 'bot_c', handle: '@carol.home', display_name: 'Chief', owner_display_name: 'Carol' },
+    }],
+  })
+  const api = createSocialApi({ server: 'https://s', token: 'owner-token', fetch: server.fetch })
+  const listed = await api.listGrants({ botId: 'm1' })
+  assert.equal(listed.length, 1)
+  assert.equal(listed[0].grantee, '@carol.home')
+  assert.equal(listed[0].name, 'Carol (@carol.home)')
+  assert.doesNotMatch(listed[0].grantee, /object/i)
 })
 
 test('#136: + Copy my handle copies the home; Auto-send starts unchecked; Join-as is always offered', async () => {
