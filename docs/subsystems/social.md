@@ -58,6 +58,14 @@ Everything in `plugins/social/` (entry `plugins/social/index.js` and any helpers
 - **Leave** after the number is void (`bot_not_found` / room already gone) still drops the room off the active list onto **Past rooms**. Past rows are unique by `faceRoomId` and have one primary action (**Open**); live rows are the main-list RoomRow (people mark) with **Leave** on the open room overview.
 - Sidebar **+** is a short action menu, not the To:/composer. Add friend has one-click **Copy invite link** (mint + clipboard). **Talk through** stays on one line (nowrap label). **Copy my handle** copies `@your.home` in the same click (toast repeats the handle). The social strip keeps the **N to approve** badge and opens that chat; the stacked jump list stays out of the column. Held `face_room_message` drafts show in that face chat with readable names (`Chief → the room`), never raw `bot_01…` or a `FLYBOT-FACE-HUMAN` envelope.
 
+### Face-room human turns and UI polish (#166, #167)
+
+- A plain human line in an open face-to-face room is logged and fanned out; it does not start a Chief/Bot model turn unless that Bot is @mentioned or @all (core `openingSpeakers`; `plugins/social/test` and `core/test/rounds.test.js`).
+- Face-room holds (`face_room_message` / `roomId`) attach `pendingCount` to that room only. They do not badge an unrelated friend row via `from`/`to` handle. The social strip no longer draws an **N to approve** tag under the last sidebar row; the gold wait dot on the owning RoomRow / 1:1 remains.
+- Approval preview strips `To face room:` / `To the room:` and wraps on word boundaries (`overflow-wrap:break-word; word-break:normal`), with **Show more** when long.
+- Join notices are remembered by handle and by exact text so a `member.joined` event plus the members loop does not post two identical joined lines.
+- Friend Bot details overview is Auto-send plus a muted **Remove this Bot** link (not a primary button). The DSH settings-shell chrome around empty local panes is unchanged. Composer a11y name and chat-header tok jargon live in pristine DSH / ds-bot and are not patched here.
+
 ### Face-room poll identity (#122)
 
 - `list` / `poll` must not persist or send `as=@`. An empty, missing, or literal `@` handle stays empty; GET omits `as` unless it is a real Bot handle. Rooms first seen from `list` seed `asBot` from `my_bots[].handle` (or a local member already in the snapshot). A stored bogus `@` is healed, and `face_room_not_found` for a still-listed room repairs local meta (clear `as`, retry with `my_bots` or no `as`) instead of warning on every poll.

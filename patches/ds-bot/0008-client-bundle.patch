@@ -1212,12 +1212,10 @@ diff --git a/client.js b/client.js
  .bt-think-text{white-space:pre-wrap;margin-top:6px;padding-left:10px;border-left:2px solid var(--bt-line-2)}
  .bt-event{display:flex;justify-content:center;align-items:center;gap:2px;min-height:24px;margin:2px 0;font-size:12px;line-height:16px;color:var(--bt-ink-2);flex-wrap:wrap}
  .bt-event>span{padding:0 2px}
-@@ -2848,233 +2848,115 @@ function installCompiledStyles(text, tag) {
-   observer.observe(document.head, { childList: true });
-   document.addEventListener("load", onLoad, true);
+@@ -2850,231 +2850,113 @@ function installCompiledStyles(text, tag) {
    return () => {
--    observer.disconnect();
--    document.removeEventListener("load", onLoad, true);
+     observer.disconnect();
+     document.removeEventListener("load", onLoad, true);
 -    clearTimeout(timer);
 -    style.remove();
 -  };
@@ -1348,8 +1346,6 @@ diff --git a/client.js b/client.js
 -  }
 -  const half = frame / 2;
 -  return [[0, 0, half], [half, 0, half], [0, half, half], [half, half, half]];
-+    observer.disconnect();
-+    document.removeEventListener("load", onLoad, true);
 +    clearTimeout(timer);
 +    style.remove();
 +  };
@@ -2880,8 +2876,7 @@ diff --git a/client.js b/client.js
 +      }
 +      if (reply.kind === "notice" || reply.kind === "joined" || reply.kind === "left" || reply.kind === "started") {
 +        return (0, import_react7.createElement)("div", { key: `notice-${index}`, className: "bt-event", "data-flybot": "face-notice" }, remoteMessageText(reply.text));
-       }
--      return (0, import_react6.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi });
++      }
 +      const remote = reply.remote || reply.handle && !roster.byId[reply.botId];
 +      if (remote) {
 +        return (0, import_react7.createElement)(RemoteMessage, {
@@ -2894,7 +2889,8 @@ diff --git a/client.js b/client.js
 +          msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0,
 +          useUi
 +        });
-+      }
+       }
+-      return (0, import_react6.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi });
 +      return (0, import_react7.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi });
      }),
      pending.map((id) => {
@@ -7067,10 +7063,7 @@ diff --git a/client.js b/client.js
 +          (0, import_react24.createElement)(BotMark, { bot, size: 22 }),
 +          (0, import_react24.createElement)("span", { className: "bt-set-copy" }, (0, import_react24.createElement)("span", { className: "bt-bs-label" }, bot.name)),
 +          (0, import_react24.createElement)("span", { className: "bt-set-hint" }, t("Add"))
-         )),
--        (0, import_react23.createElement)("button", { key: "cancel", type: "button", className: "bt-set-row bt-bs-row bt-gs-add", onClick: () => setAdding(false) }, t("Cancel"))
--      ] : outside.length > 0 ? (0, import_react23.createElement)("button", { type: "button", className: "bt-set-row bt-bs-row bt-gs-add", onClick: () => setAdding(true) }, (0, import_react23.createElement)(PlusIcon), t("Add member")) : null,
--      (0, import_react23.createElement)("div", { className: "bt-set-row bt-gs-note" }, (0, import_react23.createElement)(
++        )),
 +        ...outsideRemotes.map((bot) => (0, import_react24.createElement)(
 +          "button",
 +          { key: bot.handle, type: "button", className: "bt-set-row bt-bs-row bt-gs-pick", onClick: () => {
@@ -7080,7 +7073,10 @@ diff --git a/client.js b/client.js
 +          (0, import_react24.createElement)(BotAvatar, { bot: lookBotForRemote({ handle: bot.handle, displayName: bot.name, avatar: bot.avatar, color: bot.color }, roster), size: 22, badge: false, live: false }),
 +          (0, import_react24.createElement)("span", { className: "bt-set-copy" }, (0, import_react24.createElement)("span", { className: "bt-bs-label" }, remoteBotTitle({ displayName: bot.name, ownerName: bot.homeName || bot.owner, handle: bot.handle, isChief: bot.isChief }))),
 +          (0, import_react24.createElement)("span", { className: "bt-set-hint" }, t("Add friend's Bot"))
-+        )),
+         )),
+-        (0, import_react23.createElement)("button", { key: "cancel", type: "button", className: "bt-set-row bt-bs-row bt-gs-add", onClick: () => setAdding(false) }, t("Cancel"))
+-      ] : outside.length > 0 ? (0, import_react23.createElement)("button", { type: "button", className: "bt-set-row bt-bs-row bt-gs-add", onClick: () => setAdding(true) }, (0, import_react23.createElement)(PlusIcon), t("Add member")) : null,
+-      (0, import_react23.createElement)("div", { className: "bt-set-row bt-gs-note" }, (0, import_react23.createElement)(
 +        (0, import_react24.createElement)("button", { key: "cancel", type: "button", className: "bt-set-row bt-bs-row bt-gs-add", onClick: () => setAdding(false) }, t("Cancel"))
 +      ] : outside.length + outsidePeople.length + outsideRemotes.length > 0 ? (0, import_react24.createElement)("button", { type: "button", className: "bt-set-row bt-bs-row bt-gs-add", onClick: () => setAdding(true) }, (0, import_react24.createElement)(PlusIcon), t("Add member")) : null,
 +      (0, import_react24.createElement)("div", { className: "bt-set-row bt-gs-note" }, (0, import_react24.createElement)(
@@ -9059,7 +9055,7 @@ diff --git a/client.js b/client.js
            type: "button",
            className: "bt-bcard-x",
            "aria-label": t("Close tab"),
-@@ -11367,71 +11367,161 @@ function BrowserCards({ bot, sessionId, roster, actions, useBrowserTabs, useBrow
+@@ -11367,87 +11367,177 @@ function BrowserCards({ bot, sessionId, roster, actions, useBrowserTabs, useBrow
              void actions.browserCloseTab(bot.id, tabId);
            }
          }, "×"),
@@ -9246,17 +9242,18 @@ diff --git a/client.js b/client.js
 +      (0, import_react32.createElement)("div", { className: "bt-kv" }, (0, import_react32.createElement)("span", null, t(ROOM_MODES.find(([id]) => id === shownMode(room2, roster))?.[1] ?? "Everyone")))
      ),
 -    usage ? (0, import_react31.createElement)(
-+    usage ? (0, import_react32.createElement)(
++    face || !usage ? null : (0, import_react32.createElement)(
        "div",
        { key: "usage" },
 -      (0, import_react31.createElement)("div", { className: "bt-section-title" }, t("Usage")),
 -      (0, import_react31.createElement)("div", { className: "bt-kv" }, (0, import_react31.createElement)("span", null, room2.name), (0, import_react31.createElement)("span", null, usage))
+-    ) : null
 +      (0, import_react32.createElement)("div", { className: "bt-section-title" }, t("Usage")),
 +      (0, import_react32.createElement)("div", { className: "bt-kv" }, (0, import_react32.createElement)("span", null, room2.name), (0, import_react32.createElement)("span", null, usage))
-     ) : null
++    )
    ];
  }
-@@ -11439,15 +11439,15 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
+ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, actions, useSessions, useSessionStatus, useActivity, useWork, useBrowserTabs, useBrowserPages }) {
    const owner = roster.byId[sessionId];
    const part = owner ? currentPart(owner) : sessionId;
    const isMainBot = isMainOf(roster, owner?.id);
@@ -9347,7 +9344,7 @@ diff --git a/client.js b/client.js
          className: "bt-drawer-name-input",
          autoFocus: true,
          value: draftName,
-@@ -11535,55 +11535,58 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
+@@ -11535,55 +11535,59 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
              setEditing(false);
            }
          }
@@ -9378,7 +9375,8 @@ diff --git a/client.js b/client.js
 -        (0, import_react31.createElement)(
 +      room2 && tab === "details" ? (0, import_react32.createElement)(GroupOverview, { room: room2, roster, actions, usage, useWork, openSettings: () => setView("settings") }) : null,
 +      bot && bot.remote && tab === "details" ? [
-+        bot.remote.handle ? (0, import_react32.createElement)("div", { key: "handle", className: "bt-muted" }, bot.remote.handle) : null
++        bot.remote.handle ? (0, import_react32.createElement)("div", { key: "handle", className: "bt-muted" }, bot.remote.handle) : null,
++        (0, import_react32.createElement)(FlyBotDetails, { key: "social", bot, roster, actions })
 +      ] : null,
 +      bot && !bot.remote && tab === "details" ? [
 +        (0, import_react32.createElement)(
@@ -9916,7 +9914,7 @@ diff --git a/client.js b/client.js
  }
  var clock3 = (time) => typeof time === "number" ? new Date(time).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" }) : void 0;
  function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageImages, openFile, openSkill }) {
-@@ -13178,26 +13178,41 @@ function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageIma
+@@ -13178,28 +13178,46 @@ function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageIma
    const referenceLabels = data.referenceLabels ?? [];
    const references = openFile && openSkill ? { openFile, openSkill } : void 0;
    const steering = node.kind === "steering";
@@ -9925,6 +9923,7 @@ diff --git a/client.js b/client.js
 +  const room2 = roster.roomsById?.[sessionId];
 +  const multiHuman = (room2?.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0).length > 1;
 +  const incoming = author && !author.mine;
++  const held = Boolean(room2 && room2.origin === "face-to-face" && !incoming && (room2.pendingCount ?? 0) > 0);
 +  return (0, import_react35.createElement)(
      "div",
 -    { className: "bt-umsg", "data-steering": steering || void 0 },
@@ -9932,6 +9931,7 @@ diff --git a/client.js b/client.js
 +    {
 +      className: incoming ? "bt-umsg bt-umsg-other" : "bt-umsg",
 +      "data-steering": steering || void 0,
++      "data-held": held || void 0,
 +      "data-author": author?.authorId,
 +      "data-author-kind": author?.authorKind,
 +      "data-author-name": author?.name
@@ -9966,7 +9966,10 @@ diff --git a/client.js b/client.js
 +.bt-composer-as{font-size:12px;line-height:16px;color:var(--bt-ink-3);padding:0 8px;align-self:center;white-space:nowrap}
  .bt-ustack{min-width:0;max-width:min(calc(var(--dsh-chat-content-width,748px) * .702),82%);display:flex;flex-direction:column;align-items:flex-end;gap:8px}
  .bt-ubody{max-width:100%;box-sizing:border-box;background:var(--bt-user);color:var(--bt-user-ink);border-radius:18px;padding:7px 12px;font-size:var(--dsh-content-font-size,14px);line-height:calc(var(--dsh-content-font-size,14px) + 8px);white-space:pre-wrap;word-break:break-word}
++.bt-umsg[data-held] .bt-ubody{background:color-mix(in srgb,var(--bt-user) 28%,var(--bt-card,#fff));color:var(--bt-ink);border:.5px dashed var(--bt-line-2,rgba(20,20,20,.22));opacity:.88}
  .bt-ubody a{color:inherit}
+ .bt-umention{display:inline-flex;align-items:center;gap:3px;vertical-align:-3px;max-width:100%;padding:0 1px;border:0;background:none;color:inherit;font:inherit;font-weight:600;line-height:inherit;cursor:pointer;border-radius:6px;white-space:nowrap}
+ .bt-umention:hover{text-decoration:underline;text-underline-offset:2px}
 @@ -13250,7 +13250,16 @@ function noticeApprovals({ work, roster, shownSession, openSession, since: since
  // src/client/index.js
  var inject = ["sessions", "uiWorkspace", "uiConversation", "slots", "theme", "layout"];

@@ -12536,12 +12536,12 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
       (0, import_react32.createElement)("div", { className: "bt-section-title" }, t("Who answers")),
       (0, import_react32.createElement)("div", { className: "bt-kv" }, (0, import_react32.createElement)("span", null, t(ROOM_MODES.find(([id]) => id === shownMode(room2, roster))?.[1] ?? "Everyone")))
     ),
-    usage ? (0, import_react32.createElement)(
+    face || !usage ? null : (0, import_react32.createElement)(
       "div",
       { key: "usage" },
       (0, import_react32.createElement)("div", { className: "bt-section-title" }, t("Usage")),
       (0, import_react32.createElement)("div", { className: "bt-kv" }, (0, import_react32.createElement)("span", null, room2.name), (0, import_react32.createElement)("span", null, usage))
-    ) : null
+    )
   ];
 }
 function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, actions, useSessions, useSessionStatus, useActivity, useWork, useBrowserTabs, useBrowserPages }) {
@@ -12662,7 +12662,8 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
       errorLine,
       room2 && tab === "details" ? (0, import_react32.createElement)(GroupOverview, { room: room2, roster, actions, usage, useWork, openSettings: () => setView("settings") }) : null,
       bot && bot.remote && tab === "details" ? [
-        bot.remote.handle ? (0, import_react32.createElement)("div", { key: "handle", className: "bt-muted" }, bot.remote.handle) : null
+        bot.remote.handle ? (0, import_react32.createElement)("div", { key: "handle", className: "bt-muted" }, bot.remote.handle) : null,
+        (0, import_react32.createElement)(FlyBotDetails, { key: "social", bot, roster, actions })
       ] : null,
       bot && !bot.remote && tab === "details" ? [
         (0, import_react32.createElement)(
@@ -14311,11 +14312,13 @@ function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageIma
   const room2 = roster.roomsById?.[sessionId];
   const multiHuman = (room2?.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0).length > 1;
   const incoming = author && !author.mine;
+  const held = Boolean(room2 && room2.origin === "face-to-face" && !incoming && (room2.pendingCount ?? 0) > 0);
   return (0, import_react35.createElement)(
     "div",
     {
       className: incoming ? "bt-umsg bt-umsg-other" : "bt-umsg",
       "data-steering": steering || void 0,
+      "data-held": held || void 0,
       "data-author": author?.authorId,
       "data-author-kind": author?.authorKind,
       "data-author-name": author?.name
@@ -14344,6 +14347,7 @@ var USER_MESSAGE_CSS = `
 .bt-composer-as{font-size:12px;line-height:16px;color:var(--bt-ink-3);padding:0 8px;align-self:center;white-space:nowrap}
 .bt-ustack{min-width:0;max-width:min(calc(var(--dsh-chat-content-width,748px) * .702),82%);display:flex;flex-direction:column;align-items:flex-end;gap:8px}
 .bt-ubody{max-width:100%;box-sizing:border-box;background:var(--bt-user);color:var(--bt-user-ink);border-radius:18px;padding:7px 12px;font-size:var(--dsh-content-font-size,14px);line-height:calc(var(--dsh-content-font-size,14px) + 8px);white-space:pre-wrap;word-break:break-word}
+.bt-umsg[data-held] .bt-ubody{background:color-mix(in srgb,var(--bt-user) 28%,var(--bt-card,#fff));color:var(--bt-ink);border:.5px dashed var(--bt-line-2,rgba(20,20,20,.22));opacity:.88}
 .bt-ubody a{color:inherit}
 .bt-umention{display:inline-flex;align-items:center;gap:3px;vertical-align:-3px;max-width:100%;padding:0 1px;border:0;background:none;color:inherit;font:inherit;font-weight:600;line-height:inherit;cursor:pointer;border-radius:6px;white-space:nowrap}
 .bt-umention:hover{text-decoration:underline;text-underline-offset:2px}
