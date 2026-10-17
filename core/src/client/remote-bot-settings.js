@@ -8,8 +8,9 @@ import { t } from './i18n.js'
 export const REMOTE_BOT_SETTINGS_CSS = `
 .bt-remote-sheet-layer{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;justify-content:center;padding:16px;pointer-events:none}
 .bt-remote-sheet-layer[data-leaving]{pointer-events:none}
-.bt-remote-sheet-layer .bt-scrim{pointer-events:auto}
-.bt-remote-sheet{pointer-events:auto;width:min(320px,calc(100vw - 32px));max-height:min(70vh,420px);margin:0 auto 0;border-radius:14px;background:var(--bt-card,#fff);border:.5px solid var(--bt-line-2);box-shadow:0 12px 40px rgba(20,20,20,.16);display:flex;flex-direction:column;overflow:hidden;animation:bt-remote-sheet-in .2s ease-out}
+.bt-remote-sheet-layer .bt-scrim{position:absolute;inset:0;z-index:0;pointer-events:auto}
+.bt-remote-sheet-layer[data-leaving] .bt-scrim{opacity:0;transition:opacity .16s ease-in}
+.bt-remote-sheet{position:relative;z-index:1;pointer-events:auto;width:min(320px,calc(100vw - 32px));max-height:min(70vh,420px);margin:0 auto 0;border-radius:14px;background:var(--bt-card,#fff);border:.5px solid var(--bt-line-2);box-shadow:0 12px 40px rgba(20,20,20,.16);display:flex;flex-direction:column;overflow:hidden;animation:bt-remote-sheet-in .2s ease-out}
 .bt-remote-sheet-layer[data-leaving] .bt-remote-sheet{animation:bt-remote-sheet-out .16s ease-in forwards}
 .bt-remote-sheet-head{display:flex;align-items:center;gap:10px;padding:12px 12px 8px}
 .bt-remote-sheet-who{display:flex;flex-direction:column;min-width:0;gap:1px;flex:1 1 auto}

@@ -5594,7 +5594,8 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
       bot.role ? (0, import_react9.createElement)("span", { className: "bt-chip" }, bot.role) : null
     ));
   }
-  return (0, import_react9.createElement)(
+  const unreadMark = wide && waiting && !active ? (0, import_react9.createElement)("span", { className: "bt-unread bt-unread-wait", "aria-hidden": true }) : wide && unread && !active ? (0, import_react9.createElement)("span", { className: "bt-unread", "aria-hidden": true }) : null;
+  const row = (0, import_react9.createElement)(
     "button",
     {
       type: "button",
@@ -5614,18 +5615,20 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
       (0, import_react9.createElement)("span", { className: "bt-row-name" }, (0, import_react9.createElement)("span", { className: "bt-row-title" }, shown), bot.remote ? (0, import_react9.createElement)(RemoteMark, { remote: bot.remote }) : null, pinned ? (0, import_react9.createElement)(PinMark) : null),
       awayLine ? (0, import_react9.createElement)("span", { className: "bt-row-preview" }, awayLine) : preview ? (0, import_react9.createElement)("span", { className: "bt-row-preview" }, preview) : null
     ) : null,
-    wide && bot.remote ? (0, import_react9.createElement)("button", {
-      type: "button",
-      className: "bt-row-settings",
-      "aria-label": t("Bot settings"),
-      title: t("Bot settings"),
-      onClick: (event) => {
-        event.stopPropagation();
-        actions.openSettings("bots", id);
-      }
-    }, (0, import_react9.createElement)(GearIcon)) : null,
-    wide && waiting && !active ? (0, import_react9.createElement)("span", { className: "bt-unread bt-unread-wait", "aria-hidden": true }) : wide && unread && !active ? (0, import_react9.createElement)("span", { className: "bt-unread", "aria-hidden": true }) : null
+    unreadMark
   );
+  const settings = wide && bot.remote ? (0, import_react9.createElement)("button", {
+    type: "button",
+    className: "bt-row-settings",
+    "aria-label": t("Bot settings"),
+    title: t("Bot settings"),
+    onClick: (event) => {
+      event.stopPropagation();
+      actions.openSettings("bots", id);
+    }
+  }, (0, import_react9.createElement)(GearIcon)) : null;
+  if (settings) return (0, import_react9.createElement)("div", { className: "bt-row-wrap", "data-bot-id": id }, row, settings);
+  return row;
 }
 function RemoteMark({ remote }) {
   return (0, import_react9.createElement)(
@@ -6349,8 +6352,10 @@ var SIDEBAR_CSS = `
 @keyframes bt-agent-row-in{from{opacity:0;filter:blur(4px)}to{opacity:1;filter:blur(0)}}
 @media (prefers-reduced-motion:reduce){.bt-agent-sub{transition:none}.bt-agent-sub .bt-agent-sub-row{animation:none}}
 
-.bt-row-settings{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-2px 0 -2px 2px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--bt-ink-3);cursor:pointer;opacity:.85;transition:background-color .12s ease,color .12s ease,opacity .12s ease}
-.bt-row-settings:hover,.bt-row:focus-within .bt-row-settings{opacity:1;color:var(--bt-ink-2);background:var(--bt-hover)}
+.bt-row-wrap{display:flex;align-items:center;width:100%;min-width:0}
+.bt-row-wrap>.bt-row{flex:1 1 auto;min-width:0}
+.bt-row-settings{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-2px 8px -2px 2px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--bt-ink-3);cursor:pointer;opacity:.85;transition:background-color .12s ease,color .12s ease,opacity .12s ease}
+.bt-row-settings:hover,.bt-row-wrap:focus-within .bt-row-settings{opacity:1;color:var(--bt-ink-2);background:var(--bt-hover)}
 .bt-row-settings svg{width:15px;height:15px}
 `;
 
@@ -6417,13 +6422,21 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
   const composerLabel = name ? t("Message {name}", { name }) : t("Message");
   (0, import_react10.useEffect)(() => {
     document.body.style.setProperty("--bt-placeholder", JSON.stringify(composerLabel));
+    const input = document.querySelector("[data-composer-input]");
+    const priorLabel = input?.getAttribute("aria-label") ?? null;
     const apply2 = () => {
-      const input = document.querySelector("[data-composer-input]");
-      if (input) input.setAttribute("aria-label", composerLabel);
+      const el = document.querySelector("[data-composer-input]");
+      if (el) el.setAttribute("aria-label", composerLabel);
     };
     apply2();
     const timer = setTimeout(apply2, 0);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      const el = document.querySelector("[data-composer-input]");
+      if (!el) return;
+      if (priorLabel == null) el.removeAttribute("aria-label");
+      else el.setAttribute("aria-label", priorLabel);
+    };
   }, [composerLabel]);
   (0, import_react10.useEffect)(() => {
     actions.beginVisit(sessionId);
@@ -13352,8 +13365,9 @@ var import_react34 = require("react");
 var REMOTE_BOT_SETTINGS_CSS = `
 .bt-remote-sheet-layer{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;justify-content:center;padding:16px;pointer-events:none}
 .bt-remote-sheet-layer[data-leaving]{pointer-events:none}
-.bt-remote-sheet-layer .bt-scrim{pointer-events:auto}
-.bt-remote-sheet{pointer-events:auto;width:min(320px,calc(100vw - 32px));max-height:min(70vh,420px);margin:0 auto 0;border-radius:14px;background:var(--bt-card,#fff);border:.5px solid var(--bt-line-2);box-shadow:0 12px 40px rgba(20,20,20,.16);display:flex;flex-direction:column;overflow:hidden;animation:bt-remote-sheet-in .2s ease-out}
+.bt-remote-sheet-layer .bt-scrim{position:absolute;inset:0;z-index:0;pointer-events:auto}
+.bt-remote-sheet-layer[data-leaving] .bt-scrim{opacity:0;transition:opacity .16s ease-in}
+.bt-remote-sheet{position:relative;z-index:1;pointer-events:auto;width:min(320px,calc(100vw - 32px));max-height:min(70vh,420px);margin:0 auto 0;border-radius:14px;background:var(--bt-card,#fff);border:.5px solid var(--bt-line-2);box-shadow:0 12px 40px rgba(20,20,20,.16);display:flex;flex-direction:column;overflow:hidden;animation:bt-remote-sheet-in .2s ease-out}
 .bt-remote-sheet-layer[data-leaving] .bt-remote-sheet{animation:bt-remote-sheet-out .16s ease-in forwards}
 .bt-remote-sheet-head{display:flex;align-items:center;gap:10px;padding:12px 12px 8px}
 .bt-remote-sheet-who{display:flex;flex-direction:column;min-width:0;gap:1px;flex:1 1 auto}

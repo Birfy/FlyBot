@@ -81,13 +81,21 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
   const composerLabel = name ? t('Message {name}', { name }) : t('Message')
   useEffect(() => {
     document.body.style.setProperty('--bt-placeholder', JSON.stringify(composerLabel))
+    const input = document.querySelector('[data-composer-input]')
+    const priorLabel = input?.getAttribute('aria-label') ?? null
     const apply = () => {
-      const input = document.querySelector('[data-composer-input]')
-      if (input) input.setAttribute('aria-label', composerLabel)
+      const el = document.querySelector('[data-composer-input]')
+      if (el) el.setAttribute('aria-label', composerLabel)
     }
     apply()
     const timer = setTimeout(apply, 0)
-    return () => clearTimeout(timer)
+    return () => {
+      clearTimeout(timer)
+      const el = document.querySelector('[data-composer-input]')
+      if (!el) return
+      if (priorLabel == null) el.removeAttribute('aria-label')
+      else el.setAttribute('aria-label', priorLabel)
+    }
   }, [composerLabel])
   useEffect(() => {
     actions.beginVisit(sessionId)

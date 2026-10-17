@@ -681,10 +681,10 @@ window.__ModuleLoader__.load({
     }
     function faceChipLabel(room) {
       const chip = faceChip(room)
-      if (chip === 'open') return 'Open'
+      if (chip === 'open') return 'open'
       if (chip === 'closed') return 'Closed'
       if (chip === 'left') return 'Left'
-      if (chip === 'ended') return 'Ended'
+      if (chip === 'ended') return 'ended'
       if (chip === 'joining') return 'Joining'
       return chip
     }
