@@ -1582,8 +1582,8 @@ function bodyOf(def, paint, flat = false) {
     return "";
   }
 }
-var eyeMarkup = ([cx, cy, w, h35, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h35 / 2}" width="${w}" height="${h35}" rx="${w / 2}"/></g>`;
-var happyEyeMarkup = ([cx, cy, w, h35, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h35 * 0.14}Q0 ${-h35 * 0.42} ${w * 0.62} ${h35 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
+var eyeMarkup = ([cx, cy, w, h36, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><rect class="bt-eye" x="${-w / 2}" y="${-h36 / 2}" width="${w}" height="${h36}" rx="${w / 2}"/></g>`;
+var happyEyeMarkup = ([cx, cy, w, h36, tilt]) => `<g transform="translate(${cx} ${cy}) rotate(${tilt})"><path class="bt-eye-happy" opacity="0" d="M${-w * 0.62} ${h36 * 0.14}Q0 ${-h36 * 0.42} ${w * 0.62} ${h36 * 0.14}" fill="none" stroke="#000" stroke-width="${w * 0.5}" stroke-linecap="round"/></g>`;
 var maskBox = (size) => `maskUnits="userSpaceOnUse" x="${-size}" y="${-size}" width="${size * 3}" height="${size * 3}"`;
 var holes = (def, eyes) => `<rect x="${-def.size}" y="${-def.size}" width="${def.size * 3}" height="${def.size * 3}" fill="#fff"/>${eyes}`;
 var MASK_ID = "%MASK%";
@@ -1953,6 +1953,9 @@ function FlyBotApprovals() {
 }
 var fileSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 var FLYBOT_CSS = `
+.bt-flybot-session-dock{width:100%;max-width:min(992px,100%);margin:0 auto;padding:0 0 6px;box-sizing:border-box}
+.bt-flybot-session-dock [data-flybot=chat-approvals]{align-items:flex-end;padding-bottom:4px}
+.bt-flybot-session-dock .fs-hold{margin-left:auto}
 .bt-flybot-approval-files { margin: 0 0 8px; padding-left: 18px; font-size: 12px; }
 .bt-file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0 30px; }
 .bt-file-chip { font-size: 12px; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--bt-line, rgba(0,0,0,.15)); background: transparent; cursor: pointer; }
@@ -2405,12 +2408,12 @@ function liveSprings(apply2) {
     const dt = Math.min(0.5, Math.max(1e-3, (now - last) / 1e3));
     last = now;
     const steps = Math.ceil(dt * 240);
-    const h35 = dt / steps;
+    const h36 = dt / steps;
     let moving = false;
     for (const value of values.values()) {
       for (let index = 0; index < steps; index += 1) {
-        value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h35;
-        value.x += value.v * h35;
+        value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h36;
+        value.x += value.v * h36;
       }
       if (Math.abs(value.x - value.to) < 0.05 && Math.abs(value.v) < 1) {
         value.x = value.to;
@@ -2928,6 +2931,8 @@ button.bt-q-opt:active{background:var(--bt-active)}
 .bt-drawer-id{display:flex;flex-direction:column;align-items:center;padding:14px 16px 0}
 .bt-drawer-id>.bt-mark,.bt-drawer-id>.bt-cluster{margin-bottom:16px}
 .bt-drawer-name{font-size:17px;line-height:24px;font-weight:500;border:0;background:none;color:inherit;cursor:text;padding:0 6px;border-radius:6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-drawer-name-face{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;text-overflow:ellipsis;line-clamp:3;cursor:default}
+.bt-drawer-name-face:hover{background:none}
 .bt-drawer-name:hover{background:var(--bt-hover)}
 .bt-drawer-name-input{font-size:17px;line-height:24px;text-align:center;border:.5px solid var(--bt-line-2);border-radius:6px;padding:0 6px;background:var(--bt-main);color:var(--bt-ink);outline:none;font-weight:500}
 .bt-drawer-role{font-size:12px;line-height:16px;color:var(--bt-ink-3);margin-top:6px;text-align:center}
@@ -3490,6 +3495,7 @@ header[class*="_header"] .bt-head{flex:1 1 auto;width:100%}
 .bt-mic:active,.bt-voice:active{scale:.9}
 [data-composer-card]:has(button[class*="_primary"]:disabled) .bt-voice{display:inline-grid}
 body[data-bt-room] .bt-voice{display:none!important}
+body[data-bt-room] [data-composer-card] [class*="_activity"]{display:none!important}
 body[data-bt-room] [data-composer-card]:has(button[class*="_primary"]:disabled) .bt-mic:not([aria-pressed=true]){background:var(--bt-accent);color:var(--bt-accent-ink,#fff)}
 .bt-mic-note{position:absolute;right:12px;bottom:calc(100% + 8px);padding:5px 10px;border-radius:8px;background:var(--bt-user);color:var(--bt-user-ink);font-size:12px;line-height:16px;white-space:nowrap;pointer-events:none;animation:bt-rise .16s ease-out}
 [data-chain-overlay-fallback="conversation.composer"]:has(~ .bt-q){display:block!important;order:2}
@@ -5588,7 +5594,8 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
       bot.role ? (0, import_react9.createElement)("span", { className: "bt-chip" }, bot.role) : null
     ));
   }
-  return (0, import_react9.createElement)(
+  const unreadMark = wide && waiting && !active ? (0, import_react9.createElement)("span", { className: "bt-unread bt-unread-wait", "aria-hidden": true }) : wide && unread && !active ? (0, import_react9.createElement)("span", { className: "bt-unread", "aria-hidden": true }) : null;
+  const row = (0, import_react9.createElement)(
     "button",
     {
       type: "button",
@@ -5608,8 +5615,20 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
       (0, import_react9.createElement)("span", { className: "bt-row-name" }, (0, import_react9.createElement)("span", { className: "bt-row-title" }, shown), bot.remote ? (0, import_react9.createElement)(RemoteMark, { remote: bot.remote }) : null, pinned ? (0, import_react9.createElement)(PinMark) : null),
       awayLine ? (0, import_react9.createElement)("span", { className: "bt-row-preview" }, awayLine) : preview ? (0, import_react9.createElement)("span", { className: "bt-row-preview" }, preview) : null
     ) : null,
-    wide && waiting && !active ? (0, import_react9.createElement)("span", { className: "bt-unread bt-unread-wait", "aria-hidden": true }) : wide && unread && !active ? (0, import_react9.createElement)("span", { className: "bt-unread", "aria-hidden": true }) : null
+    unreadMark
   );
+  const settings = wide && bot.remote ? (0, import_react9.createElement)("button", {
+    type: "button",
+    className: "bt-row-settings",
+    "aria-label": t("Bot settings"),
+    title: t("Bot settings"),
+    onClick: (event) => {
+      event.stopPropagation();
+      actions.openSettings("bots", id);
+    }
+  }, (0, import_react9.createElement)(GearIcon)) : null;
+  if (settings) return (0, import_react9.createElement)("div", { className: "bt-row-wrap", "data-bot-id": id }, row, settings);
+  return row;
 }
 function RemoteMark({ remote }) {
   return (0, import_react9.createElement)(
@@ -6332,6 +6351,12 @@ var SIDEBAR_CSS = `
 .bt-agent-sub[data-open] .bt-agent-sub-row{animation:bt-agent-row-in .24s ease both;animation-delay:calc(var(--i, 0)*30ms)}
 @keyframes bt-agent-row-in{from{opacity:0;filter:blur(4px)}to{opacity:1;filter:blur(0)}}
 @media (prefers-reduced-motion:reduce){.bt-agent-sub{transition:none}.bt-agent-sub .bt-agent-sub-row{animation:none}}
+
+.bt-row-wrap{display:flex;align-items:center;width:100%;min-width:0}
+.bt-row-wrap>.bt-row{flex:1 1 auto;min-width:0}
+.bt-row-settings{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-2px 8px -2px 2px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--bt-ink-3);cursor:pointer;opacity:.85;transition:background-color .12s ease,color .12s ease,opacity .12s ease}
+.bt-row-settings:hover,.bt-row-wrap:focus-within .bt-row-settings{opacity:1;color:var(--bt-ink-2);background:var(--bt-hover)}
+.bt-row-settings svg{width:15px;height:15px}
 `;
 
 // src/client/header.js
@@ -6394,9 +6419,25 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
   const memoryIds = bot ? [bot.id] : room2?.members ?? [];
   const notice = useMemoryNotice(memoryIds, useNews);
   const changed = useNews((map) => latestMemoryChange(map, memoryIds));
+  const composerLabel = name ? t("Message {name}", { name }) : t("Message");
   (0, import_react10.useEffect)(() => {
-    document.body.style.setProperty("--bt-placeholder", JSON.stringify(name ? t("Message {name}", { name }) : t("Message")));
-  }, [name, t("Message")]);
+    document.body.style.setProperty("--bt-placeholder", JSON.stringify(composerLabel));
+    const input = document.querySelector("[data-composer-input]");
+    const priorLabel = input?.getAttribute("aria-label") ?? null;
+    const apply2 = () => {
+      const el = document.querySelector("[data-composer-input]");
+      if (el) el.setAttribute("aria-label", composerLabel);
+    };
+    apply2();
+    const timer = setTimeout(apply2, 0);
+    return () => {
+      clearTimeout(timer);
+      const el = document.querySelector("[data-composer-input]");
+      if (!el) return;
+      if (priorLabel == null) el.removeAttribute("aria-label");
+      else el.setAttribute("aria-label", priorLabel);
+    };
+  }, [composerLabel]);
   (0, import_react10.useEffect)(() => {
     actions.beginVisit(sessionId);
     return () => actions.endVisit(sessionId);
@@ -8901,25 +8942,7 @@ function BotSettingsForm({ bot, roster, actions, run }) {
     const timer = setTimeout(() => setConfirming(false), 4e3);
     return () => clearTimeout(timer);
   }, [confirming]);
-  if (bot.remote) {
-    const who = bot.remote.homeName || bot.remote.owner || bot.remote.home || t("Friend's Bot");
-    return (0, import_react19.createElement)(
-      "div",
-      { className: "bt-bs", "data-flybot": "remote-bot-settings" },
-      (0, import_react19.createElement)(
-        "div",
-        { className: "bt-bs-hero" },
-        (0, import_react19.createElement)(BotMark, { bot, size: 64, live: true }),
-        (0, import_react19.createElement)(
-          "div",
-          { className: "bt-bs-who" },
-          (0, import_react19.createElement)("span", { className: "bt-bs-name" }, bot.name),
-          (0, import_react19.createElement)("span", { className: "bt-bs-sub" }, who)
-        )
-      ),
-      (0, import_react19.createElement)(FlyBotDetails, { bot, roster, actions })
-    );
-  }
+  if (bot.remote) return null;
   const isMainBot = isMainOf(roster, bot.id);
   const onlyMain = isMainBot && (roster.mainBotIds ?? []).length === 1;
   const isTile = roster.mainBotId === bot.id;
@@ -12582,13 +12605,13 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
     });
   };
   const errorLine = error ? (0, import_react32.createElement)("div", { className: "bt-error", role: "alert", style: { padding: 0 } }, error) : null;
-  if ((bot || room2) && view === "settings") {
+  if ((bot || room2) && view === "settings" && !bot?.remote) {
     return [
       (0, import_react32.createElement)(
         "div",
         { key: "head", className: "bt-subhead", "data-move": move },
         (0, import_react32.createElement)("button", { type: "button", className: "bt-icon-btn", "aria-label": t("Back to details"), onClick: () => setView("overview") }, (0, import_react32.createElement)(ChevronLeftIcon)),
-        (0, import_react32.createElement)("span", { className: "bt-subhead-title" }, bot ? bot.remote ? t("Bot settings") : t("Settings") : t("Group settings")),
+        (0, import_react32.createElement)("span", { className: "bt-subhead-title" }, bot ? t("Settings") : t("Group settings")),
         hasStrip ? null : (0, import_react32.createElement)("button", { type: "button", className: "bt-icon-btn", "aria-label": t("Close details"), onClick: close }, (0, import_react32.createElement)(CloseIcon))
       ),
       (0, import_react32.createElement)(
@@ -12602,7 +12625,14 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
   const top = (0, import_react32.createElement)(
     "div",
     { className: "bt-drawer-top", "data-move": side },
-    bot || room2 ? (0, import_react32.createElement)("button", { type: "button", className: "bt-round", "aria-label": bot ? bot.remote ? t("Bot settings") : t("Edit Bot") : t("Group settings"), title: bot ? bot.remote ? t("Bot settings") : t("Edit Bot") : t("Group settings"), "data-info-row": "settings", onClick: () => setView("settings") }, (0, import_react32.createElement)(GearIcon)) : null,
+    bot || room2 ? (0, import_react32.createElement)("button", {
+      type: "button",
+      className: "bt-round",
+      "aria-label": bot ? bot.remote ? t("Bot settings") : t("Edit Bot") : t("Group settings"),
+      title: bot ? bot.remote ? t("Bot settings") : t("Edit Bot") : t("Group settings"),
+      "data-info-row": "settings",
+      onClick: () => bot?.remote ? actions.openSettings("bots", bot.id) : setView("settings")
+    }, (0, import_react32.createElement)(GearIcon)) : null,
     bot && !bot.remote && roster.browser === true && actions.openBrowser ? (0, import_react32.createElement)("button", { type: "button", className: "bt-round", "aria-label": t("Open browser"), title: t("Open this Bot's browser"), onClick: () => actions.openBrowser(sessionId) }, (0, import_react32.createElement)(GlobeIcon)) : null,
     bot || room2 ? (0, import_react32.createElement)("button", { type: "button", className: "bt-round", "aria-label": copied ? t("Copied conversation") : t("Share conversation"), title: copied ? t("Copied") : t("Copy conversation as Markdown"), onClick: share }, copied ? (0, import_react32.createElement)("span", { key: "copied", className: "bt-pop-in" }, "✓") : (0, import_react32.createElement)(ShareIcon)) : null,
     hasStrip ? null : (0, import_react32.createElement)("button", { type: "button", className: "bt-round", "aria-label": t("Close details"), onClick: close }, (0, import_react32.createElement)(CloseIcon))
@@ -12629,7 +12659,7 @@ function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, roster, a
       "div",
       { key: "id", className: "bt-drawer-id", "data-move": side },
       bot ? (0, import_react32.createElement)(BotAvatar, { bot, size: 64, state: botState(running, doing, roster.questions?.[part] !== void 0), main: isMainBot, badge: false, gaze: true, pokeable: true }) : (0, import_react32.createElement)(RoomAvatar, { room: room2, roster, size: 64 }),
-      bot?.remote ? (0, import_react32.createElement)("div", { className: "bt-drawer-name" }, current) : editing ? (0, import_react32.createElement)("input", {
+      bot?.remote ? (0, import_react32.createElement)("div", { className: "bt-drawer-name" }, current) : room2?.origin === "face-to-face" ? (0, import_react32.createElement)("div", { className: "bt-drawer-name bt-drawer-name-face", title: current }, current) : editing ? (0, import_react32.createElement)("input", {
         className: "bt-drawer-name-input",
         autoFocus: true,
         value: draftName,
@@ -13330,8 +13360,63 @@ var BROWSER_CSS = `
 @media (prefers-reduced-motion:reduce){.bt-ptabs,.bt-panel-view,.bt-bcard,.bt-ptab-name{animation:none}}
 `;
 
-// src/client/overlays.js
+// src/client/remote-bot-settings.js
 var import_react34 = require("react");
+var REMOTE_BOT_SETTINGS_CSS = `
+.bt-remote-sheet-layer{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end;justify-content:center;padding:16px;pointer-events:none}
+.bt-remote-sheet-layer[data-leaving]{pointer-events:none}
+.bt-remote-sheet-layer .bt-scrim{position:absolute;inset:0;z-index:0;pointer-events:auto}
+.bt-remote-sheet-layer[data-leaving] .bt-scrim{opacity:0;transition:opacity .16s ease-in}
+.bt-remote-sheet{position:relative;z-index:1;pointer-events:auto;width:min(320px,calc(100vw - 32px));max-height:min(70vh,420px);margin:0 auto 0;border-radius:14px;background:var(--bt-card,#fff);border:.5px solid var(--bt-line-2);box-shadow:0 12px 40px rgba(20,20,20,.16);display:flex;flex-direction:column;overflow:hidden;animation:bt-remote-sheet-in .2s ease-out}
+.bt-remote-sheet-layer[data-leaving] .bt-remote-sheet{animation:bt-remote-sheet-out .16s ease-in forwards}
+.bt-remote-sheet-head{display:flex;align-items:center;gap:10px;padding:12px 12px 8px}
+.bt-remote-sheet-who{display:flex;flex-direction:column;min-width:0;gap:1px;flex:1 1 auto}
+.bt-remote-sheet-name{font-size:16px;line-height:22px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-remote-sheet-sub{font-size:12px;line-height:16px;color:var(--bt-ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-remote-sheet-body{padding:0 12px 14px;overflow:auto}
+@keyframes bt-remote-sheet-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes bt-remote-sheet-out{from{opacity:1;transform:none}to{opacity:0;transform:translateY(8px)}}
+@media (min-width:520px){
+.bt-remote-sheet-layer{align-items:center;padding:24px}
+.bt-remote-sheet{margin:0}
+}
+`;
+function RemoteBotSettingsSheet({ bot, roster, actions, leaving = false }) {
+  const close = () => actions.closeSettings();
+  useEscape(close);
+  if (!bot?.remote) return null;
+  const who = bot.remote.homeName || bot.remote.owner || bot.remote.home || t("Friend's Bot");
+  return (0, import_react34.createElement)(
+    "div",
+    { className: "bt-remote-sheet-layer", "data-leaving": leaving || void 0, "data-flybot": "remote-bot-sheet" },
+    (0, import_react34.createElement)("div", { className: "bt-scrim", onMouseDown: close }),
+    (0, import_react34.createElement)(
+      "div",
+      { className: "bt-remote-sheet", role: "dialog", "aria-modal": true, "aria-label": t("Bot settings") },
+      (0, import_react34.createElement)(
+        "div",
+        { className: "bt-remote-sheet-head" },
+        (0, import_react34.createElement)(BotMark, { bot, size: 40, live: true }),
+        (0, import_react34.createElement)(
+          "div",
+          { className: "bt-remote-sheet-who" },
+          (0, import_react34.createElement)("span", { className: "bt-remote-sheet-name" }, bot.name),
+          (0, import_react34.createElement)("span", { className: "bt-remote-sheet-sub" }, who)
+        ),
+        (0, import_react34.createElement)("button", { type: "button", className: "bt-icon-btn", "aria-label": t("Close settings"), onClick: close }, (0, import_react34.createElement)(CloseIcon))
+      ),
+      (0, import_react34.createElement)(
+        "div",
+        { className: "bt-remote-sheet-body" },
+        bot.remote.handle ? (0, import_react34.createElement)("div", { className: "bt-muted", style: { marginBottom: 8, fontSize: 12 } }, bot.remote.handle) : null,
+        (0, import_react34.createElement)(FlyBotDetails, { bot, roster, actions })
+      )
+    )
+  );
+}
+
+// src/client/overlays.js
+var import_react35 = require("react");
 var import_react_dom9 = require("react-dom");
 var DIALOG_EXIT_MS = 160;
 var MENU_EXIT_MS3 = 120;
@@ -13340,15 +13425,15 @@ function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity
   const ui2 = useUi((value) => value);
   useRegistry((value) => value);
   const current = useSessions((list) => Object.values(list.byId).find((session) => (session?.retainedBy?.mainView ?? 0) > 0)?.id ?? null);
-  const previous = (0, import_react34.useRef)(current);
-  (0, import_react34.useEffect)(() => {
+  const previous = (0, import_react35.useRef)(current);
+  (0, import_react35.useEffect)(() => {
     if (previous.current === current) return;
     previous.current = current;
     if (current) actions.followPanel?.(current);
   }, [current]);
   const open = ui2.details ? { id: ui2.details, view: ui2.view ?? "details", renaming: ui2.renaming, tab: ui2.tab } : null;
-  const [kept, setKept] = (0, import_react34.useState)(open);
-  (0, import_react34.useEffect)(() => {
+  const [kept, setKept] = (0, import_react35.useState)(open);
+  (0, import_react35.useEffect)(() => {
     if (open) {
       setKept(open);
       return void 0;
@@ -13358,19 +13443,22 @@ function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity
   }, [ui2.details, ui2.view, ui2.renaming, ui2.tab]);
   const pane = open ?? kept;
   const [settings, settingsLeaving] = useLinger(ui2.settings, DIALOG_EXIT_MS);
+  const remoteBotId = ui2.remoteBotSettings && roster.byId[ui2.remoteBotSettings]?.remote ? ui2.remoteBotSettings : null;
+  const [remoteBotSettings, remoteLeaving] = useLinger(remoteBotId, DIALOG_EXIT_MS);
   const [memory, memoryLeaving] = useLinger(ui2.memory && roster.byId[ui2.memory] ? ui2.memory : null, DIALOG_EXIT_MS);
   const [menu, menuLeaving] = useLinger(ui2.menu, MENU_EXIT_MS3);
-  return (0, import_react34.createElement)(
-    import_react34.Fragment,
+  return (0, import_react35.createElement)(
+    import_react35.Fragment,
     null,
-    pane ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(BotPanel, { pane, leaving: open === null, roster, actions, useSessions, useSessionStatus, useActivity, useWork, useBrowserTabs, useBrowserPages }), document.body) : null,
-    ui2.newChat ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(NewChat, { key: ui2.newChat, mode: ui2.newChat, roster, actions }), document.body) : null,
-    ui2.palette ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(CommandPalette, { key: ui2.palette.token, start: ui2.palette.query, token: ui2.palette.token, roster, actions, useSessions }), document.body) : null,
-    ui2.exchange ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(ExchangeDialog, { pair: ui2.exchange, roster, actions }), document.body) : null,
-    ui2.voice ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(VoiceMode, { key: ui2.voice, sessionId: ui2.voice, roster, actions, useSessions, useSessionStatus }), document.body) : null,
-    menu ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(ContextMenu, { key: `${menu.kind ?? ""}:${menu.id}:${menu.x}:${menu.y}`, menu, roster, actions, leaving: menuLeaving }), document.body) : null,
-    settings ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, leaving: settingsLeaving }), document.body) : null,
-    memory && roster.byId[memory] ? (0, import_react_dom9.createPortal)((0, import_react34.createElement)(MemoryDialog, { key: memory, bot: roster.byId[memory], actions, leaving: memoryLeaving }), document.body) : null
+    pane ? (0, import_react_dom9.createPortal)((0, import_react35.createElement)(BotPanel, { pane, leaving: open === null, roster, actions, useSessions, useSessionStatus, useActivity, useWork, useBrowserTabs, useBrowserPages }), document.body) : null,
+    ui2.newChat ? (0, import_react_dom9.createPortal)((0, import_react35.createElement)(NewChat, { key: ui2.newChat, mode: ui2.newChat, roster, actions }), document.body) : null,
+    ui2.palette ? (0, import_react_dom9.createPortal)((0, import_react35.createElement)(CommandPalette, { key: ui2.palette.token, start: ui2.palette.query, token: ui2.palette.token, roster, actions, useSessions }), document.body) : null,
+    ui2.exchange ? (0, import_react_dom9.createPortal)((0, import_react35.createElement)(ExchangeDialog, { pair: ui2.exchange, roster, actions }), document.body) : null,
+    ui2.voice ? (0, import_react_dom9.createPortal)((0, import_react35.createElement)(VoiceMode, { key: ui2.voice, sessionId: ui2.voice, roster, actions, useSessions, useSessionStatus }), document.body) : null,
+    menu ? (0, import_react_dom9.createPortal)((0, import_react35.createElement)(ContextMenu, { key: `${menu.kind ?? ""}:${menu.id}:${menu.x}:${menu.y}`, menu, roster, actions, leaving: menuLeaving }), document.body) : null,
+    settings ? (0, import_react_dom9.createPortal)((0, import_react35.createElement)(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, leaving: settingsLeaving }), document.body) : null,
+    remoteBotSettings ? (0, import_react_dom9.createPortal)((0, import_react35.createElement)(RemoteBotSettingsSheet, { key: remoteBotSettings, bot: roster.byId[remoteBotSettings], roster, actions, leaving: remoteLeaving }), document.body) : null,
+    memory && roster.byId[memory] ? (0, import_react_dom9.createPortal)((0, import_react35.createElement)(MemoryDialog, { key: memory, bot: roster.byId[memory], actions, leaving: memoryLeaving }), document.body) : null
   );
 }
 
@@ -14218,7 +14306,7 @@ function writeMode(mode, storage = globalThis.localStorage) {
 }
 
 // src/client/user-message.js
-var import_react35 = require("react");
+var import_react36 = require("react");
 var ui = __toESM(require("@deepseek-ai/dsh-client-ui-primitives"), 1);
 var canDrawUserMessages = () => typeof ui.projectUserText === "function";
 function contentParts(content) {
@@ -14267,38 +14355,38 @@ function userTextParts(text, bots, referenceLabels = []) {
   return parts;
 }
 function UserText({ text, bots, referenceLabels, skillNames, references, actions }) {
-  return userTextParts(text, bots, referenceLabels).map((part, index) => part.bot ? (0, import_react35.createElement)(
+  return userTextParts(text, bots, referenceLabels).map((part, index) => part.bot ? (0, import_react36.createElement)(
     "button",
     { key: index, type: "button", className: "bt-umention", title: `@${part.bot.name}`, onClick: () => actions.openSession(part.bot.id) },
-    (0, import_react35.createElement)(BotMark, { bot: part.bot, size: 16 }),
+    (0, import_react36.createElement)(BotMark, { bot: part.bot, size: 16 }),
     part.bot.mentionLabel ?? part.label
-  ) : (0, import_react35.createElement)(import_react35.Fragment, { key: index }, ui.projectUserText(part.text, referenceLabels, skillNames, "skill", references)));
+  ) : (0, import_react36.createElement)(import_react36.Fragment, { key: index }, ui.projectUserText(part.text, referenceLabels, skillNames, "skill", references)));
 }
 function Attachments({ attachments, renderMessageImages }) {
   const compact2 = attachments.length > 1;
-  return (0, import_react35.createElement)("div", { className: "bt-uattach" }, attachments.map((block, index) => {
+  return (0, import_react36.createElement)("div", { className: "bt-uattach" }, attachments.map((block, index) => {
     if (block.type === "image") {
-      return renderMessageImages ? (0, import_react35.createElement)(import_react35.Fragment, { key: index }, renderMessageImages({ images: [{ attachment: block.attachment }], align: "end", compact: compact2 })) : null;
+      return renderMessageImages ? (0, import_react36.createElement)(import_react36.Fragment, { key: index }, renderMessageImages({ images: [{ attachment: block.attachment }], align: "end", compact: compact2 })) : null;
     }
     const file = block.attachment;
     const meta = [ui.fileExtension?.(file.name)?.toUpperCase().slice(0, 8), ui.fileSizeText?.(file.bytes)].filter(Boolean).join(" · ");
-    return (0, import_react35.createElement)(
+    return (0, import_react36.createElement)(
       "span",
       { key: index, className: "bt-ufile", title: file.name },
-      ui.FileTypeIcon ? (0, import_react35.createElement)(ui.FileTypeIcon, { path: file.name, className: "bt-ufile-icon" }) : null,
-      (0, import_react35.createElement)("span", { className: "bt-ufile-text" }, (0, import_react35.createElement)("span", { className: "bt-ufile-name" }, file.name), meta ? (0, import_react35.createElement)("span", { className: "bt-ufile-meta" }, meta) : null)
+      ui.FileTypeIcon ? (0, import_react36.createElement)(ui.FileTypeIcon, { path: file.name, className: "bt-ufile-icon" }) : null,
+      (0, import_react36.createElement)("span", { className: "bt-ufile-text" }, (0, import_react36.createElement)("span", { className: "bt-ufile-name" }, file.name), meta ? (0, import_react36.createElement)("span", { className: "bt-ufile-meta" }, meta) : null)
     );
   }));
 }
 function CopyButton({ text }) {
-  const [copied, setCopied] = (0, import_react35.useState)(false);
+  const [copied, setCopied] = (0, import_react36.useState)(false);
   const copy2 = () => {
     void navigator.clipboard?.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1e3);
     });
   };
-  return (0, import_react35.createElement)("button", { type: "button", className: "bt-tool", "aria-label": copied ? t("Copied") : t("Copy"), title: copied ? t("Copied") : t("Copy"), onClick: copy2 }, copied ? (0, import_react35.createElement)(CheckIcon) : (0, import_react35.createElement)(CopyIcon));
+  return (0, import_react36.createElement)("button", { type: "button", className: "bt-tool", "aria-label": copied ? t("Copied") : t("Copy"), title: copied ? t("Copied") : t("Copy"), onClick: copy2 }, copied ? (0, import_react36.createElement)(CheckIcon) : (0, import_react36.createElement)(CopyIcon));
 }
 var clock3 = (time) => typeof time === "number" ? new Date(time).toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" }) : void 0;
 function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageImages, openFile, openSkill }) {
@@ -14313,7 +14401,7 @@ function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageIma
   const multiHuman = (room2?.participants ?? []).filter((p) => p.kind === "human" && p.leftSeq === void 0).length > 1;
   const incoming = author && !author.mine;
   const held = Boolean(room2 && room2.origin === "face-to-face" && !incoming && (room2.pendingCount ?? 0) > 0);
-  return (0, import_react35.createElement)(
+  return (0, import_react36.createElement)(
     "div",
     {
       className: incoming ? "bt-umsg bt-umsg-other" : "bt-umsg",
@@ -14323,20 +14411,20 @@ function UserMessageCell({ node, sessionId, useRoster, actions, renderMessageIma
       "data-author-kind": author?.authorKind,
       "data-author-name": author?.name
     },
-    (0, import_react35.createElement)(
+    (0, import_react36.createElement)(
       "div",
       { className: "bt-ustack" },
-      author && (incoming || multiHuman) ? (0, import_react35.createElement)("span", { className: "bt-uauthor" }, author.name, author.ownerName ? (0, import_react35.createElement)("span", { className: "bt-chip" }, t("Friend's Bot")) : null) : null,
-      attachments.length > 0 ? (0, import_react35.createElement)(Attachments, { attachments, renderMessageImages }) : null,
-      text !== "" || rest.length > 0 ? (0, import_react35.createElement)(
+      author && (incoming || multiHuman) ? (0, import_react36.createElement)("span", { className: "bt-uauthor" }, author.name, author.ownerName ? (0, import_react36.createElement)("span", { className: "bt-chip" }, t("Friend's Bot")) : null) : null,
+      attachments.length > 0 ? (0, import_react36.createElement)(Attachments, { attachments, renderMessageImages }) : null,
+      text !== "" || rest.length > 0 ? (0, import_react36.createElement)(
         "div",
         { className: "bt-ubody", title: clock3(data.time) },
-        (0, import_react35.createElement)(UserText, { text, bots: mentionableBots(roster, sessionId), referenceLabels, skillNames: data.skillNames ?? [], references, actions }),
-        rest.map((block, index) => ui.JsonBlock ? (0, import_react35.createElement)(ui.JsonBlock, { key: index, label: t("Content"), payload: block }) : null)
+        (0, import_react36.createElement)(UserText, { text, bots: mentionableBots(roster, sessionId), referenceLabels, skillNames: data.skillNames ?? [], references, actions }),
+        rest.map((block, index) => ui.JsonBlock ? (0, import_react36.createElement)(ui.JsonBlock, { key: index, label: t("Content"), payload: block }) : null)
       ) : null,
-      referenceLabels.length > 0 ? (0, import_react35.createElement)("div", { className: "bt-urefs" }, t("Referenced {labels}", { labels: referenceLabels.join(t(", ")) })) : null
+      referenceLabels.length > 0 ? (0, import_react36.createElement)("div", { className: "bt-urefs" }, t("Referenced {labels}", { labels: referenceLabels.join(t(", ")) })) : null
     ),
-    text === "" ? null : (0, import_react35.createElement)("div", { className: "bt-utools" }, (0, import_react35.createElement)(CopyButton, { text }))
+    text === "" ? null : (0, import_react36.createElement)("div", { className: "bt-utools" }, (0, import_react36.createElement)(CopyButton, { text }))
   );
 }
 var USER_MESSAGE_CSS = `
@@ -14431,7 +14519,7 @@ function apply(ctx) {
   } catch {
     seenAt = {};
   }
-  const ui2 = createSource({ details: null, view: "details", renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: savedUnread, reactions: savedReactions, visits: {} });
+  const ui2 = createSource({ details: null, view: "details", renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, remoteBotSettings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: savedUnread, reactions: savedReactions, visits: {} });
   const surface = createSource({ mode: readMode(), plain: false });
   let agentSessionCache = /* @__PURE__ */ new Set();
   try {
@@ -14865,10 +14953,15 @@ function apply(ctx) {
     },
     // `id` opens one Bot (page 'bots') or one group chat (page 'groups').
     openSettings: (page = "general", id = null) => {
-      ui2.set((state) => ({ ...state, settings: { page, id }, menu: null, palette: null, newChat: null }));
+      const remote = id && roster.getSnapshot().byId[id]?.remote;
+      if (page === "bots" && remote) {
+        ui2.set((state) => ({ ...state, remoteBotSettings: id, settings: null, menu: null, palette: null, newChat: null }));
+        return;
+      }
+      ui2.set((state) => ({ ...state, settings: { page, id }, remoteBotSettings: null, menu: null, palette: null, newChat: null }));
     },
     closeSettings: () => {
-      ui2.set((state) => state.settings ? { ...state, settings: null } : state);
+      ui2.set((state) => state.settings || state.remoteBotSettings ? { ...state, settings: null, remoteBotSettings: null } : state);
     },
     openMemory: (botId) => {
       ui2.set((state) => ({ ...state, memory: botId, menu: null, palette: null }));
@@ -14885,7 +14978,7 @@ function apply(ctx) {
       if (mode !== "bot" && mode !== "agent") return;
       if (surface.getSnapshot().mode === mode) return;
       if (mode === "agent") {
-        ui2.set((state) => ({ ...state, details: null, view: "details", settings: null, palette: null, newChat: null, menu: null, voice: null, exchange: null, memory: null, toast: null }));
+        ui2.set((state) => ({ ...state, details: null, view: "details", settings: null, remoteBotSettings: null, palette: null, newChat: null, menu: null, voice: null, exchange: null, memory: null, toast: null }));
       }
       writeMode(mode);
       surface.set((state) => ({ ...state, mode }));
@@ -15179,7 +15272,7 @@ function apply(ctx) {
     installCompiledStyles(SHELL_CSS, "shell"),
     installCompiledStyles(SIDEBAR_CSS, "sidebar"),
     installCompiledStyles(SECRET_CSS, "secrets"),
-    installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS, "models"),
+    installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS + REMOTE_BOT_SETTINGS_CSS, "models"),
     installCompiledStyles(USAGE_CSS, "usage"),
     installCompiledStyles(SCHEDULE_CSS, "schedules"),
     installCompiledStyles(FEEDBACK_CSS, "feedback"),

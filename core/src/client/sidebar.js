@@ -75,7 +75,9 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     h('span', { className: 'bt-tile-name' }, shown),
     bot.role ? h('span', { className: 'bt-chip' }, bot.role) : null))
   }
-  return h('button', {
+  const unreadMark = wide && waiting && !active ? h('span', { className: 'bt-unread bt-unread-wait', 'aria-hidden': true })
+    : wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null
+  const row = h('button', {
     type: 'button', className: 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
     'data-bot-id': id, title: wide ? undefined : bot.name, onClick: () => actions.openSession(id), onContextMenu,
   },
@@ -84,8 +86,13 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   wide ? h('span', { className: 'bt-row-body' },
     h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, shown), bot.remote ? h(RemoteMark, { remote: bot.remote }) : null, pinned ? h(PinMark) : null),
     awayLine ? h('span', { className: 'bt-row-preview' }, awayLine) : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
-  wide && waiting && !active ? h('span', { className: 'bt-unread bt-unread-wait', 'aria-hidden': true })
-    : wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null)
+  unreadMark)
+  const settings = wide && bot.remote ? h('button', {
+    type: 'button', className: 'bt-row-settings', 'aria-label': t('Bot settings'), title: t('Bot settings'),
+    onClick: (event) => { event.stopPropagation(); actions.openSettings('bots', id) },
+  }, h(GearIcon)) : null
+  if (settings) return h('div', { className: 'bt-row-wrap', 'data-bot-id': id }, row, settings)
+  return row
 }
 
 // A friend's Bot: a small globe after the name, its handle on hover.
@@ -702,4 +709,10 @@ export const SIDEBAR_CSS = `
 .bt-agent-sub[data-open] .bt-agent-sub-row{animation:bt-agent-row-in .24s ease both;animation-delay:calc(var(--i, 0)*30ms)}
 @keyframes bt-agent-row-in{from{opacity:0;filter:blur(4px)}to{opacity:1;filter:blur(0)}}
 @media (prefers-reduced-motion:reduce){.bt-agent-sub{transition:none}.bt-agent-sub .bt-agent-sub-row{animation:none}}
+
+.bt-row-wrap{display:flex;align-items:center;width:100%;min-width:0}
+.bt-row-wrap>.bt-row{flex:1 1 auto;min-width:0}
+.bt-row-settings{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-2px 8px -2px 2px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--bt-ink-3);cursor:pointer;opacity:.85;transition:background-color .12s ease,color .12s ease,opacity .12s ease}
+.bt-row-settings:hover,.bt-row-wrap:focus-within .bt-row-settings{opacity:1;color:var(--bt-ink-2);background:var(--bt-hover)}
+.bt-row-settings svg{width:15px;height:15px}
 `

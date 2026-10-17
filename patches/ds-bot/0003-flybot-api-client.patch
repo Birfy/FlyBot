@@ -75,20 +75,11 @@ diff --git a/src/client/bot-settings.js b/src/client/bot-settings.js
  import { createElement as h, Fragment, useCallback, useEffect, useRef, useState } from 'react'
  import { paintCss } from './inks.js'
  import { CHARACTERS, PICKER_SHAPES, PICKER_COLUMNS, CHARACTER_COLORS, SHAPES, hasShape, shapeOf, bodyOf, maskBox, holes, nextMarkSerial } from './characters.js'
-@@ -199,6 +199,16 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
+@@ -199,6 +199,7 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
      const timer = setTimeout(() => setConfirming(false), 4000)
      return () => clearTimeout(timer)
    }, [confirming])
-+  if (bot.remote) {
-+    const who = bot.remote.homeName || bot.remote.owner || bot.remote.home || t("Friend's Bot")
-+    return h('div', { className: 'bt-bs', 'data-flybot': 'remote-bot-settings' },
-+      h('div', { className: 'bt-bs-hero' },
-+        h(BotMark, { bot, size: 64, live: true }),
-+        h('div', { className: 'bt-bs-who' },
-+          h('span', { className: 'bt-bs-name' }, bot.name),
-+          h('span', { className: 'bt-bs-sub' }, who))),
-+      h(FlyBotDetails, { bot, roster, actions }))
-+  }
++  if (bot.remote) return null
    const isMainBot = isMainOf(roster, bot.id)
    const onlyMain = isMainBot && (roster.mainBotIds ?? []).length === 1
    const isTile = roster.mainBotId === bot.id
@@ -453,7 +444,7 @@ diff --git a/src/client/index.js b/src/client/index.js
  import { call } from './api.js'
  import { isHex, inkText, paintCss } from './inks.js'
  import { DEFAULT_MASK, SHAPES, markupCache, maskOf } from './characters.js'
-@@ -5,15 +5,16 @@ import { countCards, createSource, EMPTY_ROSTER, indexRoster, isAgentSession } f
+@@ -5,21 +5,23 @@ import { countCards, createSource, EMPTY_ROSTER, indexRoster, isAgentSession } f
  import { themeCss, shellTokens, registry, registerShape, registerTheme, allThemes } from './themes.js'
  import { MENTION_ORIGIN, currentPart } from './text.js'
  import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } from './styles.js'
@@ -472,6 +463,13 @@ diff --git a/src/client/index.js b/src/client/index.js
  import { Overlays } from './overlays.js'
  import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
  import { BROWSER_CSS } from './browser-pane.js'
+ import { SECRET_CSS, SecretDock } from './secret-card.js'
+ import { MODEL_CSS, ModelChoiceDock, DeepSeekSignIn } from './model-menu.js'
+ import { BOT_SETTINGS_CSS } from './bot-settings.js'
++import { REMOTE_BOT_SETTINGS_CSS } from './remote-bot-settings.js'
+ import { GROUP_SETTINGS_CSS } from './group-settings.js'
+ import { FOLDER_CSS } from './folder-menu.js'
+ import { USAGE_CSS } from './usage-page.js'
 @@ -37,7 +37,16 @@ import { noticeApprovals } from './approval-notices.js'
  export const inject = ['sessions', 'uiWorkspace', 'uiConversation', 'slots', 'theme', 'layout']
  
@@ -489,6 +487,42 @@ diff --git a/src/client/index.js b/src/client/index.js
    const roster = createSource(EMPTY_ROSTER)
    migrateStorage()
    const UNREAD_KEY = STORAGE.unread
+@@ -52,7 +52,7 @@ export function apply(ctx) {
+   try { seenAt = JSON.parse(localStorage.getItem(SEEN_KEY) ?? '{}') ?? {} } catch { seenAt = {} }
+   // `details` is the panel's subject (a Session id); `view` picks details or the
+   // subject Bot's browser inside it.
+-  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: savedUnread, reactions: savedReactions, visits: {} })
++  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, remoteBotSettings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: savedUnread, reactions: savedReactions, visits: {} })
+   // Bot mode paints the whole team surface; Agent mode withdraws every slot and
+   // style so the shell's own interface returns. `plain` stays false until a Bot-mode
+   // view hosts a plain session, which drops only the conversation replacements.
+@@ -444,8 +444,15 @@ export function apply(ctx) {
+     // Opening the conversation would move focus to its composer and blur the name field.
+     renameBot: (id) => { ui.set(state => ({ ...state, details: id, view: 'details', renaming: true, tab: null })) },
+     // `id` opens one Bot (page 'bots') or one group chat (page 'groups').
+-    openSettings: (page = 'general', id = null) => { ui.set(state => ({ ...state, settings: { page, id }, menu: null, palette: null, newChat: null })) },
+-    closeSettings: () => { ui.set(state => (state.settings ? { ...state, settings: null } : state)) },
++    openSettings: (page = 'general', id = null) => {
++      const remote = id && roster.getSnapshot().byId[id]?.remote
++      if (page === 'bots' && remote) {
++        ui.set(state => ({ ...state, remoteBotSettings: id, settings: null, menu: null, palette: null, newChat: null }))
++        return
++      }
++      ui.set(state => ({ ...state, settings: { page, id }, remoteBotSettings: null, menu: null, palette: null, newChat: null }))
++    },
++    closeSettings: () => { ui.set(state => (state.settings || state.remoteBotSettings ? { ...state, settings: null, remoteBotSettings: null } : state)) },
+     openMemory: (botId) => { ui.set(state => ({ ...state, memory: botId, menu: null, palette: null })) },
+     closeMemory: () => { ui.set(state => (state.memory ? { ...state, memory: null } : state)) },
+     openConnectors: () => { ui.set(state => ({ ...state, settings: { page: 'connectors', id: null }, menu: null, palette: null, newChat: null })) },
+@@ -455,7 +455,7 @@ export function apply(ctx) {
+       if (mode !== 'bot' && mode !== 'agent') return
+       if (surface.getSnapshot().mode === mode) return
+       if (mode === 'agent') {
+-        ui.set(state => ({ ...state, details: null, view: 'details', settings: null, palette: null, newChat: null, menu: null, voice: null, exchange: null, memory: null, toast: null }))
++        ui.set(state => ({ ...state, details: null, view: 'details', settings: null, remoteBotSettings: null, palette: null, newChat: null, menu: null, voice: null, exchange: null, memory: null, toast: null }))
+       }
+       writeMode(mode)
+       surface.set(state => ({ ...state, mode }))
 @@ -566,6 +566,8 @@ export function apply(ctx) {
        noteClientError(where, error)
        ui.set(state => ({ ...state, toast: { text: error?.message ?? String(error), token: Date.now() } }))
@@ -506,7 +540,13 @@ diff --git a/src/client/index.js b/src/client/index.js
    actions.signInEntry = () => ctx.slots.entries?.('settings.models.sign-in')?.[0] ?? null
    actions.canSignIn = () => Boolean(actions.signInEntry())
    actions.signIn = () => ui.set(state => ({ ...state, signIn: (state.signIn ?? 0) + 1 }))
-@@ -757,6 +757,7 @@ export function apply(ctx) {
+@@ -752,11 +752,12 @@ export function apply(ctx) {
+     installCompiledStyles(SHELL_CSS, 'shell'),
+     installCompiledStyles(SIDEBAR_CSS, 'sidebar'),
+     installCompiledStyles(SECRET_CSS, 'secrets'),
+-    installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS, 'models'),
++    installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS + REMOTE_BOT_SETTINGS_CSS, 'models'),
+     installCompiledStyles(USAGE_CSS, 'usage'),
      installCompiledStyles(SCHEDULE_CSS, 'schedules'),
      installCompiledStyles(FEEDBACK_CSS, 'feedback'),
      installCompiledStyles(ABOUT_CSS, 'about'),
@@ -677,6 +717,33 @@ diff --git a/src/client/new-chat.js b/src/client/new-chat.js
          h('div', { className: 'bt-nc-card' },
            h('span', { className: 'bt-nc-plus', 'aria-hidden': true }, h(PlusIcon)),
            h('textarea', {
+diff --git a/src/client/overlays.js b/src/client/overlays.js
+--- a/src/client/overlays.js
++++ b/src/client/overlays.js
+@@ -8,6 +8,7 @@ import { SettingsDialog } from './settings.js'
+ import { ContextMenu } from './context-menu.js'
+ import { PANEL_LINGER_MS, BotPanel } from './browser-pane.js'
+ import { MemoryDialog } from './memory-panel.js'
++import { RemoteBotSettingsSheet } from './remote-bot-settings.js'
+ import { useLinger } from './motion.js'
+ 
+ // How long a closing dialog or menu stays for its exit (see their [data-leaving] CSS).
+@@ -36,6 +36,8 @@ export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useA
+   }, [ui.details, ui.view, ui.renaming, ui.tab])
+   const pane = open ?? kept
+   const [settings, settingsLeaving] = useLinger(ui.settings, DIALOG_EXIT_MS)
++  const remoteBotId = ui.remoteBotSettings && roster.byId[ui.remoteBotSettings]?.remote ? ui.remoteBotSettings : null
++  const [remoteBotSettings, remoteLeaving] = useLinger(remoteBotId, DIALOG_EXIT_MS)
+   const [memory, memoryLeaving] = useLinger(ui.memory && roster.byId[ui.memory] ? ui.memory : null, DIALOG_EXIT_MS)
+   const [menu, menuLeaving] = useLinger(ui.menu, MENU_EXIT_MS)
+   return h(Fragment, null,
+@@ -46,5 +46,6 @@ export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useA
+     ui.voice ? createPortal(h(VoiceMode, { key: ui.voice, sessionId: ui.voice, roster, actions, useSessions, useSessionStatus }), document.body) : null,
+     menu ? createPortal(h(ContextMenu, { key: `${menu.kind ?? ''}:${menu.id}:${menu.x}:${menu.y}`, menu, roster, actions, leaving: menuLeaving }), document.body) : null,
+     settings ? createPortal(h(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, leaving: settingsLeaving }), document.body) : null,
++    remoteBotSettings ? createPortal(h(RemoteBotSettingsSheet, { key: remoteBotSettings, bot: roster.byId[remoteBotSettings], roster, actions, leaving: remoteLeaving }), document.body) : null,
+     memory && roster.byId[memory] ? createPortal(h(MemoryDialog, { key: memory, bot: roster.byId[memory], actions, leaving: memoryLeaving }), document.body) : null)
+ }
 diff --git a/src/client/palette.js b/src/client/palette.js
 --- a/src/client/palette.js
 +++ b/src/client/palette.js
@@ -723,7 +790,7 @@ diff --git a/src/client/sidebar.js b/src/client/sidebar.js
  import { showsDshRow } from './dsh-offer.js'
  
  // -------------------------------------------------------------------------
-@@ -37,38 +37,40 @@ const workKeys = text => (text === '' ? [] : text.split(',').map((key) => {
+@@ -37,56 +37,88 @@ const workKeys = text => (text === '' ? [] : text.split(',').map((key) => {
  }))
  const workLine = (lead, tool, more) => h(Shimmer, null, `${lead} · ${workPhrase(tool)}…${more > 0 ? ` +${more}` : ''}`)
  
@@ -770,8 +837,13 @@ diff --git a/src/client/sidebar.js b/src/client/sidebar.js
 +    h('span', { className: 'bt-tile-name' }, shown),
      bot.role ? h('span', { className: 'bt-chip' }, bot.role) : null))
    }
-   return h('button', {
-@@ -78,15 +78,38 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
+-  return h('button', {
++  const unreadMark = wide && waiting && !active ? h('span', { className: 'bt-unread bt-unread-wait', 'aria-hidden': true })
++    : wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null
++  const row = h('button', {
+     type: 'button', className: 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
+     'data-bot-id': id, title: wide ? undefined : bot.name, onClick: () => actions.openSession(id), onContextMenu,
+   },
    h(BotAvatar, { bot, size: 36, state, main }),
    pinned && !wide ? h(PinMark) : null,
    wide ? h('span', { className: 'bt-row-body' },
@@ -779,8 +851,13 @@ diff --git a/src/client/sidebar.js b/src/client/sidebar.js
 +    h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, shown), bot.remote ? h(RemoteMark, { remote: bot.remote }) : null, pinned ? h(PinMark) : null),
      awayLine ? h('span', { className: 'bt-row-preview' }, awayLine) : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
 -  wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null)
-+  wide && waiting && !active ? h('span', { className: 'bt-unread bt-unread-wait', 'aria-hidden': true })
-+    : wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null)
++  unreadMark)
++  const settings = wide && bot.remote ? h('button', {
++    type: 'button', className: 'bt-row-settings', 'aria-label': t('Bot settings'), title: t('Bot settings'),
++    onClick: (event) => { event.stopPropagation(); actions.openSettings('bots', id) },
++  }, h(GearIcon)) : null
++  if (settings) return h('div', { className: 'bt-row-wrap', 'data-bot-id': id }, row, settings)
++  return row
 +}
 +
 +// A friend's Bot: a small globe after the name, its handle on hover.
@@ -1025,6 +1102,17 @@ diff --git a/src/client/sidebar.js b/src/client/sidebar.js
  }
  
  // With the whale holding the settings seat, the footer row is just the account menu
+@@ -658,4 +658,10 @@ export const SIDEBAR_CSS = `
+ .bt-agent-sub[data-open] .bt-agent-sub-row{animation:bt-agent-row-in .24s ease both;animation-delay:calc(var(--i, 0)*30ms)}
+ @keyframes bt-agent-row-in{from{opacity:0;filter:blur(4px)}to{opacity:1;filter:blur(0)}}
+ @media (prefers-reduced-motion:reduce){.bt-agent-sub{transition:none}.bt-agent-sub .bt-agent-sub-row{animation:none}}
++
++.bt-row-wrap{display:flex;align-items:center;width:100%;min-width:0}
++.bt-row-wrap>.bt-row{flex:1 1 auto;min-width:0}
++.bt-row-settings{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-2px 8px -2px 2px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--bt-ink-3);cursor:pointer;opacity:.85;transition:background-color .12s ease,color .12s ease,opacity .12s ease}
++.bt-row-settings:hover,.bt-row-wrap:focus-within .bt-row-settings{opacity:1;color:var(--bt-ink-2);background:var(--bt-hover)}
++.bt-row-settings svg{width:15px;height:15px}
+ `
 diff --git a/src/client/styles.js b/src/client/styles.js
 --- a/src/client/styles.js
 +++ b/src/client/styles.js
@@ -1103,6 +1191,15 @@ diff --git a/src/client/styles.js b/src/client/styles.js
  .bt-to{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-height:48px;padding:6px 12px;border-bottom:1px solid var(--bt-line);font-size:14px;box-sizing:border-box}
  .bt-to-label{color:var(--bt-ink-2)}
  .bt-to input{flex:1;min-width:120px;border:0;outline:none;background:none;color:var(--bt-ink);font-size:14px;height:26px}
+@@ -345,6 +345,8 @@ button.bt-q-opt:active{background:var(--bt-active)}
+ .bt-drawer-id{display:flex;flex-direction:column;align-items:center;padding:14px 16px 0}
+ .bt-drawer-id>.bt-mark,.bt-drawer-id>.bt-cluster{margin-bottom:16px}
+ .bt-drawer-name{font-size:17px;line-height:24px;font-weight:500;border:0;background:none;color:inherit;cursor:text;padding:0 6px;border-radius:6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
++.bt-drawer-name-face{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;text-overflow:ellipsis;line-clamp:3;cursor:default}
++.bt-drawer-name-face:hover{background:none}
+ .bt-drawer-name:hover{background:var(--bt-hover)}
+ .bt-drawer-name-input{font-size:17px;line-height:24px;text-align:center;border:.5px solid var(--bt-line-2);border-radius:6px;padding:0 6px;background:var(--bt-main);color:var(--bt-ink);outline:none;font-weight:500}
+ .bt-drawer-role{font-size:12px;line-height:16px;color:var(--bt-ink-3);margin-top:6px;text-align:center}
 @@ -782,6 +782,9 @@ export const CONVERSATION_CSS = `
  .bt-think{font-size:13px;line-height:18px;color:var(--bt-ink-2);margin:2px 0 4px;max-width:min(560px,78%)}
  .bt-think summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px}
@@ -1113,6 +1210,14 @@ diff --git a/src/client/styles.js b/src/client/styles.js
  .bt-think-text{white-space:pre-wrap;margin-top:6px;padding-left:10px;border-left:2px solid var(--bt-line-2)}
  .bt-event{display:flex;justify-content:center;align-items:center;gap:2px;min-height:24px;margin:2px 0;font-size:12px;line-height:16px;color:var(--bt-ink-2);flex-wrap:wrap}
  .bt-event>span{padding:0 2px}
+@@ -905,6 +905,7 @@ header[class*="_header"] .bt-head{flex:1 1 auto;width:100%}
+ .bt-mic:active,.bt-voice:active{scale:.9}
+ [data-composer-card]:has(button[class*="_primary"]:disabled) .bt-voice{display:inline-grid}
+ body[data-bt-room] .bt-voice{display:none!important}
++body[data-bt-room] [data-composer-card] [class*="_activity"]{display:none!important}
+ body[data-bt-room] [data-composer-card]:has(button[class*="_primary"]:disabled) .bt-mic:not([aria-pressed=true]){background:var(--bt-accent);color:var(--bt-accent-ink,#fff)}
+ .bt-mic-note{position:absolute;right:12px;bottom:calc(100% + 8px);padding:5px 10px;border-radius:8px;background:var(--bt-user);color:var(--bt-user-ink);font-size:12px;line-height:16px;white-space:nowrap;pointer-events:none;animation:bt-rise .16s ease-out}
+ [data-chain-overlay-fallback="conversation.composer"]:has(~ .bt-q){display:block!important;order:2}
 diff --git a/src/client/user-message.js b/src/client/user-message.js
 --- a/src/client/user-message.js
 +++ b/src/client/user-message.js
@@ -1211,7 +1316,7 @@ diff --git a/src/client/user-message.js b/src/client/user-message.js
 diff --git a/test/looks.test.js b/test/looks.test.js
 --- a/test/looks.test.js
 +++ b/test/looks.test.js
-@@ -40,7 +40,13 @@ test('Bot settings is the only settings entry; nothing is called Team settings',
+@@ -40,7 +40,15 @@ test('Bot settings is the only settings entry; nothing is called Team settings',
    assert.match(text('palette.js'), /title: t\('Bot settings'\), run: \(\) => actions\.openSettings\('general'\)/)
    // One Bot's own entries open that Bot, so they read Edit Bot instead.
    assert.match(text('context-menu.js'), /\[t\('Edit Bot'\), GearIcon, \(\) => actions\.openSettings\('bots', bot\.id\)\]/)
@@ -1220,8 +1325,10 @@ diff --git a/test/looks.test.js b/test/looks.test.js
 +  assert.match(text('context-menu.js'), /\[t\('Bot settings'\), GearIcon, \(\) => actions\.openSettings\('bots', bot\.id\)\]/)
 +  assert.match(text('details-drawer.js'), /bot\.remote \? t\('Bot settings'\) : t\('Edit Bot'\)/)
 +  assert.match(text('details-drawer.js'), /bot && bot\.remote && tab === 'details'[\s\S]*FlyBotDetails/)
-+  assert.match(text('bot-settings.js'), /if \(bot\.remote\)/)
-+  assert.match(text('bot-settings.js'), /Friend's Bot/)
++  assert.match(text('bot-settings.js'), /if \(bot\.remote\) return null/)
++  assert.match(text('remote-bot-settings.js'), /remote-bot-sheet/)
++  assert.match(text('sidebar.js'), /bt-row-settings/)
++  assert.match(text('header.js'), /setAttribute\('aria-label', composerLabel\)/)
 +  assert.match(text('settings.js'), /filter\(bot => !bot\.remote\)/)
    // A group chat's entries open its own settings the same way.
    assert.match(text('context-menu.js'), /\[t\('Group settings'\), GearIcon, \(\) => actions\.openSettings\('groups', room\.id\)\]/)

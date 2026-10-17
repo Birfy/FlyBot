@@ -119,8 +119,10 @@ window.__ModuleLoader__.load({
 .fs-stack [data-flybot=face-card-member]{display:inline-flex;border-radius:50%;box-shadow:0 0 0 2px var(--bt-card,#fff)}
 .fs-stack-more{flex:none;font-size:11px;line-height:14px;color:var(--bt-ink-3,rgba(20,20,20,.36));margin-left:4px}
 .fs-chip{flex:none;font-size:11px;line-height:14px;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg,rgba(20,20,20,.06));color:var(--bt-tag-ink,rgba(20,20,20,.56));white-space:nowrap}
-.fs-face-head{display:flex;align-items:center;gap:8px;justify-content:space-between}
-.fs-face-head .fs-auto{margin-left:auto}
+.fs-chip-status{min-width:44px;text-align:center;font-weight:600;letter-spacing:.01em}
+.fs-face-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;width:100%;padding:2px 0 6px}
+.fs-face-head .fs-face-auto-wrap{flex:1 1 auto;min-width:0}
+.fs-face-head .fs-face-actions{flex:none;margin-left:auto}
 .fs-past{margin:2px 0 4px}
 .fs-past-head{display:flex;align-items:center;gap:6px;width:100%;padding:4px 8px;border:0;border-radius:8px;background:transparent;color:var(--bt-ink-3,rgba(20,20,20,.36));font:inherit;font-size:11px;line-height:14px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;text-align:left;cursor:pointer}
 .fs-past-head:hover{background:var(--bt-hover,rgba(119,119,119,.09))}
@@ -129,8 +131,8 @@ window.__ModuleLoader__.load({
 .fs-face-auto{white-space:nowrap;font-size:11px;line-height:14px;color:var(--bt-ink-3,rgba(20,20,20,.36))}
 .fs-face-note{padding:0;display:none}
 .fs-chat-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
-[data-flybot=chat-approvals]{display:flex;flex-direction:column;align-items:flex-start;gap:8px;width:100%;box-sizing:border-box;padding:4px 0 8px}
-.fs-hold{box-sizing:border-box;width:100%;max-width:min(460px,100%);min-width:0;margin:0;padding:10px 12px;border:.5px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:14px;background:var(--bt-card,#fff);color:var(--bt-ink,#141414);display:flex;flex-direction:column;gap:6px;box-shadow:0 1px 2px rgba(20,20,20,.06);overflow:hidden}
+[data-flybot=chat-approvals]{display:flex;flex-direction:column;align-items:flex-end;gap:8px;width:100%;box-sizing:border-box;padding:0 0 4px}
+.fs-hold{box-sizing:border-box;width:100%;max-width:min(460px,100%);min-width:0;margin:0 0 0 auto;padding:10px 12px;border:.5px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:14px;background:var(--bt-card,#fff);color:var(--bt-ink,#141414);display:flex;flex-direction:column;gap:6px;box-shadow:0 1px 2px rgba(20,20,20,.06);overflow:hidden}
 .fs-hold .fs-label{padding:0;font-size:11px;line-height:14px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--bt-ink-3,rgba(20,20,20,.36))}
 .fs-hold .fs-sub{font-size:13px;line-height:18px;font-weight:500;color:var(--bt-ink,#141414);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fs-hold .fs-draft{margin:0;font-size:13px;line-height:18px;color:var(--bt-ink-2,rgba(20,20,20,.6));overflow-wrap:break-word;word-break:normal;white-space:pre-wrap;max-height:none}
@@ -677,6 +679,15 @@ window.__ModuleLoader__.load({
       }
       return 'open'
     }
+    function faceChipLabel(room) {
+      const chip = faceChip(room)
+      if (chip === 'open') return 'open'
+      if (chip === 'closed') return 'Closed'
+      if (chip === 'left') return 'Left'
+      if (chip === 'ended') return 'ended'
+      if (chip === 'joining') return 'Joining'
+      return chip
+    }
     function shownFaceTitle(room) {
       const named = String(room?.name || '').trim()
       if (named && named !== 'Face-to-face room') return named
@@ -731,7 +742,7 @@ window.__ModuleLoader__.load({
               h(FaceAvatar, { bot: look(m), size: 20 }))),
             extra ? h('span', { className: 'fs-stack-more' }, `+${extra}`) : null),
           h('span', { className: 'fs-name' }, shownFaceTitle(room)),
-          h('span', { className: 'fs-chip', 'data-flybot': 'face-status' }, faceChip(room)),
+          h('span', { className: 'fs-chip fs-chip-status', 'data-flybot': 'face-status', 'data-status': faceChip(room) }, faceChipLabel(room)),
           h('span', { className: 'fs-face-actions', onClick: event => event.stopPropagation() },
             past
               ? h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy || !room.roomId, onClick: open }, 'Open')
@@ -1055,8 +1066,9 @@ window.__ModuleLoader__.load({
             }, 'Enter chat')),
           note ? h('div', { className: 'fs-status', 'data-tone': note.tone }, note.text) : null)
       }
-      return h('div', { className: 'fs-face-row', 'data-flybot': 'face-overview' },
-        h('span', { className: 'fs-chip' }, faceChip({ status: snapshot?.status || face?.status || 'open' })),
+      const statusRoom = { status: snapshot?.status || face?.status || 'open', expiresAt: snapshot?.expiresAt || face?.expiresAt }
+      return h('div', { className: 'fs-face-head', 'data-flybot': 'face-overview' },
+        h('span', { className: 'fs-chip fs-chip-status', 'data-status': faceChip(statusRoom) }, faceChipLabel(statusRoom)),
         h(FaceAutoSendControl),
         h('span', { className: 'fs-face-actions' },
           h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('leave', () => call('social/face-leave', { roomId: room.id, faceRoomId: face?.roomId })) }, 'Leave')),

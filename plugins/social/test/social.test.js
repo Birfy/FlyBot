@@ -2374,7 +2374,7 @@ test('in-chat hold card is a compact bubble with names, clamp, and Approve/Rejec
   assert.match(src, /\.fs-hold \.fs-draft\[data-clamp\]\{[^}]*overflow-wrap:break-word/)
   assert.match(src, /\.fs-hold \.fs-draft\[data-clamp\]\{[^}]*word-break:normal/)
   assert.match(src, /\.fs-hold \.fs-btn-primary\{[^}]*width:auto/)
-  assert.match(src, /\[data-flybot=chat-approvals\]\{[^}]*align-items:flex-start/)
+  assert.match(src, /\[data-flybot=chat-approvals\]\{[^}]*align-items:flex-end/)
   const { walk, pluginOf } = loadSocialClient(async () => ({}))
   const plugin = pluginOf([])
   const named = walk(plugin.ChatApproval({

@@ -78,9 +78,25 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
   // While the notice shows, the pill opens the memory of the Bot that changed.
   const changed = useNews(map => latestMemoryChange(map, memoryIds))
   // The composer placeholder is not localizable per Session, so CSS reads it from here.
+  const composerLabel = name ? t('Message {name}', { name }) : t('Message')
   useEffect(() => {
-    document.body.style.setProperty('--bt-placeholder', JSON.stringify(name ? t('Message {name}', { name }) : t('Message')))
-  }, [name, t('Message')])
+    document.body.style.setProperty('--bt-placeholder', JSON.stringify(composerLabel))
+    const input = document.querySelector('[data-composer-input]')
+    const priorLabel = input?.getAttribute('aria-label') ?? null
+    const apply = () => {
+      const el = document.querySelector('[data-composer-input]')
+      if (el) el.setAttribute('aria-label', composerLabel)
+    }
+    apply()
+    const timer = setTimeout(apply, 0)
+    return () => {
+      clearTimeout(timer)
+      const el = document.querySelector('[data-composer-input]')
+      if (!el) return
+      if (priorLabel == null) el.removeAttribute('aria-label')
+      else el.setAttribute('aria-label', priorLabel)
+    }
+  }, [composerLabel])
   useEffect(() => {
     actions.beginVisit(sessionId)
     return () => actions.endVisit(sessionId)

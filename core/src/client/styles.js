@@ -364,6 +364,8 @@ button.bt-q-opt:active{background:var(--bt-active)}
 .bt-drawer-id{display:flex;flex-direction:column;align-items:center;padding:14px 16px 0}
 .bt-drawer-id>.bt-mark,.bt-drawer-id>.bt-cluster{margin-bottom:16px}
 .bt-drawer-name{font-size:17px;line-height:24px;font-weight:500;border:0;background:none;color:inherit;cursor:text;padding:0 6px;border-radius:6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-drawer-name-face{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;text-overflow:ellipsis;line-clamp:3;cursor:default}
+.bt-drawer-name-face:hover{background:none}
 .bt-drawer-name:hover{background:var(--bt-hover)}
 .bt-drawer-name-input{font-size:17px;line-height:24px;text-align:center;border:.5px solid var(--bt-line-2);border-radius:6px;padding:0 6px;background:var(--bt-main);color:var(--bt-ink);outline:none;font-weight:500}
 .bt-drawer-role{font-size:12px;line-height:16px;color:var(--bt-ink-3);margin-top:6px;text-align:center}
@@ -927,6 +929,7 @@ header[class*="_header"] .bt-head{flex:1 1 auto;width:100%}
 .bt-mic:active,.bt-voice:active{scale:.9}
 [data-composer-card]:has(button[class*="_primary"]:disabled) .bt-voice{display:inline-grid}
 body[data-bt-room] .bt-voice{display:none!important}
+body[data-bt-room] [data-composer-card] [class*="_activity"]{display:none!important}
 body[data-bt-room] [data-composer-card]:has(button[class*="_primary"]:disabled) .bt-mic:not([aria-pressed=true]){background:var(--bt-accent);color:var(--bt-accent-ink,#fff)}
 .bt-mic-note{position:absolute;right:12px;bottom:calc(100% + 8px);padding:5px 10px;border-radius:8px;background:var(--bt-user);color:var(--bt-user-ink);font-size:12px;line-height:16px;white-space:nowrap;pointer-events:none;animation:bt-rise .16s ease-out}
 [data-chain-overlay-fallback="conversation.composer"]:has(~ .bt-q){display:block!important;order:2}

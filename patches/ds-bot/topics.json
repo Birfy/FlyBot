@@ -35,6 +35,7 @@
     "src/client/icons.js",
     "src/client/new-chat.js",
     "src/client/palette.js",
+    "src/client/overlays.js",
     "test/mention-rule.test.js",
     "test/looks.test.js",
     "test/user-bubble.test.js"

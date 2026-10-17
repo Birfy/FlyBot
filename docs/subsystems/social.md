@@ -65,7 +65,10 @@ Everything in `plugins/social/` (entry `plugins/social/index.js` and any helpers
 - Face-room holds (`face_room_message` / `roomId`) attach `pendingCount` to that room only. They do not badge an unrelated friend row via `from`/`to` handle. The social strip no longer draws an **N to approve** tag under the last sidebar row; the gold wait dot on the owning RoomRow / 1:1 remains.
 - Approval preview strips `To face room:` / `To the room:` and wraps on word boundaries (`overflow-wrap:break-word; word-break:normal`), with **Show more** when long.
 - Join notices are remembered by handle and by exact text so a `member.joined` event plus the members loop does not post two identical joined lines.
-- Friend Bot details overview is Auto-send plus a muted **Remove this Bot** link (not a primary button). The DSH settings-shell chrome around empty local panes is unchanged. Composer a11y name and chat-header tok jargon live in pristine DSH / ds-bot and are not patched here.
+- Friend Bot details overview is Auto-send plus a muted **Remove this Bot** link (not a primary button). The DSH settings-shell chrome around empty local panes is unchanged. The host opens that overview via the compact remote Bot settings sheet (`remote-bot-settings`); the sidebar gear is a sibling of the friend's `bt-row`, not nested inside it (#166).
+- Face-to-face room cards use a short status chip (`data-flybot=face-status`): live rooms read **open**; expired matching windows under **Past rooms** read **ended**; candidates show a countdown (`12m` / `45s`); closed/left keep their labels (#166).
+- In-chat approval cards (`flybot.session.dock`) are right-aligned bubbles capped at ~460px: **Waiting for approval**, one `from → to` line, a word-wrapped preview with **Show more**, and **Approve** / **Always approve** / **Reject** on one row (#166).
+- The composer **Message {name}** accessible name is set by core `HeaderPill` (placeholder CSS var plus `aria-label` on `[data-composer-input]`, restored on cleanup); chat-header tok jargon stays in pristine DSH / ds-bot.
 
 ### Face-room poll identity (#122)
 
