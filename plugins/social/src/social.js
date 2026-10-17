@@ -30,7 +30,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, wri
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
-import { createSocialApi, untrustedText, mapPool, GRANT_CONCURRENCY, grantPersonView, memberHandleOf } from './mcp-client.js'
+import { createSocialApi, untrustedText, mapPool, GRANT_CONCURRENCY, grantPersonView, memberHandleOf, personHomeOf } from './mcp-client.js'
 import { lookFromServer, lookToServer, lookFingerprint } from './look.js'
 import {
   createFaceRoomApi,
@@ -67,7 +67,10 @@ const REMOTE_TTL_MS = 30_000
 // Empty / missing / "@" stay empty. Prefixing '@' before the body is stripped
 // used to persist the literal "@" as a face-room `as` handle (#122).
 const norm = (handle) => {
-  const body = String(handle ?? '').trim().replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 120)
+  const raw = typeof handle === 'object' && handle !== null
+    ? (handle.handle ?? handle.home ?? handle.member ?? '')
+    : handle
+  const body = String(raw ?? '').trim().replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 120)
   return body ? `@${body}` : ''
 }
 const MAX_FILES = 5
@@ -910,7 +913,10 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       const localIn = (room.members ?? []).includes(botId) || live.some(p => p.kind === 'bot' && !p.remote && p.id === botId)
       if (!localIn) continue
       const hit = !key || live.some(p => {
-        if (p.kind === 'human' && String(p.id) === String(grantee)) return true
+        const humanId = typeof grantee === 'object' && grantee
+          ? String(grantee.handle ?? grantee.id ?? '')
+          : String(grantee ?? '')
+        if (p.kind === 'human' && humanId && String(p.id) === humanId) return true
         if (p.handle && (norm(p.handle) === key || homeOfPeer(p.handle) === key || homeOfPeer(p.handle) === home)) return true
         if (p.ownerHome && (norm(p.ownerHome) === key || norm(p.ownerHome) === home)) return true
         return false
@@ -934,16 +940,17 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
         const people = listed.filter(grant => !grant.roomId).map(grant => {
           const view = grantPersonView(grant)
           // Core normGrantee cannot match decorated non-@ values; persist a canonical @handle.
-          const canonical = view.member || view.home || memberHandleOf(grant.grantee) || grant.grantee
+          const canonical = view.member || view.home || memberHandleOf(grant.grantee)
+          if (!canonical) return undefined
           return {
             id: grant.id || grant.relationshipId || `${bot.id}:${canonical}`,
             grantee: canonical,
-            ...(view.label ? { name: view.label } : grant.name ? { name: grant.name } : {}),
+            ...(view.label ? { name: view.label } : typeof grant.name === 'string' ? { name: grant.name } : {}),
             ...(view.home ? { home: view.home } : {}),
             ...(view.member ? { member: view.member } : {}),
             ...(grant.relationshipId ? { relationshipId: grant.relationshipId } : {}),
           }
-        })
+        }).filter(Boolean)
         await flybot.grants.set(bot.id, [...people, ...roomScoped])
       } catch (error) {
         warn(`${bot.name} grants not synced`, error)
@@ -1504,13 +1511,14 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       granted: hasPersonGrant(bot.id),
       grants: grants.map(grant => {
         const view = grantPersonView(grant)
+        const home = view.home || grant.home || (typeof grant.grantee === 'string' ? personHomeOf(grant.grantee) : '')
         return {
           id: grant.id,
-          grantee: view.home || grant.home || grant.grantee,
-          name: view.label || grant.name,
-          home: view.home || grant.home,
+          grantee: home || view.member || (typeof grant.grantee === 'string' ? grant.grantee : ''),
+          name: view.label || (typeof grant.name === 'string' ? grant.name : ''),
+          home,
           relationshipId: grant.relationshipId,
-          rooms: roomsUsing(bot.id, grant.grantee),
+          rooms: roomsUsing(bot.id, view.member || grant.grantee),
         }
       }),
       rooms,

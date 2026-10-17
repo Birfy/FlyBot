@@ -289,7 +289,10 @@ window.__ModuleLoader__.load({
         const fromLabel = String(member?.label ?? '').split('·')[0].replace(/'s Chief$/i, 'Chief').trim()
         if (fromLabel && !/^bot$/i.test(fromLabel) && (!owner || fromLabel.toLowerCase() !== owner.toLowerCase())) name = fromLabel
         else {
-          const part = String(member?.handle ?? '').replace(/^@/, '').split('.')[0]
+          const handleText = typeof member?.handle === 'object' && member.handle
+            ? String(member.handle.handle ?? '')
+            : String(member?.handle ?? '')
+          const part = handleText.replace(/^@/, '').split('.')[0]
           name = part && part !== 'home' && part !== 'bot'
             ? part.charAt(0).toUpperCase() + part.slice(1)
             : (raw || 'Bot')
@@ -375,7 +378,9 @@ window.__ModuleLoader__.load({
     const looksLikeBotId = (value) => /^bot_[a-z0-9]+$/i.test(String(value ?? '').trim())
     const looksLikeHandle = (value) => /^@[\w.-]+$/.test(String(value ?? '').trim())
     function readableParty(value, fallback = '') {
-      const text = String(value ?? '').trim()
+      const text = (typeof value === 'object' && value
+        ? String(value.owner_display_name || value.display_name || value.handle || value.name || '')
+        : String(value ?? '')).trim()
       if (!text || looksLikeBotId(text)) return fallback
       if (looksLikeHandle(text)) {
         const body = text.replace(/^@+/, '').split('.')[0]
@@ -413,7 +418,9 @@ window.__ModuleLoader__.load({
     }
     function memberIsMine(member, bots, room) {
       if (member?.remote === false) return true
-      const handle = String(member?.handle ?? '')
+      const handle = typeof member?.handle === 'object' && member.handle
+        ? String(member.handle.handle ?? '')
+        : String(member?.handle ?? '')
       if (!handle) return false
       if ((room?.mineHandles ?? []).includes(handle)) return true
       return (bots ?? []).some(bot => bot.handle === handle)
@@ -736,7 +743,10 @@ window.__ModuleLoader__.load({
     }
     const autoSendToast = (from, to) => `Auto-send on for ${from} → ${to}. Change it anytime in settings.`
     function homeOfHandle(value) {
-      const body = String(value ?? '').trim().replace(/^@+/, '').toLowerCase()
+      const raw = typeof value === 'object' && value
+        ? String(value.handle ?? value.home ?? '')
+        : String(value ?? '')
+      const body = raw.trim().replace(/^@+/, '').toLowerCase()
       if (!body) return ''
       const parts = body.split('.')
       if (parts.length >= 2 && parts.at(-1) === 'home') return `@${parts.at(-2)}.home`
