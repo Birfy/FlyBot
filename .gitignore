@@ -9,3 +9,4 @@ node_modules/
 .dsh-home/
 /shots/
 .playwright-mcp/
+.ds-bot-check/
