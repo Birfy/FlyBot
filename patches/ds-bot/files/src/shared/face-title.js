@@ -16,6 +16,26 @@ export function formatFaceWhen(value) {
   return `${MONTHS[date.getMonth()]} ${date.getDate()} ${hh}:${mm}`
 }
 
+export function isAutoFaceTitle(name) {
+  const n = String(name ?? '').trim()
+  return isGenericFaceTitle(n) || n.startsWith('Face-to-face · ')
+}
+
+function ownersFromMembers(members) {
+  const rows = []
+  const seen = new Set()
+  for (const member of members ?? []) {
+    const owner = String(member?.ownerName ?? member?.owner_name ?? '').trim()
+    const key = owner.toLowerCase()
+    if (!owner || seen.has(key)) continue
+    seen.add(key)
+    const handle = String(member?.handle ?? member?.id ?? '').trim().toLowerCase()
+    rows.push({ owner, sort: handle || key })
+  }
+  rows.sort((a, b) => a.sort.localeCompare(b.sort))
+  return rows.slice(0, 3).map(row => row.owner)
+}
+
 function uniqueOwners(owners) {
   const seen = new Set()
   const out = []
@@ -26,6 +46,7 @@ function uniqueOwners(owners) {
     seen.add(key)
     out.push(owner)
   }
+  out.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
   return out.slice(0, 3)
 }
 
@@ -35,10 +56,10 @@ export function joinCodeOf(code) {
 
 // `Face-to-face · Alice, Bob · 482913` when a code is known, else `… · Oct 16 21:40`.
 // A caller-chosen name that is not an auto title is kept.
-export function formatFaceRoomTitle({ name, owners, code, at } = {}) {
+export function formatFaceRoomTitle({ name, owners, members, code, at } = {}) {
   const named = String(name ?? '').trim()
-  if (named && !isGenericFaceTitle(named) && !named.startsWith('Face-to-face · ')) return named
-  const people = uniqueOwners(owners)
+  if (named && !isAutoFaceTitle(named)) return named
+  const people = members?.length ? ownersFromMembers(members) : uniqueOwners(owners)
   const join = joinCodeOf(code)
   const when = formatFaceWhen(at) || formatFaceWhen(new Date())
   const bits = ['Face-to-face']

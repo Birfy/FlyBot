@@ -34,7 +34,7 @@
 // of a friend's room that invited their granted Bot.
 
 import { cleanPeerName, disambiguatedRemoteTitle, isChiefRecord, remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
-import { formatFaceRoomTitle, isGenericFaceTitle } from '../shared/face-title.js'
+import { formatFaceRoomTitle, isAutoFaceTitle } from '../shared/face-title.js'
 import { encodeRoomShare, parseRoomShare } from '../shared/room-share.js'
 import { cleanName, fenceUntrusted, isFencedUntrusted } from './delivery.js'
 import { hasAnyGrant, mayShareRoom } from './reach.js'
@@ -1229,7 +1229,7 @@ export function install(rt) {
 
   const faceRoomFallbackTitle = (spec, room) => formatFaceRoomTitle({
     name: spec.name || room?.name,
-    owners: (spec.members ?? room?.participants ?? []).map(member => member.ownerName || member.owner_name),
+    members: spec.members ?? room?.participants,
     code: spec.joinCode || spec.code,
     at: spec.startedAt || spec.expiresAt || room?.face?.startedAt || room?.createdAt,
   })
@@ -1268,7 +1268,7 @@ export function install(rt) {
       eventCursor: Math.max(Number(room.face.eventCursor) || 0, Number(spec.eventCursor) || 0),
       seenEvents: Array.isArray(room.face.seenEvents) ? room.face.seenEvents : [],
     }
-    if (spec.name || isGenericFaceTitle(room.name)) room.name = title
+    if (spec.name || isAutoFaceTitle(room.name)) room.name = title
     if (Array.isArray(spec.members)) rt.syncFaceParticipants(room, spec.members, spec.localBots)
     await rt.save?.()
     return room

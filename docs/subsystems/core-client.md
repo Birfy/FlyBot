@@ -72,6 +72,7 @@ The default card (`flybot-slots.js`) shows where a held request came from: `send
 ### FlyBot product chrome
 
 - User-visible chrome says **FlyBot** (header mark + name, About, settings title, tab title, favicon, zh copy). The mark is the existing FlyBot logo (`docs/images/logo.svg`), inlined as `FlyBotMark` from `src/client/brand.js`. Update popups say **FlyBot core {version}**. The npm package remains `ds-bot`; plugin id, localStorage keys, and `console.warn('[ds-bot]')` stay upstream.
+- The tab title follows the open chat (`sessionTabLabel` in `brand.js`: a friend's Bot reads `Name · owner`, a room uses its display name). Sidebar row gear controls are hover/focus-only, and Bot settings call the duplicate/delete card **More**. An empty chat with a friend's Bot shows a one-line hint (`--bt-remote-empty`, set by `HeaderPill`) that the friend approves unless Auto-send is on (#173). The agent entry on **+** reads **Add Bot**.
 
 ### One sidebar list
 

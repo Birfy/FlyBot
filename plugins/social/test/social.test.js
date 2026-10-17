@@ -509,7 +509,7 @@ test('client.js registers a sidebar section and @ rows into the FlyBot registry'
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
   const plugin = registered[0].factory(() => ({ createElement: () => null, useEffect() {}, useState: v => [v, () => {}] }))
   plugin.apply({})
-  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.new-chat.action#social-face-group', 'flybot.new-chat.action#social-add-friend', 'flybot.new-chat.action#social-accept-invite', 'flybot.new-chat.action#social-copy-invite', 'flybot.new-chat.action#social-copy-handle', 'flybot.composer.mention#social', 'flybot.bot.details#social-invite', 'flybot.room.overview#social-face', 'flybot.session.dock#social-approval'])
+  assert.deepEqual(entries.map(([slot, entry]) => `${slot}#${entry.id}`), ['flybot.sidebar.section#social', 'flybot.new-chat.action#social-face-group', 'flybot.new-chat.action#social-add-friend', 'flybot.new-chat.action#social-copy-invite', 'flybot.new-chat.action#social-copy-handle', 'flybot.composer.mention#social', 'flybot.bot.details#social-invite', 'flybot.room.overview#social-face', 'flybot.session.dock#social-approval'])
   // Transport errors are worded in English from their code, never the localized host text.
   assert.match(plugin.errorText(Object.assign(new Error('请求失败（HTTP 404）'), { code: 'HTTP_404' })), /^The FlyBot host did not answer \(HTTP 404\)/)
   assert.equal(plugin.errorText(Object.assign(new Error('x'), { code: 'bot/refused' })), 'x')
@@ -1432,6 +1432,26 @@ test('face and inbox polls speed up while a live face room is open', async (t) =
   assert.ok(delays.includes(4_000), `live poll ${delays.join(',')}`)
 })
 
+test('when a face room drops off Bot Social, the local transcript stays openable', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await call('flybot/social/face-join', { code: '123456' })
+  await call('flybot/social/face-start', { faceRoomId: 'frm_123456' })
+  server.face.rooms.delete('frm_123456')
+  await call('flybot/social/face-rooms', { poll: true })
+  assert.ok(ctx.flybot.rooms.ofFace('frm_123456'), 'hosted room stays for Open')
+  const opened = (await call('flybot/social/face-open', { faceRoomId: 'frm_123456' })).value
+  assert.ok(opened.roomId)
+})
+
 test('face-to-face leave after matching ends still moves the room to Past rooms', async (t) => {
   const { ctx, call, stop } = await team()
   t.after(stop)
@@ -1823,7 +1843,7 @@ test('social section has no + Add; Add friend and Face-to-face group live on the
   assert.ok(closed.entries.some(([slot, entry]) => slot === 'flybot.room.overview' && entry.id === 'social-face'))
   assert.ok(closed.entries.some(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-face-group'))
   assert.ok(closed.entries.some(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-add-friend'))
-  assert.ok(closed.entries.some(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-accept-invite'))
+  assert.equal(closed.entries.some(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-accept-invite'), false)
   assert.ok(closed.entries.some(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-copy-invite'))
   assert.ok(closed.entries.some(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-copy-handle'))
   assert.equal(closed.nodes.some(n => n.type === 'button' && n.children.includes('Copy')), false)
@@ -1936,8 +1956,6 @@ test('sidebar + Add friend opens the join panel in Friends\' Bots; header stays 
   assert.ok(after.some(n => n.props['data-flybot'] === 'add-friend'))
   assert.ok(after.some(n => n.type === 'button' && n.children.includes('Join')))
   assert.equal(after.some(n => n.type === 'button' && n.children.includes('+ Add')), false)
-  const accept = entries.find(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-accept-invite')
-  assert.equal(accept[1].label, 'Accept invite')
   const copy = entries.find(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-copy-invite')
   assert.equal(copy[1].label, 'Copy invite link')
   const handle = entries.find(([slot, entry]) => slot === 'flybot.new-chat.action' && entry.id === 'social-copy-handle')
@@ -2107,6 +2125,44 @@ test('Face-to-face room card members use host avatars, not a shared letter badge
   assert.equal(friendChat.props['data-image'], 'https://example.test/coder.png')
   assert.ok(friendSeed, "a friend's Bot without a chat still gets a handle-seeded avatar")
   assert.equal(tree.filter(n => n.props.className === 'fs-avatar' && n.props['data-flybot'] === undefined).length, 0)
+})
+
+test('Face-to-face past card titles rebuild from every member, not a stale auto name', () => {
+  const { walk, pluginOf } = loadSocialClient(async () => ({}))
+  const tree = walk(pluginOf([]).FaceRoomCard({
+    room: {
+      name: 'Face-to-face · UiA1415 · Oct 17 14:38', status: 'closed',
+      startedAt: '2026-10-17T14:38:00.000Z',
+      members: [
+        { handle: '@b.home', ownerName: 'UiB1415' },
+        { handle: '@a.home', ownerName: 'UiA1415' },
+      ],
+    },
+    past: true,
+  }))
+  const title = tree.find(n => n.props.className === 'fs-name')
+  assert.equal(String(title?.children?.join?.('') ?? ''), 'Face-to-face · UiA1415, UiB1415 · Oct 17 14:38')
+})
+
+test('Past face room Open resolves the hosted session through face-open', async () => {
+  const opened = []
+  const calls = []
+  const { walk, pluginOf } = loadSocialClient(async (endpoint, payload) => {
+    calls.push([endpoint, payload])
+    if (endpoint === 'social/face-open') return { roomId: 'g-fixed', faceRoomId: 'frm_old' }
+    return {}
+  })
+  const tree = walk(pluginOf([]).FaceRoomCard({
+    room: { faceRoomId: 'frm_old', name: 'Hall', status: 'closed', members: [] },
+    past: true,
+    actions: { openSession: id => opened.push(id) },
+  }))
+  const btn = tree.find(n => n.type === 'button' && n.children.includes('Open'))
+  assert.ok(btn)
+  await btn.props.onClick()
+  assert.equal(calls[0][0], 'social/face-open')
+  assert.equal(calls[0][1].faceRoomId, 'frm_old')
+  assert.deepEqual(opened, ['g-fixed'])
 })
 
 test('Face-to-face room card titles include people and a distinguisher, not Face-to-face room', () => {
@@ -2499,7 +2555,7 @@ test('Bot settings: Manage access lists grants and revokes one', async () => {
   const tree = walk(plugin.ManageAccess({ bot: { id: 'b', name: 'Writer' } }))
   assert.ok(tree.some(n => n.props['data-flybot'] === 'manage-access'))
   assert.ok(tree.some(n => n.props['data-flybot'] === 'access-grant'))
-  assert.ok(tree.some(n => typeof n.children?.[0] === 'string' && /Invite to this Bot/.test(n.children[0])))
+  assert.ok(tree.some(n => typeof n.children?.[0] === 'string' && /People with access/.test(n.children[0])))
   const revoke = tree.find(n => n.props['data-flybot'] === 'revoke-grant')
   assert.ok(revoke)
   await revoke.props.onClick()
@@ -2550,7 +2606,7 @@ test('Face-to-face group (#92): pick Bots, join each once, live roster, Enter ch
   assert.ok(picker.some(n => n.props['data-flybot'] === 'face-pick' && /\bfs-tiles\b/.test(n.props.className)))
   assert.ok(picker.some(n => n.props['data-flybot'] === 'face-join'))
   assert.equal(picker.some(n => /no preview/i.test(String(n.children ?? ''))), false)
-  assert.ok(picker.some(n => /wait together/i.test(String(n.children ?? ''))))
+  assert.ok(picker.some(n => /everyone nearby/i.test(String(n.children ?? ''))))
   const pickAvatars = picker.filter(n => n.props['data-flybot'] === 'face-avatar')
   assert.equal(pickAvatars.length, 2)
   const chiefMark = picker.find(n => n.props['data-flybot'] === 'bot-avatar' && n.props['data-bot-id'] === 'a')
@@ -2568,7 +2624,7 @@ test('Face-to-face group (#92): pick Bots, join each once, live roster, Enter ch
   assert.equal(picker.some(n => n.props.className === 'fs-sub' && n.children.includes('Main Bot')), false)
   const hint = picker.find(n => n.props['data-flybot'] === 'face-join-room')
   assert.ok(hint)
-  assert.match(hint.children.join(''), /Available to this room only/)
+  assert.match(hint.children.join(''), /Room-only/)
   assert.equal(picker.some(n => /published/i.test(String(n.children ?? ''))), false)
   assert.ok(picker.some(n => n.type === 'input' && n.props.type === 'checkbox' && n.props['aria-label'] === 'Chief' && n.props.checked === true))
   assert.ok(picker.some(n => n.type === 'input' && n.props.type === 'checkbox' && n.props['aria-label'] === 'Writer' && n.props.checked === false))
@@ -3347,7 +3403,7 @@ test('social/access labels an object-shaped list_bot_grants grantee, not @object
   const row = access.grants.find(g => g.home === '@bob.home' || g.grantee === '@bob.home' || /coder\.bob/.test(String(g.grantee)))
   assert.ok(row, `expected a Bob grant, got ${JSON.stringify(access.grants)}`)
   assert.equal(row.home, '@bob.home')
-  assert.equal(row.name, 'Bob (@bob.home)')
+  assert.equal(row.name, 'bob (@bob.home)')
   assert.doesNotMatch(String(row.name), /object/i)
   assert.doesNotMatch(String(row.grantee), /object/i)
 })
@@ -3613,7 +3669,7 @@ test('#136 / #138: grant labels use the person home, not a raw member handle', (
   assert.equal(personHomeOf('@selfb1935.home'), '@selfb1935.home')
   const view = grantPersonView({ grantee: 'Chief@chief.selfb1935.home', name: 'Chief@chief.selfb1935.home' })
   assert.equal(view.home, '@selfb1935.home')
-  assert.equal(view.label, 'Selfb1935 (@selfb1935.home)')
+  assert.equal(view.label, 'selfb1935 (@selfb1935.home)')
   const named = grantPersonView({ grantee: '@bob.home', name: 'Bob' })
   assert.equal(named.label, 'Bob (@bob.home)')
   const normalized = normalizeGrant({ grantee: 'Chief@chief.bob.home', display_name: 'Chief@chief.bob.home' })
@@ -3919,7 +3975,7 @@ test('#136: + Copy my handle copies the home; Auto-send starts unchecked; Join-a
   assert.ok(add.some(n => n.props['data-flybot'] === 'join-as'))
   assert.match(add.find(n => n.props['data-flybot'] === 'join-as').props.className, /fs-join-as/)
   assert.match(add.find(n => n.props['data-flybot'] === 'talk-through').children.join(''), /Talk through/)
-  assert.match(add.find(n => n.props['data-flybot'] === 'join-as').children.join(''), /not shared/i)
+  assert.ok(add.find(n => n.props['data-flybot'] === 'join-as').props.title)
 })
 
 test('#160: Remove this Bot closes the settings overlay', async () => {
@@ -3965,7 +4021,8 @@ test('#138: join success copy names the person and the Bot', () => {
   const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(src, /shared \$\{shared\} with you/)
   assert.match(src, /Talk through /)
-  assert.match(src, /not shared unless you invite them to it/)
+  assert.match(src, /Your friend only sees this Bot unless you invite them to another/)
+  assert.doesNotMatch(src, /not shared unless you invite them to it/)
   assert.match(src, /\.fs-join-as-label\{[^}]*white-space:nowrap/)
   assert.doesNotMatch(src, /there is no preview/)
 })

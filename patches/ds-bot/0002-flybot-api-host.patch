@@ -98,7 +98,7 @@ diff --git a/src/host/roster.js b/src/host/roster.js
      const id = await createSession(cleanName, { dir })
      try {
        state.bots[id] = {
-@@ -83,9 +83,22 @@ export function install(rt) {
+@@ -83,16 +83,29 @@ export function install(rt) {
          instructions: String(instructions).trim(),
          createdAt: Date.now(),
          createdBy: createdBy ?? null,
@@ -122,6 +122,14 @@ diff --git a/src/host/roster.js b/src/host/roster.js
        const creator = rt.botOf(createdBy)
        const original = rt.botOf(copyOf)
        const language = rt.uiLanguage?.()
+       // The kickoff arrives as a user message, so it outranks the Bot's instructions
+       // unless it gives way to them, and it names no tool those instructions may rule out.
+       const kickoff = main
+-        ? `You were just set up as the user's Main Bot. Greet the user in one or two short messages: say you will run their Bot team and that they can come to you for anything that needs a decision. Then ask in one short question what they want the team to help with first. Write in ${language ?? 'the user\'s language if known; otherwise Chinese'}.`
++        ? `You were just set up as the user's Main Bot. Greet the user in one or two short messages: say you will run their Bot team and that they can come to you for anything that needs a decision. Then ask in one short question what they want the team to help with first. Write in ${language ?? 'English'}.`
+         : original
+           ? `The user just made you as a copy of ${original.name}: same job, fresh memory. Greet the user in one short message, then ask in one short question what this copy should focus on.`
+           : creator
 @@ -103,6 +103,11 @@ export function install(rt) {
        const opener = `${kickoff}\nWhere your instructions say otherwise, follow them.`
        const text = !main && language ? `${opener}\nWrite in ${language}.` : opener

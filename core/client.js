@@ -316,6 +316,7 @@ var ZH = {
   "Kept above the other chats.": "排在其他对话上面。",
   "Search still finds it.": "仍然可以搜索到。",
   Manage: "管理",
+  "Send a message. Your friend approves unless Auto-send is on.": "发送消息。除非已开启自动发送，否则好友需要批准。",
   // Group chat settings
   "Leave it empty to name the group after its members.": "留空就按成员命名。",
   "Every member reads it before speaking in this group.": "每位成员在这个群里发言前都会读到。",
@@ -441,6 +442,7 @@ var ZH = {
   // stays in English.
   "Add DSH Agent": "添加 DSH Agent",
   "Add Agent": "添加 Agent",
+  "Add Bot": "添加 Bot",
   "Remove DSH Agent": "移除 DSH Agent",
   "New session": "新会话",
   Archive: "归档",
@@ -2715,6 +2717,8 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-row-body{display:flex;flex-direction:column;min-width:0;flex:1 1 auto}
 .bt-row-name{display:flex;align-items:center;gap:6px;min-width:0;font-size:14px;line-height:20px;font-weight:400}
 .bt-row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-row:has(.bt-row-remote) .bt-row-title,.bt-row-wrap:has(.bt-row-remote) .bt-row-title{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;text-overflow:ellipsis}
+.bt-row:has(.bt-row-remote) .bt-row-name,.bt-row-wrap:has(.bt-row-remote) .bt-row-name{align-items:flex-start}
 .bt-row-remote{flex:none;display:inline-flex;align-items:center;color:var(--bt-ink-3,rgba(20,20,20,.36))}
 .bt-tag{flex:none;max-width:96px;font-size:12px;line-height:16px;font-weight:400;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-row-preview{font-size:13px;line-height:18px;color:var(--bt-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -3410,6 +3414,7 @@ header[class*="_header"] .bt-head{flex:1 1 auto;width:100%}
    the shell's new-session hero: no headline, no workspace or mode picker, and the
    composer stays docked at the bottom. */
 [data-content-phase=hero] [class*="_scrollBody"]{justify-content:flex-end!important}
+body[data-bt-remote-chat=empty][data-content-phase=hero] [class*="_scrollBody"]::before{content:var(--bt-remote-empty);display:block;text-align:center;color:var(--bt-ink-3);font-size:13px;line-height:18px;padding:16px 12px 8px;max-width:var(--dsh-chat-content-width,min(960px,100%));margin:0 auto;white-space:pre-wrap}
 [data-content-phase=hero] [class*="_composerHero"]{align-self:stretch!important;width:auto!important;padding-bottom:0!important}
 [data-content-phase=hero] [class*="_composerHero"]>[class$="_root"],[data-content-phase=hero] [class*="_heroWorkspaceRow"]{display:none!important}
 [data-content-phase=hero] [class*="_composerHero"] [class*="_input"]{min-height:0!important}
@@ -3642,6 +3647,21 @@ function brandTitle(title) {
   if (text.endsWith(" — DeepSeek Harness")) return `${text.slice(0, -" — DeepSeek Harness".length)} — FlyBot`;
   if (/\bDS Bot\b/.test(text)) return text.replace(/\bDS Bot\b/g, "FlyBot");
   return text;
+}
+function sessionTabLabel(roster, sessionId) {
+  if (!roster || !sessionId) return "";
+  const bot = roster.byId?.[sessionId];
+  const room2 = roster.roomsById?.[sessionId];
+  if (bot?.remote) {
+    return remoteBotTitle({
+      displayName: bot.name,
+      ownerName: bot.remote.homeName || bot.remote.owner,
+      handle: bot.remote.handle,
+      isChief: bot.remote.isChief
+    });
+  }
+  if (room2) return room2.displayName || (room2.sharedFrom ? sharedRoomTitle(room2.sharedFrom.inviterName) : room2.name) || "";
+  return bot?.name || "";
 }
 function installBrandChrome() {
   if (typeof document === "undefined") return () => {
@@ -6354,8 +6374,9 @@ var SIDEBAR_CSS = `
 
 .bt-row-wrap{display:flex;align-items:center;width:100%;min-width:0}
 .bt-row-wrap>.bt-row{flex:1 1 auto;min-width:0}
-.bt-row-settings{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-2px 8px -2px 2px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--bt-ink-3);cursor:pointer;opacity:.85;transition:background-color .12s ease,color .12s ease,opacity .12s ease}
-.bt-row-settings:hover,.bt-row-wrap:focus-within .bt-row-settings{opacity:1;color:var(--bt-ink-2);background:var(--bt-hover)}
+.bt-row-settings{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-2px 8px -2px 2px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--bt-ink-3);cursor:pointer;opacity:0;pointer-events:none;transition:background-color .12s ease,color .12s ease,opacity .12s ease}
+.bt-row-wrap:hover .bt-row-settings,.bt-row-wrap:focus-within .bt-row-settings{opacity:1;pointer-events:auto;color:var(--bt-ink-2);background:var(--bt-hover)}
+.bt-row-settings:hover{opacity:1;color:var(--bt-ink-2);background:var(--bt-hover)}
 .bt-row-settings svg{width:15px;height:15px}
 `;
 
@@ -6420,6 +6441,21 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
   const notice = useMemoryNotice(memoryIds, useNews);
   const changed = useNews((map) => latestMemoryChange(map, memoryIds));
   const composerLabel = name ? t("Message {name}", { name }) : t("Message");
+  const blank3 = useSessions((list) => list.byId[sessionId]?.blank === true);
+  const remoteEmptyHint = t("Send a message. Your friend approves unless Auto-send is on.");
+  (0, import_react10.useEffect)(() => {
+    if (bot?.remote && blank3) {
+      document.body.dataset.btRemoteChat = "empty";
+      document.body.style.setProperty("--bt-remote-empty", JSON.stringify(remoteEmptyHint));
+    } else {
+      delete document.body.dataset.btRemoteChat;
+      document.body.style.removeProperty("--bt-remote-empty");
+    }
+    return () => {
+      delete document.body.dataset.btRemoteChat;
+      document.body.style.removeProperty("--bt-remote-empty");
+    };
+  }, [bot?.remote, blank3, remoteEmptyHint]);
   (0, import_react10.useEffect)(() => {
     document.body.style.setProperty("--bt-placeholder", JSON.stringify(composerLabel));
     const input = document.querySelector("[data-composer-input]");
@@ -9042,7 +9078,7 @@ function BotSettingsForm({ bot, roster, actions, run }) {
     (0, import_react19.createElement)(FlyBotDetails, { bot, roster, actions }),
     (0, import_react19.createElement)(
       Card,
-      { title: t("Manage") },
+      { title: t("More") },
       (0, import_react19.createElement)(
         "button",
         { type: "button", className: "bt-set-row bt-bs-row", onClick: duplicate },
@@ -9403,7 +9439,7 @@ function NewChat({ mode, roster, actions }) {
       });
     }
     if ((roster.agents ?? []).length === 0) {
-      options.push({ key: "agent", icon: (0, import_react21.createElement)(import_dsh_client_ui_primitives4.FishLogo, { size: 16 }), label: t("Add Agent"), run: () => run(async () => {
+      options.push({ key: "agent", icon: (0, import_react21.createElement)(import_dsh_client_ui_primitives4.FishLogo, { size: 16 }), label: t("Add Bot"), run: () => run(async () => {
         await actions.addAgent();
         close();
       }) });
@@ -14496,6 +14532,19 @@ function apply(ctx) {
   }
   ctx.effect(() => installLocale(ctx.get("locale")), "ds-bot: interface copy");
   ctx.effect(() => installBrandChrome(), "ds-bot: brand chrome");
+  ctx.effect(() => {
+    const sessions = ctx.sessions.list;
+    const sync = () => {
+      if (typeof document === "undefined") return;
+      const row = Object.values(sessions.getSnapshot().byId ?? {}).find((session) => (session?.retainedBy?.mainView ?? 0) > 0);
+      const label = sessionTabLabel(roster.getSnapshot(), row?.id);
+      if (!label) return;
+      const next = brandTitle(`${label} — FlyBot`);
+      if (document.title !== next) document.title = next;
+    };
+    sync();
+    return sessions.subscribe(sync);
+  }, "ds-bot: tab title");
   const roster = createSource(EMPTY_ROSTER);
   migrateStorage();
   const UNREAD_KEY = STORAGE.unread;

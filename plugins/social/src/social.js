@@ -2103,7 +2103,6 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
           const hosted = flybot.rooms.ofFace?.(serverId)
           rememberPastFace(viewHostedFace(hosted, { faceRoomId: serverId, localRoomId: meta?.localRoomId, status: 'closed' })
             || { faceRoomId: serverId, roomId: meta?.localRoomId, name: faceRoomTitle({}, { code: meta?.joinCode, room: hosted }), status: 'closed', members: [] })
-          if (meta?.localRoomId) await flybot.rooms.dropFace?.(meta.localRoomId).catch(() => {})
           delete settings.faceRooms[serverId]
           dropRoomRemotes(serverId)
           for (const handle of asBotsOf(meta)) {
@@ -2229,7 +2228,37 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       }
     }))
   }
+  function hostedFaceRoom(faceRoomId, roomId) {
+    if (faceRoomId) {
+      const room = flybot.rooms.ofFace?.(faceRoomId)
+      if (room?.id) return room
+    }
+    if (roomId) return flybot.rooms.list?.().find(item => item.id === roomId)
+    return undefined
+  }
+  async function openFaceRoom({ roomId, faceRoomId } = {}) {
+    const hosted = hostedFaceRoom(faceRoomId, roomId)
+    if (hosted?.id) return { roomId: hosted.id, faceRoomId: hosted.face?.roomId || faceRoomId }
+    const past = (settings.pastFaceRooms ?? []).find(item =>
+      (faceRoomId && item.faceRoomId === faceRoomId) || (roomId && item.roomId === roomId))
+    const serverId = faceRoomId || past?.faceRoomId
+      || Object.entries(settings.faceRooms).find(([, meta]) => meta.localRoomId === roomId)?.[0]
+    if (!serverId) throw new Error('which room?')
+    const seed = past || { faceRoomId: serverId, roomId, status: 'closed', members: [] }
+    const room = await flybot.rooms.upsertFace?.({
+      roomId: serverId,
+      name: seed.name || faceRoomTitle({ members: seed.members }, { code: seed.joinCode }),
+      status: seed.status === 'open' ? 'closed' : (seed.status || 'closed'),
+      expiresAt: seed.expiresAt,
+      startedAt: seed.startedAt,
+      members: seed.members ?? [],
+      localBots: bringable(),
+    })
+    if (!room?.id) throw new Error('Could not open that room')
+    return { roomId: room.id, faceRoomId: serverId }
+  }
   disposers.push(flybot.api.handle('social/face-join', async ({ code, botId } = {}) => joinFaceRoom({ code, botId })))
+  disposers.push(flybot.api.handle('social/face-open', async (payload) => openFaceRoom(payload), { read: true }))
   disposers.push(flybot.api.handle('social/face-rooms', async (payload) => {
     if (payload?.poll !== false) await pollFaceRooms().catch(() => {})
     const rooms = Object.entries(settings.faceRooms).map(([faceRoomId, meta]) => {

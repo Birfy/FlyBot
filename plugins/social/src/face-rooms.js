@@ -247,15 +247,11 @@ export function trustedFaceWho(from) {
 }
 
 export function faceRoomTitle(snapshot = {}, { code, room } = {}) {
-  const owners = []
-  for (const member of snapshot.members ?? room?.participants ?? []) {
-    const owner = cleanFaceName(member.ownerName || member.owner_name, '')
-    if (owner) owners.push(owner)
-  }
+  const members = snapshot.members ?? room?.participants ?? []
   const at = snapshot.startedAt || snapshot.expiresAt || room?.face?.startedAt || room?.face?.expiresAt || room?.createdAt
   return formatFaceRoomTitle({
     name: snapshot.name || room?.name,
-    owners,
+    members,
     code: code || snapshot.joinCode,
     at,
   })

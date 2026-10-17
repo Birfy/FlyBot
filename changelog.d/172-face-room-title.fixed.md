@@ -1,0 +1,1 @@
+Face-to-face room titles list every participant's owner in stable handle order on all homes, and auto titles refresh when the member list grows. ([#172](https://github.com/ThinkFlowLab/FlyBot/issues/172))
