@@ -79,6 +79,21 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
   const changed = useNews(map => latestMemoryChange(map, memoryIds))
   // The composer placeholder is not localizable per Session, so CSS reads it from here.
   const composerLabel = name ? t('Message {name}', { name }) : t('Message')
+  const blank = useSessions(list => list.byId[sessionId]?.blank === true)
+  const remoteEmptyHint = t("Send a message. Your friend approves unless Auto-send is on.")
+  useEffect(() => {
+    if (bot?.remote && blank) {
+      document.body.dataset.btRemoteChat = 'empty'
+      document.body.style.setProperty('--bt-remote-empty', JSON.stringify(remoteEmptyHint))
+    } else {
+      delete document.body.dataset.btRemoteChat
+      document.body.style.removeProperty('--bt-remote-empty')
+    }
+    return () => {
+      delete document.body.dataset.btRemoteChat
+      document.body.style.removeProperty('--bt-remote-empty')
+    }
+  }, [bot?.remote, blank, remoteEmptyHint])
   useEffect(() => {
     document.body.style.setProperty('--bt-placeholder', JSON.stringify(composerLabel))
     const input = document.querySelector('[data-composer-input]')

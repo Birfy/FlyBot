@@ -148,6 +148,8 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-row-body{display:flex;flex-direction:column;min-width:0;flex:1 1 auto}
 .bt-row-name{display:flex;align-items:center;gap:6px;min-width:0;font-size:14px;line-height:20px;font-weight:400}
 .bt-row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-row:has(.bt-row-remote) .bt-row-title,.bt-row-wrap:has(.bt-row-remote) .bt-row-title{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;text-overflow:ellipsis}
+.bt-row:has(.bt-row-remote) .bt-row-name,.bt-row-wrap:has(.bt-row-remote) .bt-row-name{align-items:flex-start}
 .bt-row-remote{flex:none;display:inline-flex;align-items:center;color:var(--bt-ink-3,rgba(20,20,20,.36))}
 .bt-tag{flex:none;max-width:96px;font-size:12px;line-height:16px;font-weight:400;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-row-preview{font-size:13px;line-height:18px;color:var(--bt-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -844,6 +846,7 @@ header[class*="_header"] .bt-head{flex:1 1 auto;width:100%}
    the shell's new-session hero: no headline, no workspace or mode picker, and the
    composer stays docked at the bottom. */
 [data-content-phase=hero] [class*="_scrollBody"]{justify-content:flex-end!important}
+body[data-bt-remote-chat=empty][data-content-phase=hero] [class*="_scrollBody"]::before{content:var(--bt-remote-empty);display:block;text-align:center;color:var(--bt-ink-3);font-size:13px;line-height:18px;padding:16px 12px 8px;max-width:var(--dsh-chat-content-width,min(960px,100%));margin:0 auto;white-space:pre-wrap}
 [data-content-phase=hero] [class*="_composerHero"]{align-self:stretch!important;width:auto!important;padding-bottom:0!important}
 [data-content-phase=hero] [class*="_composerHero"]>[class$="_root"],[data-content-phase=hero] [class*="_heroWorkspaceRow"]{display:none!important}
 [data-content-phase=hero] [class*="_composerHero"] [class*="_input"]{min-height:0!important}

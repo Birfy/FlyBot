@@ -1,6 +1,8 @@
 // FlyBot product chrome: the mark from docs/images/logo.svg, the tab title, and the favicon.
 // Paths stay here so tests can import them without React.
 
+import { remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
+
 export const FLYBOT_WING = 'M150 238 C 96 200, 40 196, 22 214 C 8 230, 40 262, 150 300 Z'
 export const FLYBOT_WING_LOW = 'M150 318 C 104 300, 62 306, 54 322 C 48 338, 84 352, 150 352 Z'
 export const FLYBOT_BODY = 'M196 132 H316 A80 80 0 0 1 396 212 V300 A80 80 0 0 1 316 380 H250 L188 432 V374 A80 80 0 0 1 116 300 V212 A80 80 0 0 1 196 132 Z'
@@ -22,6 +24,22 @@ export function brandTitle(title) {
   if (text.endsWith(' — DeepSeek Harness')) return `${text.slice(0, -' — DeepSeek Harness'.length)} — FlyBot`
   if (/\bDS Bot\b/.test(text)) return text.replace(/\bDS Bot\b/g, 'FlyBot')
   return text
+}
+
+export function sessionTabLabel(roster, sessionId) {
+  if (!roster || !sessionId) return ''
+  const bot = roster.byId?.[sessionId]
+  const room = roster.roomsById?.[sessionId]
+  if (bot?.remote) {
+    return remoteBotTitle({
+      displayName: bot.name,
+      ownerName: bot.remote.homeName || bot.remote.owner,
+      handle: bot.remote.handle,
+      isChief: bot.remote.isChief,
+    })
+  }
+  if (room) return room.displayName || (room.sharedFrom ? sharedRoomTitle(room.sharedFrom.inviterName) : room.name) || ''
+  return bot?.name || ''
 }
 
 export function installBrandChrome() {

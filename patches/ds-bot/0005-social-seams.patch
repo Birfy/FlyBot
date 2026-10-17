@@ -141,7 +141,15 @@ diff --git a/src/host/channel.js b/src/host/channel.js
  
  const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
  
-@@ -28,7 +28,8 @@ export function install(rt) {
+@@ -21,14 +21,15 @@ export function install(rt) {
+ 
+   // The DSH interface language of the last browser that asked for the team.
+   let uiLocale
+-  rt.uiLanguage = () => (uiLocale === undefined ? undefined : LANGUAGES[uiLocale.split('-')[0].toLowerCase()] ?? uiLocale)
++  rt.uiLanguage = () => (uiLocale === undefined ? 'English' : LANGUAGES[uiLocale.split('-')[0].toLowerCase()] ?? uiLocale)
+ 
+   const ok = value => ({ ok: true, value })
+   const fail = (message, code = 'bot/error') => ({ ok: false, error: { code, message, details: {} } })
    // Models come from DSH, not state.json, so a provider added in Harness settings
    // changes the view without a new revision.
    const modelsKey = () => `${rt.cachedCatalog().map(entry => entry.reasoning ? `${entry.ref}:${JSON.stringify(entry.reasoning)}` : entry.ref).join(',')}|${rt.cachedDefault() ?? ''}`

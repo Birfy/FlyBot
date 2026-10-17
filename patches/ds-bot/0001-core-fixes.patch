@@ -136,6 +136,14 @@ diff --git a/src/client/i18n.js b/src/client/i18n.js
  
    // Header
    'Message {name}': '给 {name} 发消息',
+@@ -238,6 +238,7 @@ const ZH = {
+   'Kept above the other chats.': '排在其他对话上面。',
+   'Search still finds it.': '仍然可以搜索到。',
+   Manage: '管理',
++  "Send a message. Your friend approves unless Auto-send is on.": '发送消息。除非已开启自动发送，否则好友需要批准。',
+ 
+   // Group chat settings
+   'Leave it empty to name the group after its members.': '留空就按成员命名。',
 @@ -312,7 +312,7 @@ const ZH = {
    'No group chats yet.': '还没有群聊。',
    'A group chat lets several Bots work on one thing with you.': '在群聊里，几个 Bot 和你一起做一件事。',
@@ -145,11 +153,12 @@ diff --git a/src/client/i18n.js b/src/client/i18n.js
    'Settings pages': '设置页面',
    'Models, providers, and the rest of DeepSeek Harness': '模型、服务商和 DeepSeek Harness 的其他设置',
    'Harness settings': 'Harness 设置',
-@@ -333,6 +333,7 @@ const ZH = {
+@@ -333,6 +333,8 @@ const ZH = {
    // The DSH Agent's own row and Session list. "DSH Agent" is a product name and
    // stays in English.
    'Add DSH Agent': '添加 DSH Agent',
 +  'Add Agent': '添加 Agent',
++  'Add Bot': '添加 Bot',
    'Remove DSH Agent': '移除 DSH Agent',
    'New session': '新会话',
    Archive: '归档',
