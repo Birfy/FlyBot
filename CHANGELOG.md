@@ -1,8 +1,55 @@
 # Changelog
 
-All notable changes to DS Bot are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain breaking changes.
+All notable changes to FlyBot (earlier: DS Bot) are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the versions follow [Semantic Versioning](https://semver.org/). Before 1.0, a minor version can contain breaking changes. Entries from the historical `0.1.0-dsbot` preview and earlier describe the pre-FlyBot DS Bot lineage.
+
+New entries are written as one fragment file per change in [changelog.d/](changelog.d/README.md) and folded into a release section at release time; `[Unreleased]` below holds entries written before that.
 
 ## [Unreleased]
+
+### Changed
+
+- **Friends' Bots on a high-latency link.** The panel no longer blocks on `Loading…`. It paints a cached roster immediately (stale-while-revalidate) with a small **Refreshing…** mark, and the mount path starts `social/remote-bots`, `social/settings`, and `social/status` together. Grant listing no longer holds the roster (and runs with a concurrency cap). MCP/REST share a keep-alive HTTP agent instead of a new TLS handshake per call. Approvals poll every 15s and pause while the panel is collapsed or the window is hidden; face-room cards do not hammer `GET /v1/face-rooms` unless a room is still a candidate. ([#96](https://github.com/ThinkFlowLab/FlyBot/pull/96) follow-up)
+- **Face-to-face group lives on the sidebar + menu (#92).** The global **+** (next to Search) opens the new-chat picker with **Face-to-face group** / **面对面建群** right after **Create group chat** / **新建群聊**. That row uses the same `t()` map as its neighbours (`flybot.new-chat.action`). It still appears under Friends' Bots **+ Add**, including while the roster is loading. ([#92](https://github.com/ThinkFlowLab/FlyBot/issues/92))
+- **Face-to-face group join screen (#92).** Friends' Bots no longer has an inline **Join with a number** form. **Face-to-face group** opens a screen: pick one or more of your Bots (multi-select; default: the Main Bot), type the 6-digit number, and join at once (no preview). Several selected Bots join the same room (one `social/face-join` per Bot; partial failures stay on screen). A live waiting room lists who joined (Bot and owner; yours marked **mine**) with the countdown, **Enter chat** (starts the room and opens it), and **Leave**. If someone else starts the chat, this screen opens it. Joining an unregistered Bot still registers it for that room only; the screen does not mention published. ([#92](https://github.com/ThinkFlowLab/FlyBot/issues/92))
+- **Per-Bot grants replace `published` (#90).** There is no global “Published to friends” toggle and no “publish all my Bots” concept. Every access is an independent grant: one of my Bots → one person (optionally scoped to a group). Default deny, Chief included. Accepting **Invite to this Bot** creates the grant; **Manage access** on that Bot lists who has it, in which groups, and **Revoke**. Friends' Bots lists only Bots granted to me. A granted Bot can be chatted with and added to a group; inside that group every human may talk to it only there and only within the Bot's own authority. Bringing my own Bot into a face-to-face room by its 6-digit number is an implicit room-scoped grant (room-only auto-registration from #89), never visible outside the room. Upgrading means no Bot is shared until it is granted. Core `reach()` is grant-based; `@flybot/social` isolates grant/invite server calls in `src/mcp-client.js`. ([#90](https://github.com/ThinkFlowLab/FlyBot/issues/90))
+
+### Added
+
+- **Private context stays home in shared rooms.** A Bot only carries its owner's chat brief into a group where another owner sits when the owner shares it (a per-room, revocable share from the Bot's owner — host API `share-brief` now, room UI next); memory reviews in such a room keep entries in the Bot's own memory, never the team's, and read only their own owner as "the user"; `list_bots` no longer discloses another owner's Bot folder or instructions; and referencing a chat you cannot read is refused. Previously received messages are not retroactively unseen. ([#53](https://github.com/ThinkFlowLab/FlyBot/issues/53))
+- **Held sends are bound to their owner.** An approval card shows who sent the request (and when it was relayed between Bots); only the sender Bot's owner can approve, reject, or retry it, the list shows you only your own holds, and a decision is voided safely (`stale`, never sent) when the request changed after it was held or the Bot / Chief authority behind it is gone. ([#52](https://github.com/ThinkFlowLab/FlyBot/issues/52))
+- **Remove a friend's Bot** from Friends' Bots hides it on this install, takes it out of rooms, and does not unfriend. It reappears only if it is granted again. Held Bot replies show in the chat as **Waiting for approval** (owner: Approve / Reject / Auto-send; others: waiting for the owner). ([#90](https://github.com/ThinkFlowLab/FlyBot/issues/90))
+- **Face-to-face join registers a Bot for that room only** when it has no identity yet. `@flybot/social` calls the same `add_home_member` path used for invites, then joins. The identity is not polled, not listed for friends, and is revoked with `remove_home_member` when you leave the last face room or the room closes. A failed join that created one is revoked too so retry is clean. ([#83](https://github.com/ThinkFlowLab/FlyBot/issues/83), [#89](https://github.com/ThinkFlowLab/FlyBot/issues/89), [#90](https://github.com/ThinkFlowLab/FlyBot/issues/90))
+- **Face-to-face group.** People next to you join one group by typing the same 6-digit number. Joining is direct — no preview. The room is a normal group with the full member list as `<Bot> · <owner>'s Bot` (owner badges from #82), one-click **Leave**, and **Start chat** / **Enter chat** (voids the number; a 10-minute countdown while it is still a candidate). Joins, leaves, start, and peer messages render as system / attributed lines; Bot replies go through Bot Social (`pending_approval` uses the existing Approve / Reject queue). **Auto-send my Bot's room messages** in the room header (and **Approve and always auto-send in this room** / **Turn on auto-send** on a waiting draft) is one click onto `auto_approve_face_rooms`; default off, easy to turn off again. Peer text is fenced. Entry and waiting-room UI: #92. ([#83](https://github.com/ThinkFlowLab/FlyBot/issues/83))
+- **Native rooms take human, Chief, and granted friend Bots.** A room can list people (Alice, Bob), each side’s designated Chief, and a friend’s Bot that was granted to you (`social/remote-bots`). Remotes show as `<Bot> · <owner>'s Bot` (Chief: `<owner>'s Chief`) with an owner badge. The owner of an invited Bot sees **Shared room from \<inviter\>**, only lines from that Bot’s join seq, and can remove their Bot. Ungranted specialists stay private (host-enforced). Replies still go through Bot Social’s outbound hold. Team mode stays disabled. ([#50](https://github.com/ThinkFlowLab/FlyBot/issues/50))
+- **Friends' Bots pending approvals:** outbound drafts Bot Social holds (`pending_approval`) show a persistent badge and Approve / Reject in Friends' Bots. Inbound messages still arrive immediately; Auto-accept still skips the hold. (#69)
+- Plugins can write to the host diagnostics log with `flybot.warn` (Settings → Feedback). `@flybot/social` uses this when start fails. ([#68](https://github.com/ThinkFlowLab/FlyBot/issues/68))
+
+### Fixed
+
+- **Remove this Bot** no longer comes back after ×. A hide is forgotten only after two consecutive successful `list_remote_bots` results without that handle (or a real revoke), never on a failed, partial, or legacy `list_friends` fetch. Hidden handles stay out of `flybot.remote.publish`; gone and home-level remotes (`Friend` at `@something.home`) are hidden in the sidebar and the **发给 / 和谁聊…** picker, with history kept. Picker rows use the same owner label as the sidebar (`<Bot> · <owner>'s Bot`, Chief → `<owner>'s Chief`).
+- **Remove this Bot** no longer waits for room leave or a roster refetch: the hide is saved and the filtered list returns immediately; rooms leave in parallel and a fresh fetch continues in the background. Concurrent removes keep their own “Removing…” state. The control is a compact × on row hover/focus (keyboard and the right-click menu still reach it).
+- Peer-published Bot labels (`name`, `homeName`, `owner`) are sanitized at `cleanRemote`: `@` and control characters/newlines are stripped, then the 60-character cap still applies, so a display name cannot impersonate another member's handle. ([#75](https://github.com/ThinkFlowLab/FlyBot/issues/75))
+- A chat with a friend's Bot that Bot Social has paused (turn budget reached, loop suspicion, emergency stop) now says so and points at the Bot Social console, instead of failing with a bare "Not sent: …" card. A paused conversation is no longer retried with the friendship's other Bots. ([#72](https://github.com/ThinkFlowLab/FlyBot/issues/72))
+- Friends' Bots no longer shows the raw host error `Unknown FlyBot endpoint social/remote-bots` when `@flybot/social` failed to start. The section shows `Social is not running: <reason>` instead, a 409 `handle_taken` names the taken home handle and says to change `displayName`, and the start failure is written to host diagnostics (Settings → Feedback). ([#68](https://github.com/ThinkFlowLab/FlyBot/issues/68))
+- Owner-scoped access (#49) now lets a signed-in owner actually use their own team: session targets resolve again for Bot ids, current chats, group Sessions and earlier parts (own-bot sends were denied), the `flybot/*` plugin endpoints reach the plugin layer instead of answering `bot/not-found`, approvals are answered by their approval id, and the sole signed-in owner keeps the deployment-wide UI surfaces (agents, secrets, questions, connectors, memory reviews) that the first cut hid. With more than one member, plugin writes and `add-agent` join the explicitly blocked shared resources, and `create-room` refuses an empty member list.
+
+## [0.1.0] - 2026-10-14
+
+First public FlyBot-branded cut (core package remains `0.1.5-flybot.1`).
+
+### Highlights
+
+- Peer plugins `@flybot/tree` and `@flybot/social` under `plugins/`
+- Pristine ds-bot + FlyBot patches → `core/` at `0.1.5-flybot.1`
+- Send middleware priorities ROUTING / DEFAULT / APPROVAL
+- `types/flybot.d.ts` documents the browser `flybot` service
+
+### Changed
+
+- The core is now pristine upstream ds-bot (`ds-bot/`, pinned at Fei2411/DeepSeek-Bot@2b10c70) plus FlyBot's ordered patch series (`patches/ds-bot/`), applied into the committed `core/` (#34). Install paths move from `path:/ds-bot` to `path:/core` and `path:/plugins/{social,tree}`. The core's version is `0.1.5-flybot.1`.
+- Send middleware can set a `priority` (`ROUTING` 100, `DEFAULT` 500, `APPROVAL` 900; `flybot.bot.send.priority`); names in `before`/`after` still work and win over priority. `@flybot/social` runs at `APPROVAL`.
+- `types/flybot.d.ts` documents the browser `flybot` service and its slots.
+- The plugins are peer packages at the repo root: `@flybot/tree` (`plugins/tree`, by recursive-bot) and `@flybot/social` (`plugins/social`, moved out of `core/plugins/social`). Each needs `ds-bot >=0.1.5-flybot.1`, tests itself against `core/`, and has its own CI job (`plugins (tree)`, `plugins (social)`, both required by `tests-ok`). Reinstall the social plugin from `path:/plugins/social`.
 
 ## [0.1.5] - 2026-10-13
 
@@ -16,7 +63,7 @@ All notable changes to DS Bot are listed here. The format follows [Keep a Change
 - Bots no longer use DeepSeek Harness's own question card, which held the Bot until you answered it while messages from other Bots waited.
 - A Bot that messaged a Bot stuck on earlier work was told "Delivered" every time, with no sign that nothing was read. It is now told how many earlier messages wait unread and when the other Bot waits for your approval, and after 10 unread messages `message_bot` fails and tells it to report the stuck Bot to you.
 - On model providers that need every request to name its conversation, such as OpenCode Go, the memory panel, automatic memory updates, the context check of long chats and image reading for text-only models failed. They now work there too.
-- The memory panel's summary, its "ask or update" and the memory review no longer stop when the Bot's model refuses the call or runs out of output budget: they try once more on the profile's default model. After you change the Bot's model, a failed summary is written again automatically. ([#116](https://github.com/Fei2411/DeepSeek-Bot/issues/116))
+- The memory panel's summary, its "ask or update" and the memory review no longer stop when the Bot's model refuses the call or runs out of output budget: they try once more on the profile's default model. After you change the Bot's model, a failed summary is written again automatically. ([#116](https://github.com/ThinkFlowLab/FlyBot/issues/116))
 - With the `ptc` agent preset, the team view and a Bot's character show the tool the Bot runs from its code, an approval card says what that tool does, and a question card asked from code is kept in chat search and in the next part of the chat. In a group chat, a member that only reads the chat or checks the team no longer leaves the round as if it had gone off to work.
 - Switching from Bot mode back to Agent mode no longer leaves parts of the Bot interface on screen, such as the chat header or Bot messages without their styles, when one part fails to close. The other parts still close, and Bot mode opens normally again.
 - DS Bot no longer sets DeepSeek Harness's work-details mode (Settings → General) to the most detailed one, and no longer hides that setting. Bot chats stay flat in every mode, and your choice applies again outside them. If you had chosen another mode before, choose it again once: DS Bot cannot tell which one it was.
@@ -106,7 +153,9 @@ Tested with DeepSeek Harness `0.2.1-alpha.1` (DSH Desktop and DSH Web).
 - A turn with many steps shows one "Thought it through" row instead of one per step. The row holds the thinking of every step in order.
 - The Usage page counts the calls of subagent Sessions too. Before, each scan skipped them and wrote one warning per subagent Session to the terminal.
 
-## [0.1.0] - 2026-10-10
+## [0.1.0-dsbot] - 2026-10-10
+
+The pre-FlyBot DS Bot preview lineage, retitled so its version anchor does not collide with FlyBot's `0.1.0`.
 
 The first public preview. Tested with DeepSeek Harness `0.2.1-alpha.1` (DSH Desktop and DSH Web).
 
@@ -146,10 +195,11 @@ If you used the legacy `dsh-bot` package, remove it before you install `ds-bot`.
 - Only one DSH can change a team at a time; a second DSH on the same DSH home opens it read-only ([Data and backups](ds-bot/README.md#data-and-backups)).
 - Group chats use many tokens: each member reads the group and answers in turn.
 
-[Unreleased]: https://github.com/Fei2411/DeepSeek-Bot/compare/v0.1.5...HEAD
-[0.1.5]: https://github.com/Fei2411/DeepSeek-Bot/compare/v0.1.4...v0.1.5
-[0.1.4]: https://github.com/Fei2411/DeepSeek-Bot/compare/v0.1.3...v0.1.4
-[0.1.3]: https://github.com/Fei2411/DeepSeek-Bot/compare/v0.1.2...v0.1.3
-[0.1.2]: https://github.com/Fei2411/DeepSeek-Bot/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/Fei2411/DeepSeek-Bot/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/Fei2411/DeepSeek-Bot/releases/tag/v0.1.0
+[Unreleased]: https://github.com/ThinkFlowLab/FlyBot/compare/v0.1.0...HEAD
+[0.1.5]: https://github.com/ThinkFlowLab/FlyBot/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/ThinkFlowLab/FlyBot/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/ThinkFlowLab/FlyBot/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/ThinkFlowLab/FlyBot/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/ThinkFlowLab/FlyBot/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/ThinkFlowLab/FlyBot/releases/tag/v0.1.0
+[0.1.0-dsbot]: https://github.com/Fei2411/DeepSeek-Bot/releases/tag/v0.1.0

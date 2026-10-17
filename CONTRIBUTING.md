@@ -1,10 +1,34 @@
-# Contributing to DS Bot
+# Contributing to FlyBot
 
 Thank you for helping. This file explains how to set up the plugin, how to test a change and which rules a change must follow. For what the plugin does and how users install it, see [README.md](README.md).
 
 ## Pull requests
 
-Thank you for your interest in improving DS Bot. The project is still changing quickly, so we are not accepting pull requests for now. If you find a problem, please open an issue (see [Report a problem](#report-a-problem)). For a question, idea or feature request, use [Discussions](https://github.com/Fei2411/DeepSeek-Bot/discussions). We hope to open pull requests again when the project is stable. Thank you for your understanding.
+**ThinkFlowLab/FlyBot** accepts pull requests for FlyBot plugin and docs work when they follow this file, [AGENTS.md](AGENTS.md), [LESSONS.md](LESSONS.md), and [docs/code-standards.md](docs/code-standards.md). Prefer small PRs: one issue or one tightly coupled fix per branch.
+
+Upstream **DS Bot** (`Fei2411/DeepSeek-Bot`) may still decline external PRs while that tree moves quickly—open an issue there (see [Report a problem](#report-a-problem)) or use [Discussions](https://github.com/Fei2411/DeepSeek-Bot/discussions) for product questions. Do not assume a FlyBot PR is automatically upstreamed.
+
+Security reports: use the repository **Security** tab, not a public PR description with exploit detail.
+
+## Maintainer / agent loop
+
+For agent-driven work on this repository (Grok Bot as the human’s unified entry):
+
+1. Read [LESSONS.md](LESSONS.md) and [docs/code-standards.md](docs/code-standards.md) before coding.
+2. **OpenCode** implements (default model `opencode/step-5-preview-free`); **Codex** reviews the tip until both **PASS and agree**.
+3. Security follow-ups from PR #2 first when open: issues #9 → #10 → #8, then other review bugs.
+4. One worktree / session per issue. Promote LESSONS into code-standards after ≥3 days when the rule stays true.
+5. Reviewers use [`.claude/skills/review-pr/SKILL.md`](.claude/skills/review-pr/SKILL.md).
+
+### Verifier checklist (every agent or maintainer status report)
+
+- [ ] Tip SHA named (`git rev-parse HEAD`)
+- [ ] Commands **run** at that tip listed with pass/fail
+- [ ] Material checks **not run** listed (smoke / Desktop / real model / …)
+- [ ] New regression fails without the fix, then passes with it (when adding tests)
+- [ ] Fix covers the **class** (shared fence helper, sanitization), not only one sample
+- [ ] OpenCode and Codex agree PASS on the same tip before merge / “open PR”
+- [ ] `npm test`, `node scripts/build-client.mjs --check`, `npm run lint` green for code changes (or honestly waived)
 
 ## The rules that matter most
 
@@ -23,8 +47,8 @@ You need:
 - For the test bench only: pnpm `11` and a checkout of DeepSeek Harness at the DSH version that the plugin is tested with.
 
 ```sh
-git clone https://github.com/Fei2411/DeepSeek-Bot.git ds-bot-repo
-cd ds-bot-repo/ds-bot
+git clone https://github.com/ThinkFlowLab/FlyBot.git ds-bot-repo
+cd ds-bot-repo/core
 
 # The plugin's own build tool (esbuild only).
 npm ci
@@ -44,23 +68,23 @@ git -C deepseek-harness checkout dsh-v0.2.0-rc.2
 
 If your DeepSeek Harness checkout is somewhere else, set `DSH_HARNESS` to its path. `DSH_HARNESS` also takes the place of `dev/harness/` for the unit tests and the linter.
 
-The `@deepseek-ai/*` packages are peer dependencies: in a real install, the DSH profile supplies them. `ds-bot/.npmrc` keeps npm from installing them into the plugin folder.
+The `@deepseek-ai/*` packages are peer dependencies: in a real install, the DSH profile supplies them. `core/.npmrc` keeps npm from installing them into the plugin folder.
 
 ## Layout
 
 | Path | What it is |
 |---|---|
-| `ds-bot/index.js`, `ds-bot/src/host/` | The server side: Bot roster and store, tools, turns and delivery, group chats, conversation parts and the search index, images, the Bot browser bridge, the `api/bot` channel |
-| `ds-bot/src/client/` | The browser side: sidebar, chat, panels and dialogs, themes, characters, the Bot browser panel |
-| `ds-bot/client.js` | Generated from `src/client/` by `scripts/build-client.mjs`. It is committed, so that Git installs need no build step |
-| `ds-bot/web-search.js` | The `auto` web-search provider. It does not depend on the Bot team code |
-| `ds-bot/cordis.patch.yml` | The profile patch that the plugin brings |
-| `ds-bot/test/` | Unit tests and fixtures |
-| `ds-bot/dev/` | The DSH packages for the unit tests (`harness/`), the mock model, the test bench, the smoke test, the character generator, the Desktop scripts for Linux, and two tools for real models: the steward evaluation and a logging pass-through |
+| `core/index.js`, `core/src/host/` | The server side: Bot roster and store, tools, turns and delivery, group chats, conversation parts and the search index, images, the Bot browser bridge, the `api/bot` channel |
+| `core/src/client/` | The browser side: sidebar, chat, panels and dialogs, themes, characters, the Bot browser panel |
+| `core/client.js` | Generated from `src/client/` by `scripts/build-client.mjs`. It is committed, so that Git installs need no build step |
+| `core/web-search.js` | The `auto` web-search provider. It does not depend on the Bot team code |
+| `core/cordis.patch.yml` | The profile patch that the plugin brings |
+| `core/test/` | Unit tests and fixtures |
+| `core/dev/` | The DSH packages for the unit tests (`harness/`), the mock model, the test bench, the smoke test, the character generator, the Desktop scripts for Linux, and two tools for real models: the steward evaluation and a logging pass-through |
 
 ## Test a change
 
-Run these in `ds-bot/`:
+Run these in `core/`:
 
 ```sh
 npm run build                          # src/client → client.js
@@ -96,26 +120,36 @@ For a change to the Bot browser, check it in DSH Desktop. On Linux, the scripts 
 - Do not edit `client.js` by hand. Change `src/client/`, run `npm run build` and commit both.
 - Follow the style of the code around your change. Write a comment only when the reason for the code is not clear from the code itself.
 - Write commit messages in English. Use a short subject in the imperative mood ("Keep group replies visible") and explain the reason in the body.
-- Add an entry to [CHANGELOG.md](CHANGELOG.md) under "Unreleased" for a change that users can see.
+- For a change that users can see, add one file `changelog.d/<issue-or-slug>.<kind>.md` (kind: `added`, `changed`, `fixed`, ...; see [changelog.d/README.md](changelog.d/README.md)). Do not edit [CHANGELOG.md](CHANGELOG.md) in a feature PR: the release assembles the fragments, and one file per change means two PRs never conflict there.
 
 ## Report a problem
 
-The easiest way is from DS Bot itself: open **Settings → Feedback**, write what happened and select **Report on GitHub**. It opens a new issue with the DS Bot and DSH versions, your system, the models and the recent errors already filled in. **Copy** puts the same text on the clipboard, and **Download** saves the full error log (`<DSH_HOME>/bot/logs/diagnostics.jsonl`).
+The easiest way is from FlyBot itself: open **Settings → Feedback**, write what happened and select **Report on GitHub**. It opens a new issue with the core (`ds-bot`) and DSH versions, your system, the models and the recent errors already filled in. **Copy** puts the same text on the clipboard, and **Download** saves the full error log (`<DSH_HOME>/bot/logs/diagnostics.jsonl`). For now the core's **Report on GitHub** button opens the issue form of the upstream `ds-bot` repository (Fei2411/DeepSeek-Bot). Problems with FlyBot or its plugins belong in [ThinkFlowLab/FlyBot issues](https://github.com/ThinkFlowLab/FlyBot/issues): copy the report there instead (see #33 / #34).
 
 If you open an issue by hand, include:
 
 - The DSH version (DSH Desktop or `@deepseek-ai/dsh`), your operating system, and whether you use DSH Desktop or DSH Web.
-- How you installed DS Bot (npm, release file, Git address or command line) and its version.
+- How you installed FlyBot (npm, release file, Git address or command line) and its version.
 - What you did, what you expected and what happened, with the exact error text.
 - A screenshot of the whole window, with the chat and the error.
 - The steps that make it happen again.
 
-DS Bot removes API keys, tokens, saved secrets and your home folder from its diagnostics. Read the text before you post it, and remove personal data from screenshots.
+FlyBot removes API keys, tokens, saved secrets and your home folder from its diagnostics. Read the text before you post it, and remove personal data from screenshots.
 
 For a security problem, do not open a public issue. Use **Report a vulnerability** on the repository's **Security** tab.
 
-Issues are for bug reports. Questions, ideas and feature requests belong in [Discussions](https://github.com/Fei2411/DeepSeek-Bot/discussions).
+Issues are for bug reports. Questions, ideas and feature requests belong in [Discussions](https://github.com/ThinkFlowLab/FlyBot/discussions).
+
+
+## Agent docs map
+
+| Doc | Role |
+|---|---|
+| [AGENTS.md](AGENTS.md) | Hard DSH rules + Magpie-style iteration loop |
+| [LESSONS.md](LESSONS.md) | Dated lessons (`Seen N×`); promote after ≥3 days |
+| [docs/code-standards.md](docs/code-standards.md) | Verifier honesty, fences, merge-only-reviewed-tip |
+| [`.claude/skills/review-pr/SKILL.md`](.claude/skills/review-pr/SKILL.md) | PASS / FAIL / INC review report shape |
 
 ## License
 
-DS Bot is licensed under the [Apache License 2.0](LICENSE). When you submit a contribution, you agree that it is licensed under the same license, as section 5 of the license says.
+FlyBot is licensed under the [Apache License 2.0](LICENSE). When you submit a contribution, you agree that it is licensed under the same license, as section 5 of the license says.
