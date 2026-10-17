@@ -43,6 +43,7 @@ test('Bot settings is the only settings entry; nothing is called Team settings',
   assert.match(text('context-menu.js'), /bot\?\.remote/)
   assert.match(text('context-menu.js'), /\[t\('Bot settings'\), GearIcon, \(\) => actions\.openSettings\('bots', bot\.id\)\]/)
   assert.match(text('details-drawer.js'), /bot\.remote \? t\('Bot settings'\) : t\('Edit Bot'\)/)
+  assert.match(text('details-drawer.js'), /bot && bot\.remote && tab === 'details'[\s\S]*FlyBotDetails/)
   assert.match(text('bot-settings.js'), /if \(bot\.remote\)/)
   assert.match(text('bot-settings.js'), /Friend's Bot/)
   assert.match(text('settings.js'), /filter\(bot => !bot\.remote\)/)

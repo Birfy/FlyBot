@@ -73,6 +73,9 @@ window.__ModuleLoader__.load({
 .fs-msg{white-space:normal;overflow-wrap:anywhere}
 .fs-actions{flex:none;display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;max-width:100%}
 .fs-card{margin:4px 4px 2px;padding:10px;border:1px solid var(--bt-line,rgba(20,20,20,.08));border-radius:10px;background:var(--bt-card,#fff);display:flex;flex-direction:column;gap:8px}
+.fs-friend-settings{gap:10px;max-width:280px}
+.fs-friend-settings .fs-auto{align-self:flex-start}
+.fs-friend-settings .fs-link{align-self:flex-start;color:var(--bt-ink-3,rgba(20,20,20,.36))}
 .fs-card .fs-hint{padding:0}
 .fs-line{display:flex;gap:6px;min-width:0;align-items:center}
 .fs-input{flex:1 1 auto;min-width:0;width:0;height:30px;padding:0 9px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:13px;outline:none;text-overflow:ellipsis}
@@ -130,8 +133,8 @@ window.__ModuleLoader__.load({
 .fs-hold{box-sizing:border-box;width:100%;max-width:min(460px,100%);min-width:0;margin:0;padding:10px 12px;border:.5px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:14px;background:var(--bt-card,#fff);color:var(--bt-ink,#141414);display:flex;flex-direction:column;gap:6px;box-shadow:0 1px 2px rgba(20,20,20,.06);overflow:hidden}
 .fs-hold .fs-label{padding:0;font-size:11px;line-height:14px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--bt-ink-3,rgba(20,20,20,.36))}
 .fs-hold .fs-sub{font-size:13px;line-height:18px;font-weight:500;color:var(--bt-ink,#141414);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.fs-hold .fs-draft{margin:0;font-size:13px;line-height:18px;color:var(--bt-ink-2,rgba(20,20,20,.6));overflow-wrap:anywhere;white-space:pre-wrap;max-height:none}
-.fs-hold .fs-draft[data-clamp]{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;white-space:normal;max-height:calc(18px * 3)}
+.fs-hold .fs-draft{margin:0;font-size:13px;line-height:18px;color:var(--bt-ink-2,rgba(20,20,20,.6));overflow-wrap:break-word;word-break:normal;white-space:pre-wrap;max-height:none}
+.fs-hold .fs-draft[data-clamp]{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;white-space:normal;overflow-wrap:break-word;word-break:normal;max-height:calc(18px * 3)}
 .fs-hold-more{align-self:flex-start;margin:0;padding:0;border:0;background:none;color:var(--bt-accent,#4d6bfe);font:inherit;font-size:12px;line-height:16px;cursor:pointer}
 .fs-hold-more:hover{text-decoration:underline}
 .fs-hold-always{flex:none;margin:0;padding:0 2px;height:28px;border:0;background:none;color:var(--bt-ink-2,rgba(20,20,20,.6));font:inherit;font-size:12px;line-height:16px;font-weight:500;cursor:pointer;white-space:nowrap}
@@ -443,7 +446,7 @@ window.__ModuleLoader__.load({
       const raw = String(value ?? '')
       const mark = 'FLYBOT-FACE-HUMAN'
       const at = raw.indexOf(mark)
-      if (at < 0) return raw
+      if (at < 0) return stripHoldPrefix(raw)
       const start = raw.indexOf('{', at)
       if (start < 0) return raw.slice(0, at).trim()
       let depth = 0
@@ -456,13 +459,16 @@ window.__ModuleLoader__.load({
           if (depth === 0) { end = i; break }
         }
       }
-      if (end < 0) return raw.slice(0, at).trim()
+      if (end < 0) return stripHoldPrefix(raw.slice(0, at).trim())
       try {
         const parsed = JSON.parse(raw.slice(start, end + 1))
         const text = typeof parsed?.text === 'string' ? parsed.text.trim() : ''
-        if (text) return text
+        if (text) return stripHoldPrefix(text)
       } catch { /* fall through */ }
-      return raw.slice(0, at).trim()
+      return stripHoldPrefix(raw.slice(0, at).trim())
+    }
+    function stripHoldPrefix(text) {
+      return String(text ?? '').replace(/^(to (the )?face[ -]?room|to the room)\s*:\s*/i, '').trim()
     }
 
     // Separate Face-to-face group screen (#92): pick Bots, join by number, live waiting room.
@@ -791,9 +797,14 @@ window.__ModuleLoader__.load({
       const handles = new Set((room?.participants ?? []).map(p => p.handle).filter(Boolean))
       if (handle) handles.add(handle)
       return list.filter(item => {
+        if (item.kind === 'face_room_message') {
+          if (faceId && (!item.roomId || item.roomId === faceId)) return true
+          if (room?.id && item.roomId === room.id) return true
+          return Boolean(face && !item.roomId)
+        }
         if (faceId && item.roomId === faceId) return true
         if (room?.id && item.roomId === room.id) return true
-        if (face && item.kind === 'face_room_message' && !item.roomId) return true
+        if (item.roomId) return false
         if (item.to && handles.has(item.to)) return true
         if (sessionId && item.sessionId === sessionId) return true
         return false
@@ -1076,10 +1087,8 @@ window.__ModuleLoader__.load({
       useStyles()
       const [error, setError] = useState('')
       const [adding, setAdding] = useState(false)
-      const [pending, setPending] = useState([])
       const [faceOpen, setFaceOpen] = useState(false)
-      const loadApprovals = () => call('social/status', {}).then(value => {
-        setPending(Array.isArray(value?.approvals) ? value.approvals : [])
+      const loadApprovals = () => call('social/status', {}).then(() => {
         setError('')
       }, e => setError(errorText(e)))
       useEffect(() => {
@@ -1095,31 +1104,12 @@ window.__ModuleLoader__.load({
       }, [])
       useEffect(() => facePanel.bind(() => setFaceOpen(true)), [])
       useEffect(() => addFriendPanel.bind(() => setAdding(true)), [])
-      const chats = remoteChats ?? []
       const unavailable = String(error).startsWith('Social is not running:')
-      const openItem = (item) => {
-        if (!item || typeof actions?.openSession !== 'function') return
-        const chat = chats.find(entry => entry.remote?.handle === item.to)
-        if (chat) {
-          actions.openSession(chat.sessionId || chat.id)
-          return
-        }
-        const rooms = actions.roster?.rooms ?? roster?.rooms ?? []
-        const hosted = rooms.find(entry => entry.face?.roomId === item.roomId || entry.id === item.roomId)
-        if (hosted?.id) actions.openSession(hosted.id)
-        else if (item.roomId) actions.openSession(item.roomId)
-        else if (item.sessionId) actions.openSession(item.sessionId)
-      }
       if (unavailable) {
         return h('section', { className: 'fs bt-social', 'aria-label': 'Social' },
           h('div', { className: 'fs-empty', 'data-flybot': 'social-unavailable' }, error))
       }
       return h('section', { className: 'fs bt-social', 'aria-label': 'Social' },
-        pending.length ? h('button', {
-          type: 'button', className: 'fs-tag fs-pending-tag', 'data-flybot': 'pending-badge',
-          title: `${pending.length} outbound ${pending.length === 1 ? 'reply' : 'replies'} waiting for your approval. Opens that chat.`,
-          onClick: () => openItem(pending[0]),
-        }, `${pending.length} to approve`) : null,
         error ? h('div', { className: 'fs-status', 'data-tone': 'error', style: { padding: '4px 10px' } }, error) : null,
         h(FaceRooms, { actions, enabled: true, roster, remoteChats }),
         adding ? h(AddFriend, { onChange: loadApprovals, onDone: () => setAdding(false) }) : null,
@@ -1341,15 +1331,13 @@ window.__ModuleLoader__.load({
           actions?.closeOverlay?.()
         } catch (e) { setError(errorText(e)) } finally { setBusy(false) }
       }
-      return h('div', { className: 'fs fs-card', 'data-flybot': 'friend-chat-settings' },
-        h('div', { className: 'fs-name' }, bot.name || handle),
-        h('div', { className: 'fs-hint' }, handle),
+      return h('div', { className: 'fs fs-card fs-friend-settings', 'data-flybot': 'friend-chat-settings' },
         h('label', { className: 'fs-auto', title: AUTO_SEND_NOTE, 'data-flybot': 'friend-auto-send' },
           h('input', { type: 'checkbox', checked: auto === true, disabled: saving || !home, onChange: e => toggleAuto(e.target.checked) }),
           'Auto-send'),
         h('button', {
           type: 'button',
-          className: 'fs-btn',
+          className: 'fs-link',
           'data-flybot': 'remove-friend-bot',
           title: 'Remove this Bot from your list and from your groups. This does not unfriend the owner.',
           'aria-label': busy ? 'Removing…' : 'Remove this Bot',

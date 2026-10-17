@@ -15,7 +15,7 @@ import { Segmented, useGlide, useMorph } from './motion.js'
 import { MemberWork, useMemberWork } from './member-status.js'
 import { t } from './i18n.js'
 import { remoteBotTitle, sharedRoomTitle } from '../shared/remote-label.js'
-import { FlyBotRoomOverview } from './flybot-slots.js'
+import { FlyBotRoomOverview, FlyBotDetails } from './flybot-slots.js'
 import { call } from './api.js'
 
 function transcriptOf(list, id, name, hiddenTurns = []) {
@@ -205,8 +205,8 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) 
       })])),
     face ? null : h('div', { key: 'mode' }, h('div', { className: 'bt-section-title' }, t('Who answers')),
       h('div', { className: 'bt-kv' }, h('span', null, t(ROOM_MODES.find(([id]) => id === shownMode(room, roster))?.[1] ?? 'Everyone')))),
-    usage ? h('div', { key: 'usage' }, h('div', { className: 'bt-section-title' }, t('Usage')),
-      h('div', { className: 'bt-kv' }, h('span', null, room.name), h('span', null, usage))) : null,
+    face || !usage ? null : h('div', { key: 'usage' }, h('div', { className: 'bt-section-title' }, t('Usage')),
+      h('div', { className: 'bt-kv' }, h('span', null, room.name), h('span', null, usage))),
   ]
 }
 
@@ -303,6 +303,7 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
       room && tab === 'details' ? h(GroupOverview, { room, roster, actions, usage, useWork, openSettings: () => setView('settings') }) : null,
       bot && bot.remote && tab === 'details' ? [
         bot.remote.handle ? h('div', { key: 'handle', className: 'bt-muted' }, bot.remote.handle) : null,
+        h(FlyBotDetails, { key: 'social', bot, roster, actions }),
       ] : null,
       bot && !bot.remote && tab === 'details' ? [
         h('div', { key: 'model', className: 'bt-drawer-model' },

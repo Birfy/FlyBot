@@ -88,7 +88,8 @@ export const draftText = (value) => String(value ?? '').replace(/[\u0000-\u001f\
 export function approvalDraftText(value) {
   const raw = draftText(value)
   const human = parseFaceHuman(raw)
-  return human ? draftText(human.text) : raw
+  const body = human ? draftText(human.text) : raw
+  return body.replace(/^(to (the )?face[ -]?room|to the room)\s*:\s*/i, '').trim()
 }
 // Bot Social list_approvals card → the Friends' Bots queue (outbound drafts only).
 const looksLikeBotId = (value) => /^bot_[a-z0-9]+$/i.test(String(value ?? '').trim())
@@ -1791,12 +1792,21 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     }
     if (room?.sharedFrom?.invitedHandle) handles.add(norm(room.sharedFrom.invitedHandle))
     const faceId = room?.face?.roomId
-    return pendingCache.items.filter(item => handles.has(norm(item.from)) || handles.has(norm(item.to)) || (faceId && item.roomId === faceId))
+    return pendingCache.items.filter((item) => {
+      if (item.kind === 'face_room_message') {
+        return Boolean(faceId) && (!item.roomId || item.roomId === faceId || item.roomId === room.id)
+      }
+      if (item.roomId) return item.roomId === room.id || (faceId && item.roomId === faceId)
+      return handles.has(norm(item.from)) || handles.has(norm(item.to))
+    })
   })
   flybot.chatApprovals?.setProvider?.((bot) => {
     const handle = bot?.remote?.handle ? norm(bot.remote.handle) : ''
     if (!handle) return []
-    return pendingCache.items.filter(item => norm(item.to) === handle || norm(item.from) === handle)
+    return pendingCache.items.filter((item) => {
+      if (item.kind === 'face_room_message' || item.roomId) return false
+      return norm(item.to) === handle || norm(item.from) === handle
+    })
   })
 
   // ------------------------------------------------------------ face-to-face rooms (#83)
@@ -1983,18 +1993,28 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     }, asBot)
     let seen = settings.faceRooms[snapshot.roomId].seen
     const joinedFromEvents = new Set()
+    const alreadyJoined = (text) => {
+      const body = String(text ?? '')
+      if (!body) return false
+      return (room?.log ?? []).some(line => (line.kind === 'joined' || line.kind === 'notice') && line.text === body)
+        || seen.includes(`join-text:${body}`)
+    }
     for (const event of snapshot.events ?? []) {
       if (event.eventId && seen.includes(event.eventId)) continue
       const line = renderFaceEvent(event)
       if (!line) continue
       seen = rememberEvent(seen, event.eventId)
       if (line.system) {
-        if (line.kind === 'joined' && event.member?.handle) {
-          const handle = norm(event.member.handle)
-          const key = `join:${handle}`
-          joinedFromEvents.add(handle)
-          if (seen.includes(key)) continue
-          seen = rememberEvent(seen, key)
+        if (line.kind === 'joined') {
+          const handle = norm(event.member?.handle)
+          if (handle) {
+            joinedFromEvents.add(handle)
+            const key = `join:${handle}`
+            if (seen.includes(key)) continue
+            seen = rememberEvent(seen, key)
+          }
+          if (alreadyJoined(line.text)) continue
+          seen = rememberEvent(seen, `join-text:${line.text}`)
         }
         flybot.rooms.applyFaceLine?.(room.id, line)
         void flybot.rooms.postNotice?.(room.id, line.text)
@@ -2017,8 +2037,13 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       if (handle && !localHandles.has(handle)) markRoomRemote(handle, snapshot.roomId)
       const key = `join:${handle}`
       if (!handle || previousLive.has(handle) || joinedFromEvents.has(handle) || seen.includes(key)) continue
-      seen = rememberEvent(seen, key)
       const text = platformJoinText(member)
+      if (alreadyJoined(text)) {
+        seen = rememberEvent(seen, key)
+        continue
+      }
+      seen = rememberEvent(seen, key)
+      seen = rememberEvent(seen, `join-text:${text}`)
       flybot.rooms.applyFaceLine?.(room.id, { kind: 'joined', who: 'Room', text, authorKind: 'system' })
       void flybot.rooms.postNotice?.(room.id, text)
     }

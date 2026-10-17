@@ -762,7 +762,7 @@ test('Friends\' Bots (#21): friends are not a separate per-home group in the soc
   sandbox.globalThis = sandbox
   sandbox.__flybot__ = flybot
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
-  const initial = ['', false, [], false]
+  const initial = ['', false, false]
   let i = 0
   const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
   const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
@@ -1096,6 +1096,7 @@ test('approvalView: outbound draft text is sanitized, friend requests stay out',
   const packed = encodeFaceHuman({ who: 'BoxA', text: 'hello from the owner' })
   assert.equal(approvalDraftText(packed), 'hello from the owner')
   assert.equal(approvalDraftText(`To the room: ${packed}`), 'hello from the owner')
+  assert.equal(approvalDraftText('To face room: hello from the owner'), 'hello from the owner')
   assert.doesNotMatch(approvalDraftText(packed), /FLYBOT-FACE-HUMAN/)
   const faceHold = approvalView({
     approval_id: 'apr-face-human',
@@ -1109,7 +1110,7 @@ test('approvalView: outbound draft text is sanitized, friend requests stay out',
   assert.doesNotMatch(faceHold.text, /FLYBOT-FACE-HUMAN/)
 })
 
-test('Friends\' Bots (#69): a pending approval shows a badge and a one-line jump row', () => {
+test('Friends\' Bots (#69): a pending approval opens from the jump row, not a sidebar badge', () => {
   const registered = []
   const entries = []
   const flybot = {
@@ -1126,7 +1127,7 @@ test('Friends\' Bots (#69): a pending approval shows a badge and a one-line jump
   sandbox.__flybot__ = flybot
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
   const pending = [{ id: 'apr-hold-1', kind: 'outbound_message', from: '代码审查官', to: '@hsliu.bot', toName: 'hsliu', text: 'I can review that' }]
-  const initial = ['', false, pending, false]
+  const initial = ['', false, false]
   let i = 0
   const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
   const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
@@ -1140,7 +1141,7 @@ test('Friends\' Bots (#69): a pending approval shows a badge and a one-line jump
     ;(node.children ?? []).forEach(walk)
   }
   walk(tree)
-  assert.ok(all.some(n => n.props['data-flybot'] === 'pending-badge' && n.children.includes('1 to approve')))
+  assert.equal(all.some(n => n.props['data-flybot'] === 'pending-badge'), false, 'holds attach to the owning chat/room row, not a section badge')
   assert.equal(all.some(n => n.props.className === 'fs-count'), false)
   assert.equal(all.some(n => n.props['data-flybot'] === 'pending-approvals'), false)
   assert.equal(all.some(n => n.type === 'button' && n.children.includes('Approve')), false)
@@ -1188,7 +1189,7 @@ test('Friends\' Bots (#69): no cue when status reports no pending approvals', ()
   sandbox.globalThis = sandbox
   sandbox.__flybot__ = { slots: { register: (slot, entry) => { entries.push([slot, entry]); return () => {} } }, call: async () => ({}) }
   runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), sandbox)
-  const initial = ['', false, [], false]
+  const initial = ['', false, false]
   let i = 0
   const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() })
   const plugin = registered[0].factory(() => ({ createElement: h, Fragment: 'F', useEffect() {}, useState: v => [i < initial.length ? initial[i++] : v, () => {}], useRef: v => ({ current: v }), useMemo: f => f() }))
@@ -1477,6 +1478,90 @@ test('face-to-face: a member already in the snapshot gets a join line when the e
   assert.equal(live.length, 1)
 })
 
+test('#166: an open face room does not post two identical join lines', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const notices = []
+  const origScope = ctx.flybot.scope.bind(ctx.flybot)
+  ctx.flybot.scope = (name) => {
+    const scoped = origScope(name)
+    const origPost = scoped.rooms.postNotice?.bind(scoped.rooms)
+    if (origPost) {
+      scoped.rooms.postNotice = (id, text) => {
+        notices.push(String(text ?? ''))
+        return origPost(id, text)
+      }
+    }
+    return scoped
+  }
+  const server = withFaceRooms(mockServer())
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await call('flybot/social/face-join', { code: '123456' })
+  const chiefJoins = notices.filter(text => /Chief/.test(text) && /joined/.test(text))
+  assert.equal(chiefJoins.length, 1)
+  assert.equal(new Set(chiefJoins).size, 1)
+  notices.length = 0
+  await call('flybot/social/face-rooms', { poll: true })
+  assert.equal(notices.filter(text => /joined/.test(text)).length, 0)
+
+  const room = server.face.rooms.get('frm_123456')
+  const peer = {
+    bot_id: 'bot_peer', handle: '@coder.bob.home', display_name: 'Coder', owner_name: 'Bob', published: false, label: 'Coder · Bob',
+  }
+  room.members.push(peer)
+  room.event_cursor += 1
+  room.events.push({
+    event_id: `fev_${room.event_cursor}`, event_cursor: room.event_cursor, type: 'member.joined',
+    text: 'Coder · Bob joined; not published, available to this room only', member: peer, trust: 'platform',
+  })
+  notices.length = 0
+  await call('flybot/social/face-rooms', { poll: true })
+  const coder = notices.filter(text => /Coder/.test(text) && /joined/.test(text))
+  assert.equal(coder.length, 1)
+  const hosted = ctx.flybot.rooms.ofFace('frm_123456')
+  const logJoins = (hosted.log ?? []).filter(line => (line.kind === 'joined' || line.kind === 'notice') && /Coder/.test(line.text || ''))
+  assert.equal(logJoins.length, 1)
+})
+
+test('#166: a face-room hold badges that room, not a friend chat', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  server.tools.list_approvals = () => ({
+    approvals: [{
+      approval_id: 'apr-face-hold',
+      kind: 'face_room_message',
+      status: 'pending',
+      sender_kind: 'human',
+      room_id: 'frm_123456',
+      from: '@chief.danyang.home',
+      message: { to: { handle: '@coder.bob.home', display_name: 'Coder' }, payload: { text: 'hello from the owner' } },
+      summary: 'To face room: hello from the owner',
+    }],
+  })
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await call('flybot/social/face-join', { code: '123456' })
+  await call('flybot/social/status', {})
+  const view = (await call('state', {})).value
+  const face = view.rooms.find(room => room.face?.roomId === 'frm_123456')
+  assert.ok(face)
+  assert.equal(face.pendingCount, 1)
+  const friend = view.bots.find(bot => bot.remote?.handle === '@coder.bob.home')
+  if (friend) assert.equal(friend.pendingCount, 0)
+})
+
 test('face-to-face: an owner-typed line is fanned out and shown as a human on the other side', async (t) => {
   const { ctx, call, stop } = await team()
   t.after(stop)
@@ -1715,12 +1800,18 @@ test('a friend\'s Bot settings uses Auto-send, not a second Auto-accept label', 
   }))
   assert.ok(tree.some(n => n.type === 'label' && n.children.includes('Auto-send')))
   assert.equal(tree.some(n => n.type === 'label' && n.children.includes('Auto-accept')), false)
+  assert.ok(tree.some(n => n.props.className === 'fs fs-card fs-friend-settings'))
+  const remove = tree.find(n => n.props['data-flybot'] === 'remove-friend-bot')
+  assert.ok(remove)
+  assert.match(String(remove.props.className ?? ''), /\bfs-link\b/)
+  assert.doesNotMatch(String(remove.props.className ?? ''), /\bfs-btn\b/)
+  assert.match(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), /\.fs-friend-settings\{[^}]*max-width:280px/)
 })
 
 test('social section has no + Add; Add friend and Face-to-face group live on the sidebar + menu', () => {
   const sidebar = (adding) => {
     const { entries, walk, pluginOf } = loadSocialClient(async () => ({ connected: true, bots: [{ id: 'a', name: 'Chief', isMain: true }], homes: [], rooms: [] }))
-    const plugin = pluginOf(['', adding, [], false])
+    const plugin = pluginOf(['', adding, false])
     plugin.apply({})
     const entry = entries.find(([slot]) => slot === 'flybot.sidebar.section')
     return { nodes: walk(entry[1].component({})), entries }
@@ -1749,7 +1840,7 @@ test('social section has no + Add; Add friend and Face-to-face group live on the
 
   const loading = (() => {
     const { entries, walk, pluginOf } = loadSocialClient(async () => ({ connected: true, bots: [], homes: [], rooms: [] }))
-    const plugin = pluginOf(['', true, [], false])
+    const plugin = pluginOf(['', true, false])
     plugin.apply({})
     const entry = entries.find(([slot]) => slot === 'flybot.sidebar.section')
     return walk(entry[1].component({}))
@@ -2213,6 +2304,12 @@ test('#159: a face-room hold never shows the FLYBOT-FACE-HUMAN envelope', () => 
   const draft = tree.find(n => n.props.className === 'fs-draft')
   assert.equal(draft?.children.join(''), 'hello from the owner')
   assert.equal(tree.some(n => /FLYBOT-FACE-HUMAN/.test(String(n.children ?? ''))), false)
+
+  const prefixed = walk(plugin.ChatApproval({
+    item: { id: 'apr-prefix', kind: 'face_room_message', from: 'You', toName: 'the room', text: 'To face room: hello from the owner' },
+    canDecide: true,
+  }))
+  assert.equal(prefixed.find(n => n.props.className === 'fs-draft')?.children.join(''), 'hello from the owner')
 })
 
 test('Face-to-face rooms list polls Bot Social for Past rooms', () => {
@@ -2274,6 +2371,8 @@ test('in-chat hold card is a compact bubble with names, clamp, and Approve/Rejec
   const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
   assert.match(src, /\.fs-hold\{[^}]*max-width:min\(460px,100%\)/)
   assert.match(src, /\.fs-hold \.fs-draft\[data-clamp\]\{[^}]*-webkit-line-clamp:3/)
+  assert.match(src, /\.fs-hold \.fs-draft\[data-clamp\]\{[^}]*overflow-wrap:break-word/)
+  assert.match(src, /\.fs-hold \.fs-draft\[data-clamp\]\{[^}]*word-break:normal/)
   assert.match(src, /\.fs-hold \.fs-btn-primary\{[^}]*width:auto/)
   assert.match(src, /\[data-flybot=chat-approvals\]\{[^}]*align-items:flex-start/)
   const { walk, pluginOf } = loadSocialClient(async () => ({}))
@@ -3023,9 +3122,10 @@ test('#90: in-chat approval copy is owner-only; others see a waiting line', () =
   const items = [
     { id: 'apr-1', to: '@coder.bob.home', text: 'draft' },
     { id: 'apr-2', roomId: 'frm_1', kind: 'face_room_message', text: 'room draft' },
+    { id: 'apr-3', roomId: 'frm_1', kind: 'face_room_message', to: '@coder.bob.home', from: '@chief.danyang.home', text: 'hello from the owner' },
   ]
   assert.deepEqual(approvalsForSession(items, { handle: '@coder.bob.home' }).map(i => i.id), ['apr-1'])
-  assert.deepEqual(approvalsForSession(items, { faceRoomId: 'frm_1' }).map(i => i.id), ['apr-2'])
+  assert.deepEqual(approvalsForSession(items, { faceRoomId: 'frm_1' }).map(i => i.id), ['apr-2', 'apr-3'])
 })
 
 test('#90: reject goes through decide-approval and leaves a chat note', async (t) => {
