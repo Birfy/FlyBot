@@ -48,6 +48,7 @@ import {
   platformJoinText,
   humanFaceWho,
   faceRoomTitle,
+  parseFaceHuman,
 } from './face-rooms.js'
 import {
   hideRemoteInSettings,
@@ -80,6 +81,12 @@ const sizeLabel = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixe
 export const cleanText = (value, fallback = '') => String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/[[\]"<>`]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) || fallback
 // Owner-only draft body: keep punctuation the friend will see; strip controls and cap.
 export const draftText = (value) => String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 800)
+// Owner cards never show the FLYBOT-FACE-HUMAN wire envelope (#159).
+export function approvalDraftText(value) {
+  const raw = draftText(value)
+  const human = parseFaceHuman(raw)
+  return human ? draftText(human.text) : raw
+}
 // Bot Social list_approvals card → the Friends' Bots queue (outbound drafts only).
 const looksLikeBotId = (value) => /^bot_[a-z0-9]+$/i.test(String(value ?? '').trim())
 export function approvalView(item, { localName } = {}) {
@@ -88,7 +95,7 @@ export function approvalView(item, { localName } = {}) {
   if (!id) return undefined
   const to = item.message?.to
   const payload = item.message?.payload
-  const text = draftText(payload && typeof payload === 'object' ? payload.text : payload) || draftText(item.summary)
+  const text = approvalDraftText(payload && typeof payload === 'object' ? payload.text : payload) || approvalDraftText(item.summary)
   const kind = String(item.kind ?? '')
   const viaComposer = item.via === 'composer'
     || item.message?.via === 'composer'
@@ -653,13 +660,16 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     return keys
   }
   // One-time upgrade: remotes already on the server roster are treated as inbound so
-  // reciprocal friends are not dropped when inboundBots was empty (Codex P1).
+  // reciprocal friends are not dropped when inboundBots was empty (Codex P1). Skip
+  // reverse-friends of invites we created and face-room-only remotes (#138 / #161).
   function backfillInboundFromRoster(mappedHomes) {
     if (settings.inboundBackfilled) return
     settings.inboundBots ??= {}
+    const outgoing = outgoingPeerHandles()
     for (const bot of (mappedHomes ?? []).flatMap(entry => entry.bots ?? [])) {
       const key = norm(bot.handle)
       if (!key || key === '@') continue
+      if (outgoing.has(key)) continue
       if (settings.roomBots?.[key]) continue
       settings.inboundBots[key] = true
     }
@@ -670,8 +680,9 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     const key = norm(bot.handle)
     if (!key) return false
     if (declinedRemotes.has(key)) return false
-    if (settings.inboundBots?.[key] || settings.inboundBots?.[bot.home]) return true
+    // Outgoing grants win: the Bot that joined our invite is not granted back (#138 / #161).
     if (outgoingPeerHandles().has(key)) return false
+    if (settings.inboundBots?.[key] || settings.inboundBots?.[bot.home]) return true
     if (settings.roomBots?.[key]) return false
     return true
   }
@@ -2094,7 +2105,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       const room = await applyFaceSnapshot(snapshot, { asBot: ready.handle })
       saveSettings()
       if (room) await setRoomGrant(ready.id, room, { faceRoomId: snapshot.roomId, name: faceRoomTitle(snapshot, { code: digits, room }) })
-      return { ...viewHostedFace(room, { joinedAs: { botId: ready.id, botName: ready.name, handle: ready.handle } }), faceRoomId: snapshot.roomId, status: snapshot.status, expiresAt: snapshot.expiresAt, members: snapshot.members }
+      return { ...viewHostedFace(room, { joinedAs: { botId: ready.id, botName: ready.name, handle: ready.handle }, joinCode: digits }), faceRoomId: snapshot.roomId, status: snapshot.status, expiresAt: snapshot.expiresAt, members: snapshot.members, joinCode: digits }
     } catch (error) {
       // A brand-new room-only identity that never made it into a room must not block retry
       // (and must not linger as a reachable home member).
@@ -2170,11 +2181,14 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
       try {
         const sent = await faceApi.send(serverId, { text: outbound.text, botId: outbound.botId })
         if (sent?.status === 'pending_approval') {
-          pendingCache.at = 0
-          if (outbound.human && sent.approvalId) {
+          // Auto-send is the only owner-line auto-approve. Otherwise the in-chat card
+          // stays until Approve / Always approve / Reject (#159). Decide first so a
+          // poll cannot flash the FLYBOT-FACE-HUMAN envelope.
+          if (outbound.human && sent.approvalId && await faceAutoApprove().catch(() => false)) {
             await confirmedCall('decide_approval', { approval_id: sent.approvalId, decision: 'approved' })
               .catch(error => warn('face-room owner line not auto-approved', error))
           }
+          pendingCache.at = 0
         }
       } catch (error) {
         warn('face-room send failed', error)
@@ -2187,7 +2201,7 @@ export function createSocial(service, config = {}, { client: given, api: givenAp
     if (payload?.poll !== false) await pollFaceRooms().catch(() => {})
     const rooms = Object.entries(settings.faceRooms).map(([faceRoomId, meta]) => {
       const room = flybot.rooms.ofFace?.(faceRoomId)
-      return viewHostedFace(room, { faceRoomId, localRoomId: meta.localRoomId, cursor: meta.cursor }) || { faceRoomId, roomId: meta.localRoomId, status: 'candidate' }
+      return viewHostedFace(room, { faceRoomId, localRoomId: meta.localRoomId, cursor: meta.cursor, joinCode: meta.joinCode }) || { faceRoomId, roomId: meta.localRoomId, status: 'candidate', joinCode: meta.joinCode }
     }).filter(Boolean)
     const liveIds = new Set(rooms.map(room => room.faceRoomId).filter(Boolean))
     for (const past of settings.pastFaceRooms ?? []) {
