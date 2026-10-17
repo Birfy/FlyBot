@@ -893,6 +893,9 @@ export function install(rt) {
     },
     chatApprovals: {
       setProvider(fn) { rt.listChatApprovals = typeof fn === 'function' ? fn : undefined },
+      // The friend chat's wait badge rides on the team view, which moves with the revision:
+      // a save bumps it, so a decided hold clears the badge now, not on the next unrelated change.
+      changed() { if (rt.readOnly() === undefined) void Promise.resolve(rt.save()).catch(() => {}) },
     },
     rooms: {
       list() {

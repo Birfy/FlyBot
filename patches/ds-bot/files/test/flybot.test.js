@@ -257,6 +257,19 @@ test('bot.send reaches remote Bots through a transport and takes remote senders 
   await assert.rejects(fb.bot.send({ from: 'a', to: 'zz', text: 'x' }), /unknown Bot/)
 })
 
+test('#226: chatApprovals.changed moves the team revision so a friend chat badge refreshes', async (t) => {
+  const { fb, call, stop } = await start()
+  t.after(stop)
+  const before = (await call('state', {})).value.revision
+  fb.chatApprovals.changed()
+  let after = before
+  for (let i = 0; i < 50 && after === before; i++) {
+    await new Promise(resolve => setTimeout(resolve, 10))
+    after = (await call('state', {})).value.revision
+  }
+  assert.ok(after > before)
+})
+
 test('a throwing middleware denies instead of letting the message through', async (t) => {
   const { fb, stop } = await start()
   t.after(stop)

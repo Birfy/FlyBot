@@ -251,6 +251,8 @@ export interface FlyBot {
   /** Optional: pending Bot Social approvals for a 1:1 friend's-Bot chat. */
   chatApprovals: {
     setProvider(fn: ((bot: { id?: string; remote?: { handle?: string } }, actor?: { memberId?: string }) => unknown[]) | undefined): void
+    /** The provider's list changed (a hold arrived or was decided): the sidebar badge refreshes now. */
+    changed(): void
   }
   /** Face-to-face rooms (#83): host a Bot Social matching room as a normal native room. */
   rooms: {
