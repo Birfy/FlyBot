@@ -1432,6 +1432,26 @@ test('face and inbox polls speed up while a live face room is open', async (t) =
   assert.ok(delays.includes(4_000), `live poll ${delays.join(',')}`)
 })
 
+test('when a face room drops off Bot Social, the local transcript stays openable', async (t) => {
+  const { ctx, call, stop } = await team()
+  t.after(stop)
+  const server = withFaceRooms(mockServer())
+  const social = createSocial(ctx.flybot, { server: 'https://s', token: 'owner-token', fetch: server.fetch, inboxPollMs: 0, autoAccept: false }, {
+    client: createMcpClient({ server: 'https://s', token: 'owner-token', fetch: server.fetch }),
+    home: { id: 'h1', handle: '@danyang.home' },
+  })
+  t.after(() => social.dispose())
+  await grantTeam(ctx.flybot)
+  await social.registerAll()
+  await call('flybot/social/face-join', { code: '123456' })
+  await call('flybot/social/face-start', { faceRoomId: 'frm_123456' })
+  server.face.rooms.delete('frm_123456')
+  await call('flybot/social/face-rooms', { poll: true })
+  assert.ok(ctx.flybot.rooms.ofFace('frm_123456'), 'hosted room stays for Open')
+  const opened = (await call('flybot/social/face-open', { faceRoomId: 'frm_123456' })).value
+  assert.ok(opened.roomId)
+})
+
 test('face-to-face leave after matching ends still moves the room to Past rooms', async (t) => {
   const { ctx, call, stop } = await team()
   t.after(stop)
@@ -2106,6 +2126,44 @@ test('Face-to-face room card members use host avatars, not a shared letter badge
   assert.equal(friendChat.props['data-image'], 'https://example.test/coder.png')
   assert.ok(friendSeed, "a friend's Bot without a chat still gets a handle-seeded avatar")
   assert.equal(tree.filter(n => n.props.className === 'fs-avatar' && n.props['data-flybot'] === undefined).length, 0)
+})
+
+test('Face-to-face past card titles rebuild from every member, not a stale auto name', () => {
+  const { walk, pluginOf } = loadSocialClient(async () => ({}))
+  const tree = walk(pluginOf([]).FaceRoomCard({
+    room: {
+      name: 'Face-to-face · UiA1415 · Oct 17 14:38', status: 'closed',
+      startedAt: '2026-10-17T14:38:00.000Z',
+      members: [
+        { handle: '@b.home', ownerName: 'UiB1415' },
+        { handle: '@a.home', ownerName: 'UiA1415' },
+      ],
+    },
+    past: true,
+  }))
+  const title = tree.find(n => n.props.className === 'fs-name')
+  assert.equal(String(title?.children?.join?.('') ?? ''), 'Face-to-face · UiA1415, UiB1415 · Oct 17 14:38')
+})
+
+test('Past face room Open resolves the hosted session through face-open', async () => {
+  const opened = []
+  const calls = []
+  const { walk, pluginOf } = loadSocialClient(async (endpoint, payload) => {
+    calls.push([endpoint, payload])
+    if (endpoint === 'social/face-open') return { roomId: 'g-fixed', faceRoomId: 'frm_old' }
+    return {}
+  })
+  const tree = walk(pluginOf([]).FaceRoomCard({
+    room: { faceRoomId: 'frm_old', name: 'Hall', status: 'closed', members: [] },
+    past: true,
+    actions: { openSession: id => opened.push(id) },
+  }))
+  const btn = tree.find(n => n.type === 'button' && n.children.includes('Open'))
+  assert.ok(btn)
+  await btn.props.onClick()
+  assert.equal(calls[0][0], 'social/face-open')
+  assert.equal(calls[0][1].faceRoomId, 'frm_old')
+  assert.deepEqual(opened, ['g-fixed'])
 })
 
 test('Face-to-face room card titles include people and a distinguisher, not Face-to-face room', () => {

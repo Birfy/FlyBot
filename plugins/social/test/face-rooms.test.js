@@ -127,6 +127,11 @@ test('owner-typed face-room lines encode as a human envelope', () => {
   assert.equal(humanFaceWho({ who: 'User' }, 'Alice'), 'Alice')
   assert.equal(formatFaceRoomTitle({ owners: ['BoxA', 'BoxB'], code: '482913' }), 'Face-to-face · BoxA, BoxB · 482913')
   assert.equal(faceRoomTitle({ members: [{ owner_name: 'BoxA' }, { ownerName: 'BoxB' }] }, { code: '482913' }), 'Face-to-face · BoxA, BoxB · 482913')
+  const at = '2026-10-17T14:38:00.000Z'
+  const titleA = faceRoomTitle({ members: [{ owner_name: 'UiB1415', handle: '@b.home' }, { owner_name: 'UiA1415', handle: '@a.home' }], startedAt: at })
+  const titleB = faceRoomTitle({ members: [{ ownerName: 'UiA1415', handle: '@a.home' }, { ownerName: 'UiB1415', handle: '@b.home' }], startedAt: at })
+  assert.equal(titleA, titleB)
+  assert.equal(titleA, 'Face-to-face · UiA1415, UiB1415 · Oct 17 14:38')
   assert.equal(faceRoomTitle({}, { code: '123456' }), 'Face-to-face · 123456')
   assert.equal(faceRoomTitle({ name: 'Kitchen' }), 'Kitchen')
   assert.notEqual(

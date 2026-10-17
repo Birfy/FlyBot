@@ -690,19 +690,22 @@ window.__ModuleLoader__.load({
     }
     function shownFaceTitle(room) {
       const named = String(room?.name || '').trim()
-      if (named && named !== 'Face-to-face room') return named
-      const owners = []
+      if (named && named !== 'Face-to-face room' && !named.startsWith('Face-to-face · ')) return named
+      const rows = []
       const seen = new Set()
       for (const member of room?.members ?? []) {
         const owner = String(member.ownerName || member.owner_name || '').trim()
         const key = owner.toLowerCase()
         if (!owner || seen.has(key)) continue
         seen.add(key)
-        owners.push(owner)
+        const handle = String(member.handle || member.id || '').trim().toLowerCase()
+        rows.push({ owner, sort: handle || key })
       }
+      rows.sort((a, b) => a.sort.localeCompare(b.sort))
+      const owners = rows.slice(0, 3).map(row => row.owner)
       const code = String(room?.joinCode || room?.code || '').replace(/\D/g, '').slice(0, 6)
       const bits = ['Face-to-face']
-      if (owners.length) bits.push(owners.slice(0, 3).join(', '))
+      if (owners.length) bits.push(owners.join(', '))
       if (code.length === 6) bits.push(code)
       else {
         const at = Date.parse(room?.startedAt || room?.expiresAt || '')
@@ -730,12 +733,23 @@ window.__ModuleLoader__.load({
       const look = (m) => (m.remote === false || m.id && roster?.byId?.[m.id]
         ? faceLook({ roster, local: roster?.byId?.[m.id] || { id: m.id, name: m.displayName } })
         : faceLook({ roster, remoteChats, member: m }))
-      const open = () => { if (room.roomId) actions?.openSession?.(room.roomId) }
+      const openable = Boolean(room.faceRoomId || room.roomId)
+      const open = async () => {
+        if (!openable || typeof actions?.openSession !== 'function') return
+        setBusy('open')
+        setNote(null)
+        try {
+          const next = await call('social/face-open', { roomId: room.roomId, faceRoomId: room.faceRoomId })
+          const id = next?.roomId || room.roomId
+          if (id) actions.openSession(id)
+        } catch (e) { setNote({ tone: 'error', text: errorText(e) }) }
+        finally { setBusy('') }
+      }
       return h('div', { className: 'fs-face-item', 'data-flybot': 'face-room', 'data-status': room.status, 'data-past': past || undefined },
         h('div', {
           className: 'fs-face-row',
-          'data-open': room.roomId ? true : undefined,
-          onClick: room.roomId ? open : undefined,
+          'data-open': openable ? true : undefined,
+          onClick: openable ? () => open() : undefined,
         },
           h('span', { className: 'fs-stack', 'aria-label': 'Members' },
             shown.map(m => h('span', { key: m.handle || m.id, 'data-flybot': 'face-card-member', 'data-handle': m.handle },
@@ -745,7 +759,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'fs-chip fs-chip-status', 'data-flybot': 'face-status', 'data-status': faceChip(room) }, faceChipLabel(room)),
           h('span', { className: 'fs-face-actions', onClick: event => event.stopPropagation() },
             past
-              ? h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy || !room.roomId, onClick: open }, 'Open')
+              ? (openable ? h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => open() }, 'Open') : null)
               : h('button', { type: 'button', className: 'fs-btn fs-btn-sm', disabled: !!busy, onClick: () => run('leave', () => call('social/face-leave', { roomId: room.roomId, faceRoomId: room.faceRoomId })) }, 'Leave'))),
         note ? h('div', { className: 'fs-status', 'data-tone': note.tone }, note.text) : null)
     }
