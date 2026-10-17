@@ -22,6 +22,7 @@ import { BROWSER_CSS } from './browser-pane.js'
 import { SECRET_CSS, SecretDock } from './secret-card.js'
 import { MODEL_CSS, ModelChoiceDock, DeepSeekSignIn } from './model-menu.js'
 import { BOT_SETTINGS_CSS } from './bot-settings.js'
+import { REMOTE_BOT_SETTINGS_CSS } from './remote-bot-settings.js'
 import { GROUP_SETTINGS_CSS } from './group-settings.js'
 import { FOLDER_CSS } from './folder-menu.js'
 import { USAGE_CSS } from './usage-page.js'
@@ -63,7 +64,7 @@ export function apply(ctx) {
   try { seenAt = JSON.parse(localStorage.getItem(SEEN_KEY) ?? '{}') ?? {} } catch { seenAt = {} }
   // `details` is the panel's subject (a Session id); `view` picks details or the
   // subject Bot's browser inside it.
-  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: savedUnread, reactions: savedReactions, visits: {} })
+  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, remoteBotSettings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: savedUnread, reactions: savedReactions, visits: {} })
   // Bot mode paints the whole team surface; Agent mode withdraws every slot and
   // style so the shell's own interface returns. `plain` stays false until a Bot-mode
   // view hosts a plain session, which drops only the conversation replacements.
@@ -455,8 +456,15 @@ export function apply(ctx) {
     // Opening the conversation would move focus to its composer and blur the name field.
     renameBot: (id) => { ui.set(state => ({ ...state, details: id, view: 'details', renaming: true, tab: null })) },
     // `id` opens one Bot (page 'bots') or one group chat (page 'groups').
-    openSettings: (page = 'general', id = null) => { ui.set(state => ({ ...state, settings: { page, id }, menu: null, palette: null, newChat: null })) },
-    closeSettings: () => { ui.set(state => (state.settings ? { ...state, settings: null } : state)) },
+    openSettings: (page = 'general', id = null) => {
+      const remote = id && roster.getSnapshot().byId[id]?.remote
+      if (page === 'bots' && remote) {
+        ui.set(state => ({ ...state, remoteBotSettings: id, settings: null, menu: null, palette: null, newChat: null }))
+        return
+      }
+      ui.set(state => ({ ...state, settings: { page, id }, remoteBotSettings: null, menu: null, palette: null, newChat: null }))
+    },
+    closeSettings: () => { ui.set(state => (state.settings || state.remoteBotSettings ? { ...state, settings: null, remoteBotSettings: null } : state)) },
     openMemory: (botId) => { ui.set(state => ({ ...state, memory: botId, menu: null, palette: null })) },
     closeMemory: () => { ui.set(state => (state.memory ? { ...state, memory: null } : state)) },
     openConnectors: () => { ui.set(state => ({ ...state, settings: { page: 'connectors', id: null }, menu: null, palette: null, newChat: null })) },
@@ -466,7 +474,7 @@ export function apply(ctx) {
       if (mode !== 'bot' && mode !== 'agent') return
       if (surface.getSnapshot().mode === mode) return
       if (mode === 'agent') {
-        ui.set(state => ({ ...state, details: null, view: 'details', settings: null, palette: null, newChat: null, menu: null, voice: null, exchange: null, memory: null, toast: null }))
+        ui.set(state => ({ ...state, details: null, view: 'details', settings: null, remoteBotSettings: null, palette: null, newChat: null, menu: null, voice: null, exchange: null, memory: null, toast: null }))
       }
       writeMode(mode)
       surface.set(state => ({ ...state, mode }))
@@ -766,7 +774,7 @@ export function apply(ctx) {
     installCompiledStyles(SHELL_CSS, 'shell'),
     installCompiledStyles(SIDEBAR_CSS, 'sidebar'),
     installCompiledStyles(SECRET_CSS, 'secrets'),
-    installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS, 'models'),
+    installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS + REMOTE_BOT_SETTINGS_CSS, 'models'),
     installCompiledStyles(USAGE_CSS, 'usage'),
     installCompiledStyles(SCHEDULE_CSS, 'schedules'),
     installCompiledStyles(FEEDBACK_CSS, 'feedback'),

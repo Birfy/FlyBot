@@ -247,18 +247,22 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
     })
   }
   const errorLine = error ? h('div', { className: 'bt-error', role: 'alert', style: { padding: 0 } }, error) : null
-  if ((bot || room) && view === 'settings') {
+  if ((bot || room) && view === 'settings' && !(bot?.remote)) {
     return [
       h('div', { key: 'head', className: 'bt-subhead', 'data-move': move },
         h('button', { type: 'button', className: 'bt-icon-btn', 'aria-label': t('Back to details'), onClick: () => setView('overview') }, h(ChevronLeftIcon)),
-        h('span', { className: 'bt-subhead-title' }, bot ? (bot.remote ? t('Bot settings') : t('Settings')) : t('Group settings')),
+        h('span', { className: 'bt-subhead-title' }, bot ? t('Settings') : t('Group settings')),
         hasStrip ? null : h('button', { type: 'button', className: 'bt-icon-btn', 'aria-label': t('Close details'), onClick: close }, h(CloseIcon))),
       h('div', { key: 'set-body', className: 'bt-drawer-body bt-set-body', 'data-move': move }, errorLine,
         bot ? h(BotSettingsForm, { bot, roster, actions, run }) : h(GroupSettingsForm, { room, roster, actions, run, onDeleted: close })),
     ]
   }
   const top = h('div', { className: 'bt-drawer-top', 'data-move': side },
-    bot || room ? h('button', { type: 'button', className: 'bt-round', 'aria-label': bot ? (bot.remote ? t('Bot settings') : t('Edit Bot')) : t('Group settings'), title: bot ? (bot.remote ? t('Bot settings') : t('Edit Bot')) : t('Group settings'), 'data-info-row': 'settings', onClick: () => setView('settings') }, h(GearIcon)) : null,
+    bot || room ? h('button', {
+      type: 'button', className: 'bt-round', 'aria-label': bot ? (bot.remote ? t('Bot settings') : t('Edit Bot')) : t('Group settings'),
+      title: bot ? (bot.remote ? t('Bot settings') : t('Edit Bot')) : t('Group settings'), 'data-info-row': 'settings',
+      onClick: () => (bot?.remote ? actions.openSettings('bots', bot.id) : setView('settings')),
+    }, h(GearIcon)) : null,
     bot && !bot.remote && roster.browser === true && actions.openBrowser
       ? h('button', { type: 'button', className: 'bt-round', 'aria-label': t('Open browser'), title: t("Open this Bot's browser"), onClick: () => actions.openBrowser(sessionId) }, h(GlobeIcon))
       : null,
@@ -286,6 +290,8 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
         : h(RoomAvatar, { room, roster, size: 64 }),
       bot?.remote
         ? h('div', { className: 'bt-drawer-name' }, current)
+        : room?.origin === 'face-to-face'
+          ? h('div', { className: 'bt-drawer-name bt-drawer-name-face', title: current }, current)
         : editing
           ? h('input', {
               className: 'bt-drawer-name-input', autoFocus: true, value: draftName, 'aria-label': bot ? t('Bot name') : t('Group name'),

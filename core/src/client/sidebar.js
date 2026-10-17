@@ -84,6 +84,10 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   wide ? h('span', { className: 'bt-row-body' },
     h('span', { className: 'bt-row-name' }, h('span', { className: 'bt-row-title' }, shown), bot.remote ? h(RemoteMark, { remote: bot.remote }) : null, pinned ? h(PinMark) : null),
     awayLine ? h('span', { className: 'bt-row-preview' }, awayLine) : preview ? h('span', { className: 'bt-row-preview' }, preview) : null) : null,
+  wide && bot.remote ? h('button', {
+    type: 'button', className: 'bt-row-settings', 'aria-label': t('Bot settings'), title: t('Bot settings'),
+    onClick: (event) => { event.stopPropagation(); actions.openSettings('bots', id) },
+  }, h(GearIcon)) : null,
   wide && waiting && !active ? h('span', { className: 'bt-unread bt-unread-wait', 'aria-hidden': true })
     : wide && unread && !active ? h('span', { className: 'bt-unread', 'aria-hidden': true }) : null)
 }
@@ -702,4 +706,8 @@ export const SIDEBAR_CSS = `
 .bt-agent-sub[data-open] .bt-agent-sub-row{animation:bt-agent-row-in .24s ease both;animation-delay:calc(var(--i, 0)*30ms)}
 @keyframes bt-agent-row-in{from{opacity:0;filter:blur(4px)}to{opacity:1;filter:blur(0)}}
 @media (prefers-reduced-motion:reduce){.bt-agent-sub{transition:none}.bt-agent-sub .bt-agent-sub-row{animation:none}}
+
+.bt-row-settings{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-2px 0 -2px 2px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--bt-ink-3);cursor:pointer;opacity:.85;transition:background-color .12s ease,color .12s ease,opacity .12s ease}
+.bt-row-settings:hover,.bt-row:focus-within .bt-row-settings{opacity:1;color:var(--bt-ink-2);background:var(--bt-hover)}
+.bt-row-settings svg{width:15px;height:15px}
 `

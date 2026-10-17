@@ -166,6 +166,9 @@ export function FlyBotApprovals() {
 export const fileSize = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`)
 
 export const FLYBOT_CSS = `
+.bt-flybot-session-dock{width:100%;max-width:min(992px,100%);margin:0 auto;padding:0 0 6px;box-sizing:border-box}
+.bt-flybot-session-dock [data-flybot=chat-approvals]{align-items:flex-end;padding-bottom:4px}
+.bt-flybot-session-dock .fs-hold{margin-left:auto}
 .bt-flybot-approval-files { margin: 0 0 8px; padding-left: 18px; font-size: 12px; }
 .bt-file-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0 30px; }
 .bt-file-chip { font-size: 12px; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--bt-line, rgba(0,0,0,.15)); background: transparent; cursor: pointer; }

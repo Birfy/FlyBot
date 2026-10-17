@@ -173,26 +173,31 @@ diff --git a/src/client/details-drawer.js b/src/client/details-drawer.js
    ]
  }
  
-@@ -180,15 +180,15 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
+@@ -176,7 +176,7 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
+     })
+   }
+   const errorLine = error ? h('div', { className: 'bt-error', role: 'alert', style: { padding: 0 } }, error) : null
+-  if ((bot || room) && view === 'settings') {
++  if ((bot || room) && view === 'settings' && !(bot?.remote)) {
      return [
        h('div', { key: 'head', className: 'bt-subhead', 'data-move': move },
          h('button', { type: 'button', className: 'bt-icon-btn', 'aria-label': t('Back to details'), onClick: () => setView('overview') }, h(ChevronLeftIcon)),
--        h('span', { className: 'bt-subhead-title' }, bot ? t('Settings') : t('Group settings')),
-+        h('span', { className: 'bt-subhead-title' }, bot ? (bot.remote ? t('Bot settings') : t('Settings')) : t('Group settings')),
-         hasStrip ? null : h('button', { type: 'button', className: 'bt-icon-btn', 'aria-label': t('Close details'), onClick: close }, h(CloseIcon))),
-       h('div', { key: 'set-body', className: 'bt-drawer-body bt-set-body', 'data-move': move }, errorLine,
-         bot ? h(BotSettingsForm, { bot, roster, actions, run }) : h(GroupSettingsForm, { room, roster, actions, run, onDeleted: close })),
+@@ -187,8 +187,12 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
      ]
    }
    const top = h('div', { className: 'bt-drawer-top', 'data-move': side },
 -    bot || room ? h('button', { type: 'button', className: 'bt-round', 'aria-label': bot ? t('Edit Bot') : t('Group settings'), title: bot ? t('Edit Bot') : t('Group settings'), 'data-info-row': 'settings', onClick: () => setView('settings') }, h(GearIcon)) : null,
 -    bot && roster.browser === true && actions.openBrowser
-+    bot || room ? h('button', { type: 'button', className: 'bt-round', 'aria-label': bot ? (bot.remote ? t('Bot settings') : t('Edit Bot')) : t('Group settings'), title: bot ? (bot.remote ? t('Bot settings') : t('Edit Bot')) : t('Group settings'), 'data-info-row': 'settings', onClick: () => setView('settings') }, h(GearIcon)) : null,
++    bot || room ? h('button', {
++      type: 'button', className: 'bt-round', 'aria-label': bot ? (bot.remote ? t('Bot settings') : t('Edit Bot')) : t('Group settings'),
++      title: bot ? (bot.remote ? t('Bot settings') : t('Edit Bot')) : t('Group settings'), 'data-info-row': 'settings',
++      onClick: () => (bot?.remote ? actions.openSettings('bots', bot.id) : setView('settings')),
++    }, h(GearIcon)) : null,
 +    bot && !bot.remote && roster.browser === true && actions.openBrowser
        ? h('button', { type: 'button', className: 'bt-round', 'aria-label': t('Open browser'), title: t("Open this Bot's browser"), onClick: () => actions.openBrowser(sessionId) }, h(GlobeIcon))
        : null,
      bot || room ? h('button', { type: 'button', className: 'bt-round', 'aria-label': copied ? t('Copied conversation') : t('Share conversation'), title: copied ? t('Copied') : t('Copy conversation as Markdown'), onClick: share }, copied ? h('span', { key: 'copied', className: 'bt-pop-in' }, '✓') : h(ShareIcon)) : null,
-@@ -213,22 +213,28 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
+@@ -213,22 +213,30 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
      h('div', { key: 'id', className: 'bt-drawer-id', 'data-move': side },
        bot ? h(BotAvatar, { bot, size: 64, state: botState(running, doing, roster.questions?.[part] !== undefined), main: isMainBot, badge: false, gaze: true, pokeable: true })
          : h(RoomAvatar, { room, roster, size: 64 }),
@@ -208,6 +213,8 @@ diff --git a/src/client/details-drawer.js b/src/client/details-drawer.js
 -    h('div', { key: 'tabs', ref: glide.box, className: 'bt-tabs', role: 'tablist', 'data-move': side },
 +      bot?.remote
 +        ? h('div', { className: 'bt-drawer-name' }, current)
++        : room?.origin === 'face-to-face'
++          ? h('div', { className: 'bt-drawer-name bt-drawer-name-face', title: current }, current)
 +        : editing
 +          ? h('input', {
 +              className: 'bt-drawer-name-input', autoFocus: true, value: draftName, 'aria-label': bot ? t('Bot name') : t('Group name'),
@@ -356,7 +363,7 @@ diff --git a/src/client/header.js b/src/client/header.js
  
  // -------------------------------------------------------------------------
  // Conversation header
-@@ -68,7 +68,9 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
+@@ -68,16 +68,26 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
    const bot = roster.byId[sessionId]
    const room = roster.roomsById[sessionId]
    const detailsOpen = useUi(state => state.details === sessionId)
@@ -367,6 +374,25 @@ diff --git a/src/client/header.js b/src/client/header.js
    const useNews = useMemoryNews ?? noNews
    const memoryIds = bot ? [bot.id] : room?.members ?? []
    const notice = useMemoryNotice(memoryIds, useNews)
+   // While the notice shows, the pill opens the memory of the Bot that changed.
+   const changed = useNews(map => latestMemoryChange(map, memoryIds))
+   // The composer placeholder is not localizable per Session, so CSS reads it from here.
++  const composerLabel = name ? t('Message {name}', { name }) : t('Message')
+   useEffect(() => {
+-    document.body.style.setProperty('--bt-placeholder', JSON.stringify(name ? t('Message {name}', { name }) : t('Message')))
+-  }, [name, t('Message')])
++    document.body.style.setProperty('--bt-placeholder', JSON.stringify(composerLabel))
++    const apply = () => {
++      const input = document.querySelector('[data-composer-input]')
++      if (input) input.setAttribute('aria-label', composerLabel)
++    }
++    apply()
++    const timer = setTimeout(apply, 0)
++    return () => clearTimeout(timer)
++  }, [composerLabel])
+   useEffect(() => {
+     actions.beginVisit(sessionId)
+     return () => actions.endVisit(sessionId)
 @@ -97,7 +97,7 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
      },
      bot ? h(BotAvatar, { bot, size: 24, state: botState(running, doing, roster.questions?.[currentPart(bot)] !== undefined), badge: false })
