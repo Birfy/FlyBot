@@ -3,39 +3,132 @@ name: Test
 on:
   push:
     branches: [main]
+    # Docs-only pushes do not need the shipgate.
+    # pull_request must NOT ignore docs: Test is a required check there, and a
+    # skipped required check would block docs-only pull requests.
+    paths-ignore: ['docs/**', '**/*.md']
   pull_request:
+  # A merge queue (not enabled; see docs/autonomous-dev.md) runs the required checks on each queue entry,
+  # a gh-readonly-queue/* branch. Without this trigger they would never report there and the queue would
+  # wait for them until it times out. merge_group takes no path filters, so a docs-only entry runs in full
+  # (as a docs-only pull request does), and `push` above is limited to main, so an entry does not run twice.
+  merge_group:
+  workflow_dispatch:
+
+# On main a run finishes: a release waits for a green run on its commit, and one cancelled
+# by every next push would leave none to wait for. A PR's run is cancelled by its next push.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
 
-concurrency:
-  group: test-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
+  # The PR gate: one job (see #31). Its name is the required check on main: keep it exactly.
+  # Windows, Node 22 and the next DSH run in the Compatibility workflow (nightly.yml).
   test:
-    name: ${{ matrix.os }} · Node ${{ matrix.node }} · DSH ${{ matrix.dsh }}
-    runs-on: ${{ matrix.os }}
+    name: ubuntu-latest · Node 24 · DSH 0.2.0-rc.2
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/flybot-tests
+        with:
+          node: '24'
+          dsh: 0.2.0-rc.2
+          coverage: 'true'
+          plugins: 'false'
+
+  # Each peer plugin (plugins/<name>) on its own: lint and its suite against core/ and the DSH
+  # harness. DSH_HARNESS points the frontend (web entry) tests at real Cordis; a skipped test
+  # fails the job, so they cannot silently stop running.
+  plugins:
+    name: plugins (${{ matrix.plugin }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-latest, node: 24, dsh: 0.2.0-rc.2 }
-          - { os: windows-latest, node: 24, dsh: 0.2.0-rc.2 }
-          - { os: ubuntu-latest, node: 22, dsh: 0.2.0-rc.2 }
-          - { os: ubuntu-latest, node: 24, dsh: 0.2.1-alpha.1 }
-    defaults:
-      run:
-        shell: bash
-        working-directory: ds-bot
+        plugin: [tree, social]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          node-version: ${{ matrix.node }}
-      - run: npm ci --no-fund --no-audit
-      - name: Install DSH ${{ matrix.dsh }}
-        run: npm run harness -- --no-save "@deepseek-ai/dsh@${{ matrix.dsh }}"
-      - run: npm test
-      - run: node scripts/build-client.mjs --check
-      - run: npm run lint
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: core/package-lock.json
+      - name: npm ci (core)
+        working-directory: core
+        run: npm ci --no-fund --no-audit
+      - name: Install DSH
+        working-directory: core
+        env:
+          DSH: 0.2.0-rc.2
+        run: npm run harness -- --no-save "@deepseek-ai/dsh@$DSH"
+      - name: Lint
+        run: node scripts/lint-plugins.mjs "$PLUGIN"
+        env:
+          PLUGIN: ${{ matrix.plugin }}
+      - name: Tests (none skipped)
+        working-directory: plugins/${{ matrix.plugin }}
+        env:
+          DSH_HARNESS: ${{ github.workspace }}/core/dev/harness
+        run: |
+          set -o pipefail
+          npm test | tee test-output.txt
+          skipped=$(sed -n 's/^ℹ skipped \([0-9]*\)$/\1/p' test-output.txt)
+          echo "skipped: ${skipped:-?}"
+          [ "${skipped:-1}" = 0 ] || { echo "::error::plugins/${{ matrix.plugin }}: $skipped test(s) skipped (or no summary)"; exit 1; }
+
+  # The core pin (ds-bot.pin.json + patches/ds-bot/ -> core/), then what a DSH profile installs: each package packs with everything its main/exports/files
+  # name, and no tests or dev tools. The release job ships these same tarballs.
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: 24
+      - name: ds-bot/ matches the pin, patches apply, core/ is ds-bot/ + patches (#34)
+        run: node scripts/ds-bot-patches.mjs check
+      - name: Pack and check core (ds-bot), plugins/social, plugins/tree
+        run: node .github/scripts/check-pack.mjs
+      - name: Typecheck the plugin API (types/*.d.ts, strict)
+        working-directory: core
+        run: npx --yes -p typescript@5.9.3 tsc --noEmit --strict --skipLibCheck types/*.d.ts
+      - name: Tests of the repo scripts (risk tier, labels)
+        run: node --test ".github/scripts/*.test.mjs"
+      - name: Changelog has an Unreleased section and well-formed fragments (changelog.d/)
+        run: node .github/scripts/changelog.mjs check
+      - name: Lint the workflows (actionlint)
+        env:
+          VERSION: 1.7.7
+        run: |
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz" | tar -xz actionlint
+          ./actionlint -color
+
+  # One check that is green only when the test, plugins (every leg) and package jobs are.
+  tests-ok:
+    name: tests-ok
+    if: always()
+    needs: [test, plugins, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          TEST: ${{ needs.test.result }}
+          PLUGINS: ${{ needs.plugins.result }}
+          PACKAGE: ${{ needs.package.result }}
+        run: |
+          echo "test: $TEST, plugins: $PLUGINS, package: $PACKAGE"
+          [ "$TEST" = success ] && [ "$PLUGINS" = success ] && [ "$PACKAGE" = success ]
