@@ -2052,6 +2052,7 @@ test('Friends\' Bots (#83): auto-send toggle in the room header and pending-appr
   assert.ok(header.some(n => n.type === 'button' && n.children.includes('Leave')))
   assert.equal(header.some(n => n.type === 'button' && n.children.includes('Start')), false)
   assert.equal(header.some(n => n.type === 'button' && n.children.includes('Open')), false)
+  assert.ok(header.some(n => n.props['data-flybot'] === 'face-status' && n.children.includes('Open')))
   const box = header.find(n => n.type === 'input' && n.props.type === 'checkbox')
   assert.equal(box.props.checked, false)
   await box.props.onChange({ target: { checked: true } })
@@ -2141,7 +2142,7 @@ test('Face-to-face room card is one compact row with a status chip and no invali
   }))
   assert.ok(tree.some(n => n.props['data-flybot'] === 'face-room' && n.props.className === 'fs-face-item'))
   assert.ok(tree.some(n => n.props.className === 'fs-face-row'))
-  assert.ok(tree.some(n => n.props['data-flybot'] === 'face-status' && n.children.includes('open')))
+  assert.ok(tree.some(n => n.props['data-flybot'] === 'face-status' && n.children.includes('Open')))
   assert.ok(tree.some(n => n.props.className === 'fs-stack-more' && n.children.includes('+1')))
   assert.equal(tree.some(n => n.type === 'button' && n.children.includes('Open')), false)
   assert.ok(tree.some(n => n.type === 'button' && n.children.includes('Leave')))
@@ -2174,6 +2175,7 @@ test('Face-to-face past rooms sit under a Past rooms fold; live rooms stay off t
   assert.equal(opened.filter(n => n.type === 'button' && n.children.includes('Leave')).length, 0)
   assert.equal(opened.some(n => n.type === 'button' && n.children.includes('Start')), false)
   assert.equal(opened.some(n => n.props['data-status'] === 'open'), false)
+  assert.match(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), /\.fs-face-item\[data-past\] \.fs-face-actions\{[^}]*margin-left:8px/)
 
   const pastOnly = walk(pluginOf([
     [{ faceRoomId: 'frm_old', roomId: 'g2', name: 'Hall', status: 'closed', members: [] }],
