@@ -93,6 +93,10 @@ var ZH = {
   " and ": "、",
   and: "和",
   "{count} members": "{count} 位成员",
+  "1 person": "1 人",
+  "{count} people": "{count} 人",
+  "1 Bot": "1 个 Bot",
+  "{count} Bots": "{count} 个 Bot",
   "Loading…": "加载中…",
   "Edit Bot": "编辑 Bot",
   "Make Main Bot": "设为主 Bot",
@@ -10539,11 +10543,23 @@ function faceSeatLabel(seat) {
   if (!seat.person) return seat.bot;
   return `${seat.mine ? t("{name} (you)", { name: seat.person }) : seat.person} · ${seat.bot}`;
 }
+var personKey = (seat) => {
+  const record = seat.record ?? {};
+  const home = String(record.ownerHome || record.home || "").trim().toLowerCase();
+  if (home) return `home:${home}`;
+  const parts = String(record.handle || "").trim().toLowerCase().replace(/^@+/, "").split(".");
+  if (parts.length >= 3 && parts.at(-1) === "home") return `home:${parts.slice(-2).join(".")}`;
+  return `name:${(ownerNameOf(record) || seat.person || seat.key).toLowerCase()}`;
+};
+function faceRoomCount(room2, roster) {
+  const seats = faceSeats(room2, roster);
+  const people = new Set(seats.map((seat) => seat.mine ? ":you" : personKey(seat)));
+  const persons = people.size === 1 ? t("1 person") : t("{count} people", { count: people.size });
+  const bots = seats.length === 1 ? t("1 Bot") : t("{count} Bots", { count: seats.length });
+  return `${persons} · ${bots}`;
+}
 function roomSubtitle(room2, roster) {
-  if (room2.origin === "face-to-face") {
-    const live = (room2.presentedParticipants ?? room2.participants ?? []).filter((p) => p.leftSeq === void 0);
-    return t("{count} members", { count: live.length });
-  }
+  if (room2.origin === "face-to-face") return faceRoomCount(room2, roster);
   const admin = roster.byId[room2.admin];
   return [t("{count} members", { count: room2.members.length }), admin ? t("Admin {name}", { name: admin.name }) : t("No admin")].join(" · ");
 }
