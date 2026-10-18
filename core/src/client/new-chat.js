@@ -65,8 +65,14 @@ export function NewChat({ mode, roster, actions }) {
       const invite = await social.createInvite(bot.id)
       const link = invite?.link || invite?.url
       if (!link) throw new Error('no link')
-      await navigator.clipboard?.writeText(link)
-      setFixNote(t('Invite link for {name} copied. Send it to your friend; once they accept, create the group again.', { name: bot.name }))
+      // No clipboard API (an insecure context, a locked-down WebView) or a refused write is not
+      // a copy: the card then shows the link itself, since it is shown nowhere else.
+      const copied = navigator.clipboard?.writeText === undefined
+        ? false
+        : await navigator.clipboard.writeText(link).then(() => true, () => false)
+      setFixNote(copied
+        ? t('Invite link for {name} copied. Send it to your friend; once they accept, create the group again.', { name: bot.name })
+        : t('Send this invite link for {name} to your friend; once they accept, create the group again: {link}', { name: bot.name, link }))
     } catch {
       setFixNote(t('Could not create the invite. Use Bot settings → Invite to this Bot.'))
     }

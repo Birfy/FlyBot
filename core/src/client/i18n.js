@@ -68,6 +68,7 @@ const ZH = {
   'Copy invite link for {name}': '复制 {name} 的邀请链接',
   'Leave {name} out': '不拉 {name} 进群',
   'Invite link for {name} copied. Send it to your friend; once they accept, create the group again.': '{name} 的邀请链接已复制。发给好友，对方接受后再重新建群。',
+  'Send this invite link for {name} to your friend; once they accept, create the group again: {link}': '把 {name} 的邀请链接发给好友，对方接受后再重新建群：{link}',
   'Could not create the invite. Use Bot settings → Invite to this Bot.': '无法创建邀请。请在 Bot 设置里使用 Invite to this Bot。',
   'Face-to-face group': '面对面建群',
   'Meet the people next to you. Pick your Bots and type the same 6-digit number.': '和身边的人建群。选你的 Bot，输入同一组 6 位数字。',

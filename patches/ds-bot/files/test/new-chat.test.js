@@ -115,7 +115,11 @@ test('new-chat turns a refused group into a card with the invite and leave-out a
   assert.doesNotMatch(src, /setGrants|grants\.set/)
   const api = readFileSync(new URL('../src/client/api.js', import.meta.url), 'utf8')
   assert.match(api, /details: result\.error\?\.details/)
-  for (const key of ['Copy invite link for {name}', 'Leave {name} out', 'that friend']) {
+  // A missing clipboard API or a refused write is not reported as copied; the link is shown instead.
+  assert.doesNotMatch(src, /await navigator\.clipboard\?\.writeText/)
+  assert.match(src, /navigator\.clipboard\?\.writeText === undefined/)
+  assert.match(src, /\{ name: bot\.name, link \}/)
+  for (const key of ['Copy invite link for {name}', 'Leave {name} out', 'that friend', 'Send this invite link for {name} to your friend; once they accept, create the group again: {link}']) {
     assert.ok(DICTIONARY.zh[key], `ZH entry for ${key}`)
   }
 })

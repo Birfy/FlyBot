@@ -25,7 +25,7 @@ diff --git a/client.js b/client.js
    Add: "添加",
    Close: "关闭",
    Copy: "复制",
-@@ -84,14 +84,51 @@ var ZH = {
+@@ -84,14 +84,52 @@ var ZH = {
    "Remove Main Bot role": "取消主 Bot",
    "Bot settings": "Bot 设置",
    "Create group chat": "新建群聊",
@@ -35,6 +35,7 @@ diff --git a/client.js b/client.js
 +  "Copy invite link for {name}": "复制 {name} 的邀请链接",
 +  "Leave {name} out": "不拉 {name} 进群",
 +  "Invite link for {name} copied. Send it to your friend; once they accept, create the group again.": "{name} 的邀请链接已复制。发给好友，对方接受后再重新建群。",
++  "Send this invite link for {name} to your friend; once they accept, create the group again: {link}": "把 {name} 的邀请链接发给好友，对方接受后再重新建群：{link}",
 +  "Could not create the invite. Use Bot settings → Invite to this Bot.": "无法创建邀请。请在 Bot 设置里使用 Invite to this Bot。",
 +  "Face-to-face group": "面对面建群",
 +  "Meet the people next to you. Pick your Bots and type the same 6-digit number.": "和身边的人建群。选你的 Bot，输入同一组 6 位数字。",
@@ -1466,7 +1467,7 @@ diff --git a/client.js b/client.js
  .bt-error{padding:0 14px 10px;color:#e02135;font-size:12px}
 +.bt-fix-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 +.bt-fix-btn{font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer}
-+.bt-fix .bt-note{margin-top:6px}
++.bt-fix .bt-note{margin-top:6px;overflow-wrap:anywhere;user-select:text}
  
  .bt-pane{position:fixed;top:var(--dsh-frame-chrome-top,0px);right:0;bottom:0;z-index:45;pointer-events:auto;background:var(--bt-main);color:var(--bt-ink);display:flex;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
  .bt-dialog{flex:1;display:flex;flex-direction:column;min-width:0}
@@ -6926,8 +6927,8 @@ diff --git a/client.js b/client.js
 +      const invite = await social.createInvite(bot.id);
 +      const link = invite?.link || invite?.url;
 +      if (!link) throw new Error("no link");
-+      await navigator.clipboard?.writeText(link);
-+      setFixNote(t("Invite link for {name} copied. Send it to your friend; once they accept, create the group again.", { name: bot.name }));
++      const copied = navigator.clipboard?.writeText === void 0 ? false : await navigator.clipboard.writeText(link).then(() => true, () => false);
++      setFixNote(copied ? t("Invite link for {name} copied. Send it to your friend; once they accept, create the group again.", { name: bot.name }) : t("Send this invite link for {name} to your friend; once they accept, create the group again: {link}", { name: bot.name, link }));
 +    } catch {
 +      setFixNote(t("Could not create the invite. Use Bot settings → Invite to this Bot."));
 +    }

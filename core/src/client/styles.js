@@ -334,7 +334,7 @@ button.bt-q-opt:active{background:var(--bt-active)}
 .bt-error{padding:0 14px 10px;color:#e02135;font-size:12px}
 .bt-fix-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .bt-fix-btn{font:inherit;font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer}
-.bt-fix .bt-note{margin-top:6px}
+.bt-fix .bt-note{margin-top:6px;overflow-wrap:anywhere;user-select:text}
 
 .bt-pane{position:fixed;top:var(--dsh-frame-chrome-top,0px);right:0;bottom:0;z-index:45;pointer-events:auto;background:var(--bt-main);color:var(--bt-ink);display:flex;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
 .bt-dialog{flex:1;display:flex;flex-direction:column;min-width:0}
