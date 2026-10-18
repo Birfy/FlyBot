@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createPresence, BEAT_MS, POLL_MS, WANTED_MS, MAX_BEATS, AFTER_MESSAGE_MS } from '../src/presence.js'
+import { createPresence, CLAIM_MS, BEAT_MS, POLL_MS, WANTED_MS, MAX_BEATS, AFTER_MESSAGE_MS } from '../src/presence.js'
 
 const norm = handle => { const body = String(handle ?? '').trim().replace(/^@+/, '').toLowerCase(); return body ? `@${body}` : '' }
 const cleanName = (value, fallback) => String(value ?? '').replace(/[<>@]/g, '').trim() || fallback
@@ -72,6 +72,54 @@ test('send: a turn that answers a friend says thinking toward that Bot, repeats 
   await f.c.advance(BEAT_MS * 3)
   assert.equal(f.sent().length, 4)
   assert.equal(f.presence.sending(), 0)
+})
+
+test('send: a friend\'s line recorded after turn.start still announces the turn (#332: the feed gave that turn no trigger)', async (t) => {
+  const f = fixture()
+  t.after(() => f.presence.dispose())
+  const delivered = (extra = {}) => f.handlers.get('exchange.delivered')?.({ exchangeId: 'x', from: { kind: 'remote', handle: '@Coder.Bob.home' }, to: { botId: 'a' }, sessionId: 's', place: 'chat', role: 'request', ...extra })
+  f.start(friendTurn({ trigger: undefined }))
+  await settle()
+  assert.deepEqual(f.sent(), [], 'no target yet')
+  delivered()
+  await settle()
+  assert.deepEqual(f.sent(), [{ bot_id: 'm_a', state: 'thinking', to: '@coder.bob.home' }])
+  await f.c.advance(BEAT_MS + 10)
+  assert.equal(f.sent().length, 2)
+  f.end({ turnId: 's#1', sessionId: 's' })
+  await settle()
+  assert.deepEqual(f.sent().at(-1), { bot_id: 'm_a', state: 'idle', to: '@coder.bob.home' })
+  // The same delivery twice, or one for another Session, starts nothing more.
+  delivered()
+  await settle()
+  assert.equal(f.sent().length, 3)
+  f.start(friendTurn({ trigger: undefined, turnId: 's#2', turn: 2 }))
+  await settle()
+  delivered({ sessionId: 'other' })
+  delivered({ from: { kind: 'user' } })
+  delivered({ place: 'group' })
+  await settle()
+  assert.equal(f.sent().length, 3)
+  // A line recorded long after the turn began reached a Bot that was busy with something else: not claimed.
+  f.start(friendTurn({ trigger: undefined, turnId: 's#2b', turn: 2, time: 5_000 }))
+  await settle()
+  delivered({ time: 5_000 + CLAIM_MS + 1 })
+  await settle()
+  assert.equal(f.sent().length, 3)
+  f.start(friendTurn({ trigger: undefined, turnId: 's#2c', turn: 2, time: 9_000 }))
+  await settle()
+  delivered({ time: 9_000 + CLAIM_MS })
+  await settle()
+  assert.equal(f.sent().length, 4, 'inside the window it is claimed')
+  f.end({ turnId: 's#2c', sessionId: 's' })
+  await settle()
+  assert.equal(f.sent().length, 5, 'idle follows')
+  // A turn the user started is not claimed by a friend's line that arrives during it.
+  f.start(friendTurn({ turnId: 's#3', turn: 3, trigger: { exchangeId: 'u', from: { kind: 'user' }, role: 'user', hop: 0 } }))
+  await settle()
+  delivered()
+  await settle()
+  assert.equal(f.sent().length, 5)
 })
 
 test('send: nothing leaves for a turn the user started, an unknown Bot, a Bot without an identity, or a turn in a local group', async (t) => {
