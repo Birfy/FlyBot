@@ -47,6 +47,35 @@ function findHost(where) {
   return tails.length ? tails[tails.length - 1] : null
 }
 
+const lastTurnOnScreen = (kind) => {
+  let top = -1
+  for (const node of document.querySelectorAll(`[data-chat-flow-kind${kind ? `="${kind}"` : ''}][data-chat-turn]`)) top = Math.max(top, Number(node.dataset.chatTurn))
+  return top
+}
+// Whether a reply (assistant text) is on screen in a turn after the last send turn.
+function useReplyAfterSend(remote, sending) {
+  const sendTurn = useRef(-1)
+  const wasSending = useRef(false)
+  const [replied, setReplied] = useState(false)
+  useEffect(() => {
+    if (!remote) return undefined
+    if (sending) { wasSending.current = true; sendTurn.current = -1; setReplied(false); return undefined }
+    // My send turn just ended: everything on screen now is up to and including it.
+    if (wasSending.current) { wasSending.current = false; sendTurn.current = lastTurnOnScreen() }
+    if (sendTurn.current < 0) return undefined
+    let frame = 0
+    const check = () => {
+      frame = 0
+      if (lastTurnOnScreen('assistant-step') > sendTurn.current) setReplied(true)
+    }
+    const observer = new MutationObserver(() => { if (!frame) frame = requestAnimationFrame(check) })
+    observer.observe(document.querySelector('[data-conversation-scroll]') ?? document.body, { childList: true, subtree: true })
+    check()
+    return () => { cancelAnimationFrame(frame); observer.disconnect() }
+  }, [remote, sending])
+  return replied
+}
+
 function useRunningHost(active, where = RUNNING_HOST) {
   const [host, setHost] = useState(null)
   useEffect(() => {
@@ -126,9 +155,23 @@ export function ActivityIndicator({ sessionId, useRoster, useSessionStatus, useL
   // A friend's chat (#443): my message leaves in one short turn and the reply comes back in
   // another, so the row stays up from the send until the reply lands, with the friend's Bot mark.
   const awaiting = useAwaitingReply(roster, sessionId)
-  const visible = (running && !streaming && !relaying && (bot !== undefined || room !== undefined)) || (awaiting && !running)
+  // A friend chat's run is either my send (it starts from a submission) or the friend's reply being
+  // written back (the echo: no submission). The echo never shows the row: the reply is the answer (#443).
+  const sendRun = useRef(false)
+  if (!running) sendRun.current = false
+  else if (pendingInput > 0) sendRun.current = true
+  // The friend's reply can be drawn a beat before the roster says the wait is over: a reply in a
+  // turn after my send turn ends the wait on screen at once (#443).
+  const replied = useReplyAfterSend(bot?.remote !== undefined, running && sendRun.current)
+  const visible = bot?.remote !== undefined
+    ? !streaming && (running ? sendRun.current : awaiting && !replied)
+    : (running && !streaming && !relaying && (bot !== undefined || room !== undefined))
   // Between those two turns `running` drops for a moment; a short grace keeps the one row up.
-  const steady = awaiting || (bot?.remote !== undefined && !streaming)
+  // Only the end of my send turn is bridged; the reply's own turn (the echo) hides the row at once.
+  const lastRun = useRef({ running, send: false })
+  const bridging = bot?.remote !== undefined && !streaming && lastRun.current.running && lastRun.current.send && !running
+  lastRun.current = { running, send: sendRun.current }
+  const steady = bridging
   const tool = tools.at(-1)
   const inputRef = useRef(0)
   // A steer keeps the run going, so nothing else resets the row: fresh input is

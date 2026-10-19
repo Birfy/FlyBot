@@ -38,7 +38,7 @@ test('the roster carries remoteAwaiting and the activity row keeps one row with 
   assert.match(channel, /remoteAwaiting: state\.remoteAwaiting \?\? \{\}/)
   const row = await import('../src/client/awaiting.js')
   const src = readFileSync(new URL('../src/client/activity-row.js', import.meta.url), 'utf8')
-  assert.match(src, /\(awaiting && !running\)/, 'the row stays up between the send turn and the reply turn')
+  assert.match(src, /running \? sendRun\.current : awaiting/, 'the row stays up between the send turn and the reply turn')
   assert.match(src, /'data-carry'/, 'moving between hosts is no second entrance')
   {
     const roster = at => ({ remoteAwaiting: { r1: at }, byId: { r1: { remote: { handle: '@a.b.home' } }, c: {} } })
@@ -46,4 +46,37 @@ test('the roster carries remoteAwaiting and the activity row keeps one row with 
     assert.equal(row.awaitingReply(roster(1000), 'r1', 1000 + row.AWAIT_REPLY_MS + 1), false, 'a reply that never comes lets the row go')
     assert.equal(row.awaitingReply({ remoteAwaiting: { c: 1000 }, byId: { c: {} } }, 'c', 2000), false, 'only friend chats wait')
   }
+})
+
+test('the row between turns is not hidden by the turn-tail rules, and the echo turn never shows it (#443 follow-up)', () => {
+  const css = readFileSync(new URL('../src/client/styles.js', import.meta.url), 'utf8')
+  // The tail hides everything but its slot, and an empty tail item hides itself: both spare the row.
+  assert.match(css, /\[data-turn-tail\]>:not\(\[data-slot="conversation\.chat\.turnTail"\]\):not\(\.bt-typing\)\{display:none!important\}/)
+  assert.match(css, /\[data-chat-flow-kind="turn-tail"\]:not\(:has\(\[data-slot="conversation\.chat\.turnTail"\]:not\(:empty\)\)\):not\(:has\(\[data-turn-tail\]>\.bt-typing\)\)\{display:none!important\}/)
+  const src = readFileSync(new URL('../src/client/activity-row.js', import.meta.url), 'utf8')
+  assert.match(src, /\? !streaming && \(running \? sendRun\.current : awaiting && !replied\)/, 'a friend chat shows the row for my send and the wait, not for the echo')
+})
+
+test('the reply turn hides the row at once; only the end of my send turn gets the grace (#443 follow-up)', () => {
+  const src = readFileSync(new URL('../src/client/activity-row.js', import.meta.url), 'utf8')
+  assert.match(src, /const steady = bridging/)
+  assert.match(src, /lastRun\.current\.running && lastRun\.current\.send && !running/)
+})
+
+test('a friend\'s reply arriving clears the wait before it is written into the chat (#443 follow-up)', async () => {
+  const { state, rt } = rig()
+  state.remoteAwaiting = { r1: 1 }
+  let seen
+  rt.botOf = () => state.bots.r1
+  rt.chatOf = () => ({})
+  rt.resolveAgent = async () => ({ followup() { seen = { ...state.remoteAwaiting } }, session: {} })
+  rt.ctx.sessions = { flush: async () => {} }
+  await rt.remoteChats.deliver({ handle: '@bot-1.danyang.home', text: 'hi' })
+  assert.deepEqual(seen, {}, 'cleared before the reply is followed up')
+})
+
+test('a reply drawn in a later turn than my send ends the wait on screen, ahead of the roster (#443 follow-up)', () => {
+  const src = readFileSync(new URL('../src/client/activity-row.js', import.meta.url), 'utf8')
+  assert.match(src, /awaiting && !replied/)
+  assert.match(src, /lastTurnOnScreen\('assistant-step'\) > sendTurn\.current/)
 })

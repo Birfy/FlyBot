@@ -3823,8 +3823,8 @@ header[class*="_header"] .bt-head{flex:1 1 auto;width:100%}
 [class*="_body"]:has(> [class*="_scrollBody"]){--dsh-chat-content-width:min(960px,100%)}
 /* DSH's turn tail keeps what plugins put in it (delivered files, the Bot's separators),
    without its copy and branch row; a tail with nothing in it takes no room. */
-[data-turn-tail]>:not([data-slot="conversation.chat.turnTail"]){display:none!important}
-[class*="_flowItem"][data-chat-flow-kind="turn-tail"]:not(:has([data-slot="conversation.chat.turnTail"]:not(:empty))){display:none!important}
+[data-turn-tail]>:not([data-slot="conversation.chat.turnTail"]):not(.bt-typing){display:none!important}
+[class*="_flowItem"][data-chat-flow-kind="turn-tail"]:not(:has([data-slot="conversation.chat.turnTail"]:not(:empty))):not(:has([data-turn-tail]>.bt-typing)){display:none!important}
 /* Every team Session belongs to a Bot or a group, so a blank one is an empty chat, not
    the shell's new-session hero: no headline, no workspace or mode picker, and the
    composer stays docked at the bottom. */
@@ -6110,6 +6110,45 @@ function findHost(where) {
   const tails = flow.querySelectorAll(":scope > * [data-turn-tail], :scope > [data-turn-tail]");
   return tails.length ? tails[tails.length - 1] : null;
 }
+var lastTurnOnScreen = (kind) => {
+  let top = -1;
+  for (const node of document.querySelectorAll(`[data-chat-flow-kind${kind ? `="${kind}"` : ""}][data-chat-turn]`)) top = Math.max(top, Number(node.dataset.chatTurn));
+  return top;
+};
+function useReplyAfterSend(remote, sending) {
+  const sendTurn = (0, import_react9.useRef)(-1);
+  const wasSending = (0, import_react9.useRef)(false);
+  const [replied, setReplied] = (0, import_react9.useState)(false);
+  (0, import_react9.useEffect)(() => {
+    if (!remote) return void 0;
+    if (sending) {
+      wasSending.current = true;
+      sendTurn.current = -1;
+      setReplied(false);
+      return void 0;
+    }
+    if (wasSending.current) {
+      wasSending.current = false;
+      sendTurn.current = lastTurnOnScreen();
+    }
+    if (sendTurn.current < 0) return void 0;
+    let frame = 0;
+    const check = () => {
+      frame = 0;
+      if (lastTurnOnScreen("assistant-step") > sendTurn.current) setReplied(true);
+    };
+    const observer = new MutationObserver(() => {
+      if (!frame) frame = requestAnimationFrame(check);
+    });
+    observer.observe(document.querySelector("[data-conversation-scroll]") ?? document.body, { childList: true, subtree: true });
+    check();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [remote, sending]);
+  return replied;
+}
 function useRunningHost(active, where = RUNNING_HOST) {
   const [host, setHost] = (0, import_react9.useState)(null);
   (0, import_react9.useEffect)(() => {
@@ -6194,8 +6233,15 @@ function ActivityIndicator({ sessionId, useRoster, useSessionStatus, useLive, us
   const tools = entries2.filter((entry) => !entry.text).sort((a, b) => a.at - b.at);
   const relaying = tools.some((entry) => entry.relay);
   const awaiting = useAwaitingReply(roster, sessionId);
-  const visible = running && !streaming && !relaying && (bot !== void 0 || room2 !== void 0) || awaiting && !running;
-  const steady = awaiting || bot?.remote !== void 0 && !streaming;
+  const sendRun = (0, import_react9.useRef)(false);
+  if (!running) sendRun.current = false;
+  else if (pendingInput > 0) sendRun.current = true;
+  const replied = useReplyAfterSend(bot?.remote !== void 0, running && sendRun.current);
+  const visible = bot?.remote !== void 0 ? !streaming && (running ? sendRun.current : awaiting && !replied) : running && !streaming && !relaying && (bot !== void 0 || room2 !== void 0);
+  const lastRun = (0, import_react9.useRef)({ running, send: false });
+  const bridging = bot?.remote !== void 0 && !streaming && lastRun.current.running && lastRun.current.send && !running;
+  lastRun.current = { running, send: sendRun.current };
+  const steady = bridging;
   const tool = tools.at(-1);
   const inputRef = (0, import_react9.useRef)(0);
   const inputAt = Math.max(inputRef.current, pendingInput);
