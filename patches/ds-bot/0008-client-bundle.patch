@@ -1797,7 +1797,7 @@ diff --git a/client.js b/client.js
    }
    return "";
  }
-@@ -1624,9 +1624,177 @@ function usageOf(list, ids) {
+@@ -1624,9 +1624,188 @@ function usageOf(list, ids) {
    const hit = input > 0 ? Math.round(cacheRead / input * 100) : 0;
    return t("{tokens} tok · Cache hit {hit}%", { tokens: formatTokens(input + output), hit });
  }
@@ -1806,6 +1806,17 @@ diff --git a/client.js b/client.js
 +  const named = text.match(/^Face-to-face · (.+) · (\d{6})$/);
 +  if (named) return `${named[2]} · ${named[1]}`;
 +  return text.match(/^Face-to-face · (\d{6})$/)?.[1] ?? text;
++}
++function modelOf(bot, roster) {
++  const ref = bot.model ?? bot.appliedModel;
++  if (!ref) return void 0;
++  const served = (roster.models ?? []).find((model) => model.ref === ref);
++  const [provider, ...rest] = ref.split("/");
++  return { ref, name: served?.name ?? rest.join("/"), provider: served?.providerName ?? provider, served: served !== void 0 };
++}
++function botRowTitle(name, model, wide) {
++  if (model) return `${name} · ${model}`;
++  return wide ? void 0 : name;
 +}
 +function awayGroups(groups, roomsById) {
 +  return (groups ?? []).filter((entry) => roomsById?.[entry.id]?.origin !== "face-to-face");
@@ -2304,18 +2315,10 @@ diff --git a/client.js b/client.js
  .bt-ububble{max-width:min(560px,78%);background:var(--bt-user);color:var(--bt-user-ink);border-radius:18px;padding:7px 12px;font-size:14px;line-height:20px;box-sizing:border-box;overflow-wrap:anywhere}
  .bt-ububble [class*="_markdown"],.bt-ububble a{color:inherit!important}
  .bt-ububble p{margin:0;line-height:22px}
-@@ -2842,239 +2842,221 @@ function installCompiledStyles(text, tag) {
-     timer = setTimeout(render, 120);
-   };
-   const onLoad = (event) => {
--    if (event.target instanceof HTMLLinkElement) schedule();
--  };
--  const observer = new MutationObserver(schedule);
--  observer.observe(document.head, { childList: true });
--  document.addEventListener("load", onLoad, true);
--  return () => {
--    observer.disconnect();
--    document.removeEventListener("load", onLoad, true);
+@@ -2850,231 +2850,213 @@ function installCompiledStyles(text, tag) {
+   return () => {
+     observer.disconnect();
+     document.removeEventListener("load", onLoad, true);
 -    clearTimeout(timer);
 -    style.remove();
 -  };
@@ -2383,14 +2386,6 @@ diff --git a/client.js b/client.js
 -    onAnimationEnd: poked ? (event) => {
 -      if (/^bt-poke/.test(event.animationName)) setPoked(false);
 -    } : void 0
-+    if (event.target instanceof HTMLLinkElement) schedule();
-+  };
-+  const observer = new MutationObserver(schedule);
-+  observer.observe(document.head, { childList: true });
-+  document.addEventListener("load", onLoad, true);
-+  return () => {
-+    observer.disconnect();
-+    document.removeEventListener("load", onLoad, true);
 +    clearTimeout(timer);
 +    style.remove();
    };
@@ -3852,9 +3847,8 @@ diff --git a/client.js b/client.js
 +    room2?.admin === bot.id ? (0, import_react8.createElement)("span", { className: "bt-group-role" }, t("Admin")) : null
 +  );
 +  return (0, import_react8.createElement)(
-     "div",
-     { className: "bt-group-msg" },
--    (0, import_react6.createElement)(
++    "div",
++    { className: "bt-group-msg" },
 +    name,
 +    (0, import_react8.createElement)(Bubbles, { texts: [text], roster, selfId: bot.id, actions, sessionId: room2?.id, msgKey, useUi, lead })
 +  );
@@ -3915,7 +3909,9 @@ diff --git a/client.js b/client.js
 +  const mark = (0, import_react8.createElement)(BotMark, { bot, size: 22 });
 +  const lead = chatId ? (0, import_react8.createElement)("button", { type: "button", className: "bt-lead", title: handle, "aria-label": t("Open {name}'s chat", { name }), onClick: () => actions.openSession(chatId) }, mark) : (0, import_react8.createElement)("span", { className: "bt-lead", title: handle }, mark);
 +  return (0, import_react8.createElement)(
-+    "div",
+     "div",
+-    { className: "bt-group-msg" },
+-    (0, import_react6.createElement)(
 +    { className: "bt-group-msg bt-remote-msg", "data-remote": handle },
 +    // A face room's header is the one name alone; the handle is on hover only (#457).
 +    face ? (0, import_react8.createElement)("span", { className: "bt-group-name", style: { color: inkText(colorOf(bot)) }, title: handle }, name) : (0, import_react8.createElement)(
@@ -4362,8 +4358,7 @@ diff --git a/client.js b/client.js
        if (reply.kind === "stopped") {
 -        return (0, import_react6.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("You stopped {name}'s work", { name: bot.name }));
 +        return (0, import_react8.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("You stopped {name}'s work", { name: bot.name }));
-       }
--      return (0, import_react6.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi });
++      }
 +      if (reply.kind === "notice" && room2?.origin === "face-to-face" && String(reply.text ?? "").trim() === WAITING_OTHERS_NOTICE) return null;
 +      if (reply.kind === "notice" || reply.kind === "joined" || reply.kind === "left" || reply.kind === "started") {
 +        return (0, import_react8.createElement)("div", { key: `notice-${index}`, className: "bt-event", "data-flybot": "face-notice" }, remoteMessageText(reply.text));
@@ -4380,7 +4375,8 @@ diff --git a/client.js b/client.js
 +          msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0,
 +          useUi
 +        });
-+      }
+       }
+-      return (0, import_react6.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi });
 +      return (0, import_react8.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi, seq: reply.seq });
      }),
      pending.map((id) => {
@@ -5231,7 +5227,7 @@ diff --git a/client.js b/client.js
        "button",
        {
          type: "button",
-@@ -4785,12 +4785,15 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
+@@ -4785,38 +4785,105 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
          onClick: () => actions.openSession(id),
          onContextMenu
        },
@@ -5251,12 +5247,13 @@ diff --git a/client.js b/client.js
      "button",
      {
        type: "button",
-@@ -4798,25 +4798,88 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
+       className: "bt-row",
        "aria-label": label,
        "aria-current": active ? "page" : void 0,
++      // An own Bot's hover text names its model (#366); a friend's Bot runs on its owner's model.
        "data-bot-id": id,
 -      title: wide ? void 0 : bot.name,
-+      title: remoteRecord2 ? shown : wide ? void 0 : bot.name,
++      title: remoteRecord2 ? shown : botRowTitle(shown, modelOf(bot, roster)?.name, wide),
        onClick: () => actions.openSession(id),
        onContextMenu
      },
@@ -6786,8 +6783,17 @@ diff --git a/client.js b/client.js
  var import_react_dom6 = require("react-dom");
  var MENU_EXIT_MS = 120;
  function groupModels(models) {
-@@ -6376,8 +6376,8 @@ function modelOf(bot, roster) {
+@@ -6367,17 +6367,10 @@ function groupModels(models) {
+   });
  }
+ var servedOf = (roster, ref) => (roster.models ?? []).find((model) => model.ref === ref);
+-function modelOf(bot, roster) {
+-  const ref = bot.model ?? bot.appliedModel;
+-  if (!ref) return void 0;
+-  const served = servedOf(roster, ref);
+-  const [provider, ...rest] = ref.split("/");
+-  return { ref, name: served?.name ?? rest.join("/"), provider: served?.providerName ?? provider, served: served !== void 0 };
+-}
  var effortCache = /* @__PURE__ */ new Map();
  function useEfforts(served, ref, actions) {
 -  const [fetched, setFetched] = (0, import_react13.useState)(void 0);
