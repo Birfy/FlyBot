@@ -7864,6 +7864,14 @@ test('#458: waiting alone says so; Enter chat steps aside while Leave asks; Leav
   assert.deepEqual(nav, [['closeOverlay'], ['open', 'helper']])
 })
 
+test('on a phone-width screen the hold card keeps Approve/Reject touch-sized (#362)', () => {
+  const src = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+  const phone = src.match(/@media \(max-width:640px\)\{([^\n]*)\}\n/)?.[1]
+  assert.ok(phone, 'a phone-width rule for the hold card')
+  assert.match(phone, /\.fs-hold \.fs-btn\{[^}]*height:40px/)
+  assert.match(phone, /\.fs-hold \.fs-hold-decide\{[^}]*justify-content:flex-end/)
+})
+
 // Bot Social with the room lead (#476): POST /lead and PUT /roles answer the room, as the server does.
 function leadFaceServer(features) {
   const server = attestingFaceServer({ features })
