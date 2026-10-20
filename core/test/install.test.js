@@ -152,6 +152,13 @@ test('the client channel answers from the saved state', async (t) => {
   assert.equal(loaded.email, null)
   assert.deepEqual((await call('set-prefs', { email: true })).error, { code: 'bot/invalid', message: 'Email is not set up on this server', details: {} })
   assert.equal('email' in (await call('set-prefs', { email: false })).value, false)
+  // Each kind on its own; only the off ones are kept (#469).
+  assert.deepEqual((await call('set-prefs', { notify: { finished: false } })).value.notify, { finished: false })
+  assert.deepEqual((await call('set-prefs', { notify: { approval: false } })).value.notify, { finished: false, approval: false })
+  assert.deepEqual((await call('set-prefs', { notify: { finished: true, approval: true } })).value.notify, undefined)
+  for (const notify of [{ loud: false }, { failed: 'no' }, ['approval'], null]) {
+    assert.deepEqual((await call('set-prefs', { notify })).error, { code: 'bot/invalid', message: 'Notifications must be on or off', details: {} })
+  }
   // A refusal from the team code keeps its message for the user.
   assert.deepEqual((await call('delete-bot', { id: 'nobody' })).error, { code: 'bot/refused', message: 'Unknown Bot', details: {} })
   // Off the Desktop profile there are no Bot browsers.
