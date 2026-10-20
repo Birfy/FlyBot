@@ -673,7 +673,7 @@ diff --git a/client.js b/client.js
      if (!REFUSALS.has(code)) {
        noteClientError(endpoint, Object.assign(new Error(result.error?.message ?? "Request failed"), { code }));
        markNoted(error);
-@@ -1097,6 +1097,329 @@ var call = async (endpoint, payload, signal) => {
+@@ -1097,6 +1097,348 @@ var call = async (endpoint, payload, signal) => {
    return result.value;
  };
  
@@ -742,9 +742,28 @@ diff --git a/client.js b/client.js
 +    isChief: bot.remote.isChief
 +  });
 +}
++var AUTO_OWNER = /^flybot[\s._-]*(?=[0-9a-f]*\d)[0-9a-f]{6,}$/i;
++function isAutoOwnerName(name) {
++  return AUTO_OWNER.test(String(name ?? "").trim());
++}
 +function ownerNameOf(record) {
 +  if (!record) return "";
-+  return cleanPeerName(record.ownerName || record.owner || record.homeName || record.ownerHome || record.home || ownerFromHandle(record.handle), "");
++  const named = cleanPeerName(record.ownerName || record.owner || record.homeName || record.ownerHome || record.home || ownerFromHandle(record.handle), "");
++  if (!isAutoOwnerName(named)) return named;
++  const other = [record.ownerName, record.owner, record.homeName].map((value) => cleanPeerName(value, "")).find((value) => value && !isAutoOwnerName(value));
++  return other || cleanPeerName(ownerFromHandle(record.handle) || ownerFromHandle(record.ownerHome) || ownerFromHandle(record.home), "") || named;
++}
++function seatOwnerName(ownerName, handle) {
++  return ownerName ? ownerNameOf({ ownerName, handle }) : "";
++}
++var ownerKey = (value) => String(value ?? "").toLowerCase().replace(/[\s._@-]+/g, "");
++function remoteBotName(record, fallback = "") {
++  const name = cleanPeerName(record?.displayName || record?.name, fallback);
++  const at = name.lastIndexOf(" · ");
++  if (at <= 0) return name;
++  const tail = ownerKey(name.slice(at + 3));
++  const owners = [record?.ownerName, record?.owner, record?.homeName, ownerFromHandle(record?.handle), ownerNameOf(record)].map(ownerKey).filter(Boolean);
++  return isAutoOwnerName(name.slice(at + 3)) || owners.includes(tail) ? name.slice(0, at).trim() : name;
 +}
 +function isChiefRecord(record) {
 +  if (!record) return false;
@@ -753,7 +772,7 @@ diff --git a/client.js b/client.js
 +}
 +function remoteBotTitle(record) {
 +  const owner = ownerNameOf(record) || cleanPeerName(record?.handle, "Friend");
-+  const name = cleanPeerName(record?.displayName || record?.name, isChiefRecord(record) ? "Chief" : cleanPeerName(record?.handle, "Bot"));
++  const name = remoteBotName(record, isChiefRecord(record) ? "Chief" : cleanPeerName(record?.handle, "Bot"));
 +  return `${name} (${owner})`;
 +}
 +function remoteOwnerBadge(record) {
@@ -1880,7 +1899,7 @@ diff --git a/client.js b/client.js
    }
    return "";
  }
-@@ -1624,47 +1624,226 @@ function usageOf(list, ids) {
+@@ -1624,48 +1624,227 @@ function usageOf(list, ids) {
    const hit = input > 0 ? Math.round(cacheRead / input * 100) : 0;
    return t("{tokens} tok · Cache hit {hit}%", { tokens: formatTokens(input + output), hit });
  }
@@ -1958,6 +1977,12 @@ diff --git a/client.js b/client.js
 -    last = now;
 -    const steps = Math.ceil(dt * 240);
 -    const h34 = dt / steps;
+-    let moving = false;
+-    for (const value of values.values()) {
+-      for (let index = 0; index < steps; index += 1) {
+-        value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h34;
+-        value.x += value.v * h34;
+-      }
 +var EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], humans: [], self: null, agents: [], exchangeTurns: {}, remoteTypedTurns: {}, remoteAwaiting: {}, questions: {}, secrets: [], capabilities: [], capabilityStatuses: {}, secretRequests: {}, models: [], defaultModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false };
 +var isMainOf = (roster, id) => id !== void 0 && (roster.mainBotIds ?? []).includes(id);
 +function indexRoster(value) {
@@ -2132,16 +2157,15 @@ diff --git a/client.js b/client.js
 +    last = now;
 +    const steps = Math.ceil(dt * 240);
 +    const h42 = dt / steps;
-     let moving = false;
-     for (const value of values.values()) {
-       for (let index = 0; index < steps; index += 1) {
--        value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h34;
--        value.x += value.v * h34;
++    let moving = false;
++    for (const value of values.values()) {
++      for (let index = 0; index < steps; index += 1) {
 +        value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h42;
 +        value.x += value.v * h42;
-       }
++      }
        if (Math.abs(value.x - value.to) < 0.05 && Math.abs(value.v) < 1) {
          value.x = value.to;
+         value.v = 0;
 @@ -1699,10 +1699,10 @@ function liveSprings(apply2) {
  }
  var CHOSEN = '[aria-pressed="true"],[aria-selected="true"],[aria-current="page"]';
@@ -2501,6 +2525,36 @@ diff --git a/client.js b/client.js
 -      document.documentElement.removeEventListener("pointerleave", onLeave);
 -    };
 -  }, [enabled]);
+-}
+-var FIDGETS = ["hop", "sway", "stretch", "look"];
+-function BotMark({ bot, look: given, size = 36, state = "idle", live = false, gaze = false, pokeable = false, label }) {
+-  const look = given ?? lookOf(bot);
+-  const ref = (0, import_react2.useRef)(null);
+-  const maskId = (0, import_react2.useRef)("");
+-  if (maskId.current === "") maskId.current = `bt-mark-${nextMarkSerial()}`;
+-  const [poked, setPoked] = (0, import_react2.useState)(false);
+-  useGaze(ref, gaze);
+-  const common = {
+-    ref,
+-    className: poked ? "bt-mark bt-mark-poke" : "bt-mark",
+-    "data-shape": look.image ? "image" : shapeId(look.shape),
+-    "data-state": STATES.includes(state) ? state : "idle",
+-    "data-live": live ? "" : void 0,
+-    "data-fidget": live ? FIDGETS[fnv1a(`${bot?.id ?? ""}:fidget`) % FIDGETS.length] : void 0,
+-    "data-gaze": gaze ? "" : void 0,
+-    "data-poke": pokeable ? "" : void 0,
+-    style: { width: size, height: size, ...live ? { "--bt-delay": `${-(fnv1a(String(bot?.id ?? "")) % 5e3) / 1e3}s`, "--bt-fidget-delay": `${-(fnv1a(`${bot?.id ?? ""}:when`) % 9e3) / 1e3}s` } : {} },
+-    role: label ? "img" : void 0,
+-    "aria-label": label,
+-    "aria-hidden": label ? void 0 : true,
+-    onClick: pokeable ? () => setPoked(true) : void 0,
+-    onAnimationEnd: poked ? (event) => {
+-      if (/^bt-poke/.test(event.animationName)) setPoked(false);
+-    } : void 0
+-  };
+-  if (look.image) return (0, import_react2.createElement)("span", common, (0, import_react2.createElement)("img", { className: "bt-mark-img", src: look.image, alt: "", draggable: false }));
+-  const box = shapeOf(look.shape).size;
+-  return (0, import_react2.createElement)("span", common, (0, import_react2.createElement)("svg", { viewBox: `0 0 ${box} ${box}`, dangerouslySetInnerHTML: { __html: characterMarkup(look.shape, look.color).replaceAll(MASK_ID, maskId.current) } }));
 +// src/shared/face-title.js
 +var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 +function isGenericFaceTitle(name) {
@@ -2532,35 +2586,12 @@ diff --git a/client.js b/client.js
 +  rows.sort((a, b) => a.sort.localeCompare(b.sort));
 +  return rows.slice(0, 3).map((row) => row.owner);
  }
--var FIDGETS = ["hop", "sway", "stretch", "look"];
--function BotMark({ bot, look: given, size = 36, state = "idle", live = false, gaze = false, pokeable = false, label }) {
--  const look = given ?? lookOf(bot);
--  const ref = (0, import_react2.useRef)(null);
--  const maskId = (0, import_react2.useRef)("");
--  if (maskId.current === "") maskId.current = `bt-mark-${nextMarkSerial()}`;
--  const [poked, setPoked] = (0, import_react2.useState)(false);
--  useGaze(ref, gaze);
--  const common = {
--    ref,
--    className: poked ? "bt-mark bt-mark-poke" : "bt-mark",
--    "data-shape": look.image ? "image" : shapeId(look.shape),
--    "data-state": STATES.includes(state) ? state : "idle",
--    "data-live": live ? "" : void 0,
--    "data-fidget": live ? FIDGETS[fnv1a(`${bot?.id ?? ""}:fidget`) % FIDGETS.length] : void 0,
--    "data-gaze": gaze ? "" : void 0,
--    "data-poke": pokeable ? "" : void 0,
--    style: { width: size, height: size, ...live ? { "--bt-delay": `${-(fnv1a(String(bot?.id ?? "")) % 5e3) / 1e3}s`, "--bt-fidget-delay": `${-(fnv1a(`${bot?.id ?? ""}:when`) % 9e3) / 1e3}s` } : {} },
--    role: label ? "img" : void 0,
--    "aria-label": label,
--    "aria-hidden": label ? void 0 : true,
--    onClick: pokeable ? () => setPoked(true) : void 0,
--    onAnimationEnd: poked ? (event) => {
--      if (/^bt-poke/.test(event.animationName)) setPoked(false);
--    } : void 0
--  };
--  if (look.image) return (0, import_react2.createElement)("span", common, (0, import_react2.createElement)("img", { className: "bt-mark-img", src: look.image, alt: "", draggable: false }));
--  const box = shapeOf(look.shape).size;
--  return (0, import_react2.createElement)("span", common, (0, import_react2.createElement)("svg", { viewBox: `0 0 ${box} ${box}`, dangerouslySetInnerHTML: { __html: characterMarkup(look.shape, look.color).replaceAll(MASK_ID, maskId.current) } }));
+-function StarIcon({ size = 8 }) {
+-  return (0, import_react2.createElement)(
+-    "svg",
+-    { width: size, height: size, viewBox: "0 0 10 10", "aria-hidden": true },
+-    (0, import_react2.createElement)("path", { d: "M5 .6l1.3 2.8 3 .3-2.3 2 .7 3L5 7.2 2.3 8.7l.7-3L.7 3.7l3-.3z", fill: "#fff" })
+-  );
 +function uniqueOwners(owners) {
 +  const seen = /* @__PURE__ */ new Set();
 +  const out = [];
@@ -2595,12 +2626,8 @@ diff --git a/client.js b/client.js
 +  bits.push(join.length === 6 ? join : when3);
 +  return bits.join(" · ");
  }
--function StarIcon({ size = 8 }) {
--  return (0, import_react2.createElement)(
--    "svg",
--    { width: size, height: size, viewBox: "0 0 10 10", "aria-hidden": true },
--    (0, import_react2.createElement)("path", { d: "M5 .6l1.3 2.8 3 .3-2.3 2 .7 3L5 7.2 2.3 8.7l.7-3L.7 3.7l3-.3z", fill: "#fff" })
--  );
+-function AdminStar() {
+-  return (0, import_react2.createElement)("span", { className: "bt-admin-star", role: "img", "aria-label": t("Admin") }, (0, import_react2.createElement)(StarIcon, { size: 7 }));
 +
 +// src/client/brand.js
 +var FLYBOT_WING = "M150 238 C 96 200, 40 196, 22 214 C 8 230, 40 262, 150 300 Z";
@@ -2627,8 +2654,12 @@ diff --git a/client.js b/client.js
 +  if (room2) return room2.displayName || (room2.sharedFrom ? sharedRoomTitle(room2.sharedFrom.inviterName) : room2.name) || "";
 +  return bot?.name || "";
  }
--function AdminStar() {
--  return (0, import_react2.createElement)("span", { className: "bt-admin-star", role: "img", "aria-label": t("Admin") }, (0, import_react2.createElement)(StarIcon, { size: 7 }));
+-function MainStar() {
+-  return (0, import_react2.createElement)(
+-    "svg",
+-    { viewBox: "0 0 20 20", "aria-hidden": true },
+-    (0, import_react2.createElement)("path", { d: "M10 2.4l2.29 5.04 5.51.63-4.09 3.74 1.11 5.42L10 14.5l-4.82 2.73 1.11-5.42L2.2 8.07l5.51-.63z" })
+-  );
 +function installTabTitle(sessions, roster, doc = globalThis.document) {
 +  if (!doc || !sessions || !roster) return () => {
 +  };
@@ -2647,13 +2678,6 @@ diff --git a/client.js b/client.js
 +    offRoster?.();
 +  };
  }
--function MainStar() {
--  return (0, import_react2.createElement)(
--    "svg",
--    { viewBox: "0 0 20 20", "aria-hidden": true },
--    (0, import_react2.createElement)("path", { d: "M10 2.4l2.29 5.04 5.51.63-4.09 3.74 1.11 5.42L10 14.5l-4.82 2.73 1.11-5.42L2.2 8.07l5.51-.63z" })
--  );
--}
 -function useSettled(state) {
 -  const prev = (0, import_react2.useRef)(state);
 -  const [settled, setSettled] = (0, import_react2.useState)(false);
@@ -2708,7 +2732,18 @@ diff --git a/client.js b/client.js
 -      people.slice(0, 3).map((bot, index) => seat(bot, size, bot?.id ?? `you-${index}`)),
 -      people.length > 3 ? (0, import_react2.createElement)("span", { className: "bt-stack-more" }, `+${people.length - 3}`) : null
 -    );
--  }
++function installBrandChrome() {
++  if (typeof document === "undefined") return () => {
++  };
++  const href = `data:image/svg+xml,${encodeURIComponent(flybotMarkSvg())}`;
++  let link = document.getElementById("flybot-favicon");
++  if (!link) {
++    link = document.createElement("link");
++    link.id = "flybot-favicon";
++    link.rel = "icon";
++    link.type = "image/svg+xml";
++    document.head.appendChild(link);
+   }
 -  const seats = clusterSeats(Math.min(people.length, 4), size);
 -  const overflow = people.length > 4 ? people.length - 3 : 0;
 -  const gap = size / 14;
@@ -2727,18 +2762,6 @@ diff --git a/client.js b/client.js
 -      return (0, import_react2.createElement)("span", { key: bot?.id ?? "you", style }, seat(bot, s));
 -    })
 -  );
-+function installBrandChrome() {
-+  if (typeof document === "undefined") return () => {
-+  };
-+  const href = `data:image/svg+xml,${encodeURIComponent(flybotMarkSvg())}`;
-+  let link = document.getElementById("flybot-favicon");
-+  if (!link) {
-+    link = document.createElement("link");
-+    link.id = "flybot-favicon";
-+    link.rel = "icon";
-+    link.type = "image/svg+xml";
-+    document.head.appendChild(link);
-+  }
 +  link.href = href;
 +  const retitle = () => {
 +    const next = brandTitle(document.title);
@@ -3561,8 +3584,8 @@ diff --git a/client.js b/client.js
 +      key: p.handle || p.id,
 +      local,
 +      record: p,
-+      person: local ? cleanPeerName(p.ownerName || roster.self?.displayName, "") : ownerNameOf(p),
-+      bot: local ? local.name : cleanPeerName(p.displayName || p.name, "Bot"),
++      person: local ? seatOwnerName(p.ownerName, p.handle) || cleanPeerName(roster.self?.displayName, "") : ownerNameOf(p),
++      bot: local ? local.name : remoteBotName(p, "Bot"),
 +      mine: Boolean(local)
 +    };
 +  };
@@ -6984,7 +7007,7 @@ diff --git a/client.js b/client.js
 +var remoteRecord = (bot) => bot?.remote ? bot.remote === true ? bot : bot.remote : null;
 +var myOwnerName = (roster, live, bot) => {
 +  const seat = live.find((p) => !p.remote && p.kind !== "human" && (p.id === bot.id || bot.handle && p.handle === bot.handle));
-+  return cleanPeerName(seat?.ownerName || roster.self?.displayName, "");
++  return seatOwnerName(seat?.ownerName, seat?.handle) || cleanPeerName(roster.self?.displayName, "");
 +};
 +var uniqueBy = (list, key) => {
 +  const seen = /* @__PURE__ */ new Set();
@@ -10237,7 +10260,7 @@ diff --git a/client.js b/client.js
 +var isLeadSeat = (seat, lead) => Boolean(handleKey(lead) && handleKey(seat.record?.handle) === handleKey(lead));
 +function FacePersonRow({ person, onOpenBot, lead, className = "bt-set-row bt-bs-row bt-gs-member", size = 26 }) {
 +  const bots = person.seats.flatMap((seat, index) => {
-+    const name = seat.local && onOpenBot ? (0, import_react30.createElement)("button", { key: seat.key, type: "button", className: "bt-face-bot", title: t("Open {name}'s chat", { name: seat.bot }), onClick: () => onOpenBot(seat.local.id) }, seat.bot) : (0, import_react30.createElement)("span", { key: seat.key, className: "bt-face-bot" }, seat.bot);
++    const name = seat.local && onOpenBot ? (0, import_react30.createElement)("button", { key: seat.key, type: "button", className: "bt-face-bot", title: t("Open {name}'s chat", { name: seat.bot }), onClick: () => onOpenBot(seat.local.id) }, seat.bot) : (0, import_react30.createElement)("span", { key: seat.key, className: "bt-face-bot", title: seat.record?.handle || void 0 }, seat.bot);
 +    const marked = isLeadSeat(seat, lead) ? [name, (0, import_react30.createElement)("span", { key: `${seat.key}-lead`, className: "bt-tag", "data-flybot": "face-lead-tag" }, t("Lead"))] : [name];
 +    return index === 0 ? marked : [(0, import_react30.createElement)("span", { key: `${seat.key}-sep` }, t(", ")), ...marked];
 +  });
@@ -10473,7 +10496,7 @@ diff --git a/client.js b/client.js
 +          "span",
 +          { className: "bt-gs-who" },
 +          (0, import_react30.createElement)(BotAvatar, { bot: lookBotForRemote(person, roster), size: 26, badge: false, live: false }),
-+          (0, import_react30.createElement)("span", { className: "bt-row-title" }, person.label || remoteBotTitle(person)),
++          (0, import_react30.createElement)("span", { className: "bt-row-title", title: person.handle || void 0 }, person.label || remoteBotTitle(person)),
 +          room2.origin === "face-to-face" ? null : (0, import_react30.createElement)("span", { className: "bt-tag" }, t("Friend's Bot"))
 +        ),
 +        room2.origin === "face-to-face" || members.length + remotes.length <= 2 ? null : (0, import_react30.createElement)("button", { type: "button", className: "bt-x", "aria-label": t("Remove {name} from the group", { name: remoteBotTitle(person) }), title: t("Remove from group"), onClick: () => update({ removeParticipants: [{ kind: "bot", id: person.handle || person.id, remote: true }] }) }, "×")
@@ -13127,7 +13150,7 @@ diff --git a/client.js b/client.js
 +              "span",
 +              { className: "bt-member-name" },
 +              (0, import_react37.createElement)(BotAvatar, { bot: lookBotForRemote(person, roster), size: 26, badge: false, live: false }),
-+              (0, import_react37.createElement)("span", null, person.label || remoteBotTitle(person))
++              (0, import_react37.createElement)("span", { title: person.handle || void 0 }, person.label || remoteBotTitle(person))
              ),
 -            room2.admin === member.id ? (0, import_react31.createElement)("span", { className: "bt-chip bt-chip-admin" }, t("Admin")) : null
 -          ),

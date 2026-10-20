@@ -1459,9 +1459,28 @@ function pickerBotLabel(bot) {
     isChief: bot.remote.isChief
   });
 }
+var AUTO_OWNER = /^flybot[\s._-]*(?=[0-9a-f]*\d)[0-9a-f]{6,}$/i;
+function isAutoOwnerName(name) {
+  return AUTO_OWNER.test(String(name ?? "").trim());
+}
 function ownerNameOf(record) {
   if (!record) return "";
-  return cleanPeerName(record.ownerName || record.owner || record.homeName || record.ownerHome || record.home || ownerFromHandle(record.handle), "");
+  const named = cleanPeerName(record.ownerName || record.owner || record.homeName || record.ownerHome || record.home || ownerFromHandle(record.handle), "");
+  if (!isAutoOwnerName(named)) return named;
+  const other = [record.ownerName, record.owner, record.homeName].map((value) => cleanPeerName(value, "")).find((value) => value && !isAutoOwnerName(value));
+  return other || cleanPeerName(ownerFromHandle(record.handle) || ownerFromHandle(record.ownerHome) || ownerFromHandle(record.home), "") || named;
+}
+function seatOwnerName(ownerName, handle) {
+  return ownerName ? ownerNameOf({ ownerName, handle }) : "";
+}
+var ownerKey = (value) => String(value ?? "").toLowerCase().replace(/[\s._@-]+/g, "");
+function remoteBotName(record, fallback = "") {
+  const name = cleanPeerName(record?.displayName || record?.name, fallback);
+  const at = name.lastIndexOf(" · ");
+  if (at <= 0) return name;
+  const tail = ownerKey(name.slice(at + 3));
+  const owners = [record?.ownerName, record?.owner, record?.homeName, ownerFromHandle(record?.handle), ownerNameOf(record)].map(ownerKey).filter(Boolean);
+  return isAutoOwnerName(name.slice(at + 3)) || owners.includes(tail) ? name.slice(0, at).trim() : name;
 }
 function isChiefRecord(record) {
   if (!record) return false;
@@ -1470,7 +1489,7 @@ function isChiefRecord(record) {
 }
 function remoteBotTitle(record) {
   const owner = ownerNameOf(record) || cleanPeerName(record?.handle, "Friend");
-  const name = cleanPeerName(record?.displayName || record?.name, isChiefRecord(record) ? "Chief" : cleanPeerName(record?.handle, "Bot"));
+  const name = remoteBotName(record, isChiefRecord(record) ? "Chief" : cleanPeerName(record?.handle, "Bot"));
   return `${name} (${owner})`;
 }
 function remoteOwnerBadge(record) {
@@ -5094,8 +5113,8 @@ function faceSeats(room2, roster, { left = false } = {}) {
       key: p.handle || p.id,
       local,
       record: p,
-      person: local ? cleanPeerName(p.ownerName || roster.self?.displayName, "") : ownerNameOf(p),
-      bot: local ? local.name : cleanPeerName(p.displayName || p.name, "Bot"),
+      person: local ? seatOwnerName(p.ownerName, p.handle) || cleanPeerName(roster.self?.displayName, "") : ownerNameOf(p),
+      bot: local ? local.name : remoteBotName(p, "Bot"),
       mine: Boolean(local)
     };
   };
@@ -8604,7 +8623,7 @@ var normHandle = (handle) => String(handle ?? "").trim().replace(/^@+/, "").toLo
 var remoteRecord = (bot) => bot?.remote ? bot.remote === true ? bot : bot.remote : null;
 var myOwnerName = (roster, live, bot) => {
   const seat = live.find((p) => !p.remote && p.kind !== "human" && (p.id === bot.id || bot.handle && p.handle === bot.handle));
-  return cleanPeerName(seat?.ownerName || roster.self?.displayName, "");
+  return seatOwnerName(seat?.ownerName, seat?.handle) || cleanPeerName(roster.self?.displayName, "");
 };
 var uniqueBy = (list, key) => {
   const seen = /* @__PURE__ */ new Set();
@@ -12137,7 +12156,7 @@ var handleKey = (handle) => String(handle ?? "").trim().replace(/^@+/, "").toLow
 var isLeadSeat = (seat, lead) => Boolean(handleKey(lead) && handleKey(seat.record?.handle) === handleKey(lead));
 function FacePersonRow({ person, onOpenBot, lead, className = "bt-set-row bt-bs-row bt-gs-member", size = 26 }) {
   const bots = person.seats.flatMap((seat, index) => {
-    const name = seat.local && onOpenBot ? (0, import_react30.createElement)("button", { key: seat.key, type: "button", className: "bt-face-bot", title: t("Open {name}'s chat", { name: seat.bot }), onClick: () => onOpenBot(seat.local.id) }, seat.bot) : (0, import_react30.createElement)("span", { key: seat.key, className: "bt-face-bot" }, seat.bot);
+    const name = seat.local && onOpenBot ? (0, import_react30.createElement)("button", { key: seat.key, type: "button", className: "bt-face-bot", title: t("Open {name}'s chat", { name: seat.bot }), onClick: () => onOpenBot(seat.local.id) }, seat.bot) : (0, import_react30.createElement)("span", { key: seat.key, className: "bt-face-bot", title: seat.record?.handle || void 0 }, seat.bot);
     const marked = isLeadSeat(seat, lead) ? [name, (0, import_react30.createElement)("span", { key: `${seat.key}-lead`, className: "bt-tag", "data-flybot": "face-lead-tag" }, t("Lead"))] : [name];
     return index === 0 ? marked : [(0, import_react30.createElement)("span", { key: `${seat.key}-sep` }, t(", ")), ...marked];
   });
@@ -12351,7 +12370,7 @@ function GroupSettingsForm({ room: room2, roster, actions, run, onDeleted }) {
           "span",
           { className: "bt-gs-who" },
           (0, import_react30.createElement)(BotAvatar, { bot: lookBotForRemote(person, roster), size: 26, badge: false, live: false }),
-          (0, import_react30.createElement)("span", { className: "bt-row-title" }, person.label || remoteBotTitle(person)),
+          (0, import_react30.createElement)("span", { className: "bt-row-title", title: person.handle || void 0 }, person.label || remoteBotTitle(person)),
           room2.origin === "face-to-face" ? null : (0, import_react30.createElement)("span", { className: "bt-tag" }, t("Friend's Bot"))
         ),
         room2.origin === "face-to-face" || members.length + remotes.length <= 2 ? null : (0, import_react30.createElement)("button", { type: "button", className: "bt-x", "aria-label": t("Remove {name} from the group", { name: remoteBotTitle(person) }), title: t("Remove from group"), onClick: () => update({ removeParticipants: [{ kind: "bot", id: person.handle || person.id, remote: true }] }) }, "×")
@@ -14819,7 +14838,7 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
               "span",
               { className: "bt-member-name" },
               (0, import_react37.createElement)(BotAvatar, { bot: lookBotForRemote(person, roster), size: 26, badge: false, live: false }),
-              (0, import_react37.createElement)("span", null, person.label || remoteBotTitle(person))
+              (0, import_react37.createElement)("span", { title: person.handle || void 0 }, person.label || remoteBotTitle(person))
             ),
             face ? null : (0, import_react37.createElement)("span", { className: "bt-chip" }, t("Friend's Bot"))
           )
