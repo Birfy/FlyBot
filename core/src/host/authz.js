@@ -169,6 +169,7 @@ export function install(rt) {
       agents: alone() ? full.agents : [],
       secrets: alone() ? full.secrets : [],
       secretRequests: alone() ? full.secretRequests : {},
+      email: alone() ? full.email : null,
     }
   }
   rt.ownedLive = (full, actor) => {

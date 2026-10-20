@@ -115,6 +115,7 @@ The overlay (`flybot-slots.js` `FlyBotApprovals`) is the fallback, not a second 
 ### System notifications (#353)
 
 - `approval-notices.js` `noticeApprovals` raises one system notification per event while the window is in the background or shows another chat: an approval that starts waiting (`{name} is waiting for your approval`), and a turn of one of the user's own Bots that finished (`{name} finished`) or failed (`{name} failed: <reason>`), from `work.ended` (`turns.js` `endedView`: the last 20, process-local; no friend's Bot, no turn a friend started, no hidden turn another Bot asked for, no face-to-face or inbound-share room, no turn the user stopped). Only when the platform already allows notifications (never asks), one per event (`tag` `ds-bot-approval-<id>` / `ds-bot-turn-<id>`), nothing from before the window opened; a click focuses the window and opens the chat or group, and a notification never approves, rejects or sends. Settings → General → **Notifications** (`prefs.notifications`, on unless `false`) switches every kind off; events seen while off stay told. Quiet hours, mute and *waiting too long* are later slices. Covered by `core/test/approval-notices.test.js`.
+- Settings → General → Notifications also has **Email me** (#355): disabled with a hint while the server has no email set up (`roster.email` null), else it names `roster.email.to` and sets `prefs.email`. The sending is the host's ([core-host](core-host.md#email-to-yourself-355)).
 
 ### Bot tree chevron
 

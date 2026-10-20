@@ -268,13 +268,16 @@ export function install(rt) {
     if (owner === undefined && state.exchangeTurns?.[id]?.includes(turn)) return
     if (owner !== undefined && rt.roomOf(owner.roomId)?.origin !== undefined) return
     const at = Date.now()
-    ended = [...ended, {
+    const entry = {
       id: `${id}:${turn}:${at}`,
       botId: bot.id,
       ...(owner ? { roomId: owner.roomId } : { sessionId: id }),
       at,
       ...(failure ? { failed: (failure.message || failure.code).slice(0, 160) } : {}),
-    }].slice(-ENDED_KEPT)
+    }
+    ended = [...ended, entry].slice(-ENDED_KEPT)
+    // Email to yourself, when switched on (email.js, #355).
+    rt.noticeOffApp?.(failure ? 'failed' : 'finished', entry)
   }
   const endedView = () => ended
 

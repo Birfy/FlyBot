@@ -77,6 +77,7 @@ test('secure defaults: loopback port, non-root user, no secret in the image, no 
   assert.match(compose, /^ {6}- "127\.0\.0\.1:\$\{FLYBOT_PORT:-3080\}:3080"$/m, 'the port is published on the host loopback only')
   assert.match(compose, /^ {6}- data:\/data$/m, 'one data volume')
   assert.match(compose, /^ {6}- DEEPSEEK_API_KEY$/m, 'the key is passed through, never written into the file')
+  for (const name of ['FLYBOT_SMTP_URL', 'FLYBOT_EMAIL_TO', 'FLYBOT_URL']) assert.match(compose, new RegExp(`^ {6}- ${name}$`, 'm'), `${name} is passed through, never written into the file (#355)`)
   const dockerfile = read('Dockerfile')
   assert.match(dockerfile, /^USER node$/m)
   assert.match(dockerfile, /^VOLUME \["\/data"\]$/m)

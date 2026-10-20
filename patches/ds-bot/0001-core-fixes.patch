@@ -746,7 +746,7 @@ diff --git a/src/client/i18n.js b/src/client/i18n.js
    'Stopped by': '叫停者：',
    '{count} messages with': '{count} 条消息，来自',
    'Routine started': '例行任务开始',
-@@ -450,9 +450,16 @@ const ZH = {
+@@ -450,9 +450,19 @@ const ZH = {
    'Asked to make the tool call it wrote as text': '工具调用被写成了文字，已让它重新调用',
    'A Bot': '一个 Bot',
    '{name} is waiting for your approval': '{name} 等你批准',
@@ -754,6 +754,9 @@ diff --git a/src/client/i18n.js b/src/client/i18n.js
 +  '{name} failed: {reason}': '{name} 失败：{reason}',
 +  Notifications: '通知',
 +  'When your Bots finish, fail, or wait for your approval while you are in another chat or app.': '你的 Bot 完成、失败或等你批准时提醒你（你在别的对话或应用里时）。',
++  'Email me': '发邮件给我',
++  'The same news by email to {address}: a short line and a link back, at most every five minutes. Approve only in FlyBot.': '同样的提醒也发邮件到 {address}：一句话加一个回到 FlyBot 的链接，最多每五分钟一封。批准只能在 FlyBot 里进行。',
++  'Needs email set up on the server (see the Docker guide).': '需要先在服务器上设置邮件（见 Docker 指南）。',
    '{first} and {second} are waiting for your approval': '{first}、{second} 等你批准',
    '{first}, {second} and {count} more are waiting for your approval': '{first}、{second} 等 {total} 个等你批准',
    'Waiting for your approval': '等你批准',
@@ -1538,6 +1541,18 @@ diff --git a/src/host/agents.js b/src/host/agents.js
        throw error
      }
      return agent
+diff --git a/src/host/approvals.js b/src/host/approvals.js
+--- a/src/host/approvals.js
++++ b/src/host/approvals.js
+@@ -29,6 +29,8 @@ export function install(rt) {
+       at: Date.now(),
+     }
+     pending.set(id, entry)
++    // Email to yourself, when switched on (email.js, #355).
++    rt.noticeOffApp?.('approval', entry)
+     rt.noteApproval?.(sessionId, { tool: entry.tool, reason: entry.reason.slice(0, 200) })
+     const settled = () => {
+       pending.delete(id)
 diff --git a/src/host/capabilities.js b/src/host/capabilities.js
 --- a/src/host/capabilities.js
 +++ b/src/host/capabilities.js
@@ -2919,7 +2934,7 @@ diff --git a/src/host/turns.js b/src/host/turns.js
        markExchangeTurn(sessionId, entry.turn)
      }
    }
-@@ -238,6 +238,31 @@ export function install(rt) {
+@@ -238,6 +238,34 @@ export function install(rt) {
      return { ...(text ? { text: text.trim().slice(0, 300) } : {}), ...(code ? { code: code.trim().slice(0, 400) } : {}) }
    }
  
@@ -2938,13 +2953,16 @@ diff --git a/src/host/turns.js b/src/host/turns.js
 +    if (owner === undefined && state.exchangeTurns?.[id]?.includes(turn)) return
 +    if (owner !== undefined && rt.roomOf(owner.roomId)?.origin !== undefined) return
 +    const at = Date.now()
-+    ended = [...ended, {
++    const entry = {
 +      id: `${id}:${turn}:${at}`,
 +      botId: bot.id,
 +      ...(owner ? { roomId: owner.roomId } : { sessionId: id }),
 +      at,
 +      ...(failure ? { failed: (failure.message || failure.code).slice(0, 160) } : {}),
-+    }].slice(-ENDED_KEPT)
++    }
++    ended = [...ended, entry].slice(-ENDED_KEPT)
++    // Email to yourself, when switched on (email.js, #355).
++    rt.noticeOffApp?.(failure ? 'failed' : 'finished', entry)
 +  }
 +  const endedView = () => ended
 +
@@ -3192,7 +3210,7 @@ diff --git a/test/approval-notices.test.js b/test/approval-notices.test.js
    const module = { exports: {} }
    runInNewContext(bundle.outputFiles[0].text, {
      module, exports: module.exports, Notification,
-@@ -62,3 +62,109 @@ test('no notification for the conversation on screen, for approvals older than t
+@@ -62,3 +62,113 @@ test('no notification for the conversation on screen, for approvals older than t
    denied.work.set({ bots: {}, approvals: [{ id: 'x1', botId: 'b', roomId: 'r1', tool: 'pwsh', at: 200 }] })
    assert.equal(denied.shown.length, 0)
  })
@@ -3265,6 +3283,9 @@ diff --git a/test/approval-notices.test.js b/test/approval-notices.test.js
 +    switchJobs: () => [],
 +    dropKickoff() {},
 +    flybotReplyRemote: async () => ({}),
++    // Email to yourself hears of the same turns (#355).
++    offApp: [],
++    noticeOffApp: (kind, entry) => rt.offApp.push([kind, entry.id.split(':').slice(0, 2).join(':')]),
 +  }
 +  installTurns(rt)
 +  let seq = 0
@@ -3299,6 +3320,7 @@ diff --git a/test/approval-notices.test.js b/test/approval-notices.test.js
 +    ['b:2', { botId: 'b', sessionId: 'b', failed: 'upstream busy' }],
 +    ['g1:1', { botId: 'b', roomId: 'r1', failed: 'upstream busy' }],
 +  ])
++  assert.deepEqual(rt.offApp, [['finished', 'b:1'], ['failed', 'b:2'], ['failed', 'g1:1']])
 +  for (let n = 10; n < 40; n++) turn('b', n, completed)
 +  assert.equal(rt.endedView().length, 20)
 +})
@@ -4027,7 +4049,7 @@ diff --git a/test/install.test.js b/test/install.test.js
      'effect ds-bot: api route',
      'route POST /api/bot',
      'effect ds-bot: load state',
-@@ -137,6 +137,10 @@ test('the client channel answers from the saved state', async (t) => {
+@@ -137,6 +137,14 @@ test('the client channel answers from the saved state', async (t) => {
    assert.equal((await call('set-prefs', { motion: 'lively' })).value.motion, 'lively')
    assert.equal('motion' in (await call('set-prefs', { motion: 'normal' })).value, false)
    assert.deepEqual((await call('set-prefs', { motion: 'wild' })).error, { code: 'bot/invalid', message: 'Motion must be quiet, normal or lively', details: {} })
@@ -4035,6 +4057,10 @@ diff --git a/test/install.test.js b/test/install.test.js
 +  assert.equal((await call('set-prefs', { notifications: false })).value.notifications, false)
 +  assert.equal('notifications' in (await call('set-prefs', { notifications: true })).value, false)
 +  assert.deepEqual((await call('set-prefs', { notifications: 'loud' })).error, { code: 'bot/invalid', message: 'Notifications must be on or off', details: {} })
++  // Email to yourself needs the server's SMTP settings; without them it stays off (#355).
++  assert.equal(loaded.email, null)
++  assert.deepEqual((await call('set-prefs', { email: true })).error, { code: 'bot/invalid', message: 'Email is not set up on this server', details: {} })
++  assert.equal('email' in (await call('set-prefs', { email: false })).value, false)
    // A refusal from the team code keeps its message for the user.
    assert.deepEqual((await call('delete-bot', { id: 'nobody' })).error, { code: 'bot/refused', message: 'Unknown Bot', details: {} })
    // Off the Desktop profile there are no Bot browsers.

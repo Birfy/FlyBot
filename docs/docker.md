@@ -51,6 +51,16 @@ ssh -N -L 3080:127.0.0.1:3080 you@your-server
 
 Then open the link from the logs on your own machine. A reverse proxy (Caddy, nginx) on the server works too; give it HTTPS, forward to `127.0.0.1:3080`, and start DSH with that name trusted, for example by adding to `compose.yaml` under `flybot`: `command: ["--trusted-host", "flybot.example.com"]`.
 
+**Email to yourself (optional).** FlyBot can email you a short line when one of your Bots finishes, fails or waits for your approval, with a link back into FlyBot. The email carries no chat or tool-call content, and you approve or reject only in FlyBot: a reply to the email is not read. It goes through your own mail account's SMTP server, only to your own address. Add to `.env`:
+
+```sh
+FLYBOT_SMTP_URL=smtps://you%40example.com:app-password@smtp.example.com
+FLYBOT_EMAIL_TO=you@example.com
+FLYBOT_URL=https://flybot.example.com/
+```
+
+`smtps://` is TLS on port 465; `smtp://host:587` uses STARTTLS, and a password is never sent without TLS. Write `@`, `:` and `/` in the user name or password as `%40`, `%3A` and `%2F`. `FLYBOT_URL` is the address you open FlyBot at, for the link (default `http://127.0.0.1:3080/`). Run `docker compose up -d`, then switch on Settings → General → **Email me** (off until you do). You get at most one email every five minutes; a failed send shows in the diagnostics log with its code. The password stays in `.env` and in the process: FlyBot never saves, shows or logs it.
+
 **More people on one machine.** One project name, port and volume each:
 
 ```sh

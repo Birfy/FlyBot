@@ -711,6 +711,9 @@ var ZH = {
   "{name} failed: {reason}": "{name} 失败：{reason}",
   Notifications: "通知",
   "When your Bots finish, fail, or wait for your approval while you are in another chat or app.": "你的 Bot 完成、失败或等你批准时提醒你（你在别的对话或应用里时）。",
+  "Email me": "发邮件给我",
+  "The same news by email to {address}: a short line and a link back, at most every five minutes. Approve only in FlyBot.": "同样的提醒也发邮件到 {address}：一句话加一个回到 FlyBot 的链接，最多每五分钟一封。批准只能在 FlyBot 里进行。",
+  "Needs email set up on the server (see the Docker guide).": "需要先在服务器上设置邮件（见 Docker 指南）。",
   "{first} and {second} are waiting for your approval": "{first}、{second} 等你批准",
   "{first}, {second} and {count} more are waiting for your approval": "{first}、{second} 等 {total} 个等你批准",
   "Waiting for your approval": "等你批准",
@@ -13785,6 +13788,14 @@ function GeneralPage({ roster, actions, run }) {
         hint: t("When your Bots finish, fail, or wait for your approval while you are in another chat or app."),
         on: prefs.notifications !== false,
         onChange: (on) => run(actions.setPrefs({ notifications: on }))
+      }),
+      // Email to yourself (#355): off by default, and only where the server has email set up.
+      (0, import_react33.createElement)(SwitchRow, {
+        label: t("Email me"),
+        hint: roster.email?.to ? t("The same news by email to {address}: a short line and a link back, at most every five minutes. Approve only in FlyBot.", { address: roster.email.to }) : t("Needs email set up on the server (see the Docker guide)."),
+        on: Boolean(roster.email?.to) && prefs.email === true,
+        disabled: !roster.email?.to,
+        onChange: (on) => run(actions.setPrefs({ email: on }))
       })
     )
   ];

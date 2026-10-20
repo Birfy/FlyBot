@@ -35,7 +35,8 @@
     "src/host/schedules.js",
     "test/schedules.test.js",
     "src/client/approval-notices.js",
-    "test/approval-notices.test.js"
+    "test/approval-notices.test.js",
+    "src/host/approvals.js"
   ],
   "0002-flybot-api-host": [
     "index.js",

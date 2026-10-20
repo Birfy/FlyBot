@@ -133,6 +133,9 @@ function turnsHost({ bots, rooms = {}, groupOwners = new Map() } = {}) {
     switchJobs: () => [],
     dropKickoff() {},
     flybotReplyRemote: async () => ({}),
+    // Email to yourself hears of the same turns (#355).
+    offApp: [],
+    noticeOffApp: (kind, entry) => rt.offApp.push([kind, entry.id.split(':').slice(0, 2).join(':')]),
   }
   installTurns(rt)
   let seq = 0
@@ -167,6 +170,7 @@ test('the host lists finished and failed turns of my own Bots, not stopped, aske
     ['b:2', { botId: 'b', sessionId: 'b', failed: 'upstream busy' }],
     ['g1:1', { botId: 'b', roomId: 'r1', failed: 'upstream busy' }],
   ])
+  assert.deepEqual(rt.offApp, [['finished', 'b:1'], ['failed', 'b:2'], ['failed', 'g1:1']])
   for (let n = 10; n < 40; n++) turn('b', n, completed)
   assert.equal(rt.endedView().length, 20)
 })

@@ -51,6 +51,16 @@ ssh -N -L 3080:127.0.0.1:3080 you@your-server
 
 然后在自己的电脑上打开日志里的链接。也可以在服务器上用反向代理（Caddy、nginx）：配置 HTTPS，转发到 `127.0.0.1:3080`，并让 DSH 信任这个域名，例如在 `compose.yaml` 的 `flybot` 下加上 `command: ["--trusted-host", "flybot.example.com"]`。
 
+**发邮件给自己（可选）。** 你的 Bot 完成、失败或等你批准时，FlyBot 可以给你发一封邮件：一句话加一个回到 FlyBot 的链接。邮件里没有对话或工具调用的内容；批准或拒绝只能在 FlyBot 里进行，回复邮件不会被读取。邮件走你自己邮箱账号的 SMTP 服务器，只发到你自己的地址。在 `.env` 里加上：
+
+```sh
+FLYBOT_SMTP_URL=smtps://you%40example.com:app-password@smtp.example.com
+FLYBOT_EMAIL_TO=you@example.com
+FLYBOT_URL=https://flybot.example.com/
+```
+
+`smtps://` 是 465 端口的 TLS；`smtp://host:587` 用 STARTTLS，密码不会在没有 TLS 的连接上发送。用户名或密码里的 `@`、`:`、`/` 写成 `%40`、`%3A`、`%2F`。`FLYBOT_URL` 是你打开 FlyBot 的地址，用于邮件里的链接（默认 `http://127.0.0.1:3080/`）。运行 `docker compose up -d`，再打开 设置 → 通用 → **发邮件给我**（默认关闭）。最多每五分钟一封；发送失败会带错误代码记在诊断日志里。密码只留在 `.env` 和进程里：FlyBot 不会保存、显示或记录它。
+
 **一台机器上多人使用。** 每人一个项目名、端口和数据卷：
 
 ```sh

@@ -29,6 +29,8 @@ export function install(rt) {
       at: Date.now(),
     }
     pending.set(id, entry)
+    // Email to yourself, when switched on (email.js, #355).
+    rt.noticeOffApp?.('approval', entry)
     rt.noteApproval?.(sessionId, { tool: entry.tool, reason: entry.reason.slice(0, 200) })
     const settled = () => {
       pending.delete(id)

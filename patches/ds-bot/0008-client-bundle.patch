@@ -386,7 +386,7 @@ diff --git a/client.js b/client.js
    "Stopped by": "叫停者：",
    "{count} messages with": "{count} 条消息，来自",
    "Routine started": "例行任务开始",
-@@ -506,9 +506,16 @@ var ZH = {
+@@ -506,9 +506,19 @@ var ZH = {
    "Asked to make the tool call it wrote as text": "工具调用被写成了文字，已让它重新调用",
    "A Bot": "一个 Bot",
    "{name} is waiting for your approval": "{name} 等你批准",
@@ -394,6 +394,9 @@ diff --git a/client.js b/client.js
 +  "{name} failed: {reason}": "{name} 失败：{reason}",
 +  Notifications: "通知",
 +  "When your Bots finish, fail, or wait for your approval while you are in another chat or app.": "你的 Bot 完成、失败或等你批准时提醒你（你在别的对话或应用里时）。",
++  "Email me": "发邮件给我",
++  "The same news by email to {address}: a short line and a link back, at most every five minutes. Approve only in FlyBot.": "同样的提醒也发邮件到 {address}：一句话加一个回到 FlyBot 的链接，最多每五分钟一封。批准只能在 FlyBot 里进行。",
++  "Needs email set up on the server (see the Docker guide).": "需要先在服务器上设置邮件（见 Docker 指南）。",
    "{first} and {second} are waiting for your approval": "{first}、{second} 等你批准",
    "{first}, {second} and {count} more are waiting for your approval": "{first}、{second} 等 {total} 个等你批准",
    "Waiting for your approval": "等你批准",
@@ -2329,12 +2332,10 @@ diff --git a/client.js b/client.js
  .bt-ububble{max-width:min(560px,78%);background:var(--bt-user);color:var(--bt-user-ink);border-radius:18px;padding:7px 12px;font-size:14px;line-height:20px;box-sizing:border-box;overflow-wrap:anywhere}
  .bt-ububble [class*="_markdown"],.bt-ububble a{color:inherit!important}
  .bt-ububble p{margin:0;line-height:22px}
-@@ -2852,229 +2852,211 @@ function installCompiledStyles(text, tag) {
-     document.removeEventListener("load", onLoad, true);
-     clearTimeout(timer);
+@@ -2854,227 +2854,209 @@ function installCompiledStyles(text, tag) {
      style.remove();
--  };
--}
+   };
+ }
 -
 -// src/client/mark.js
 -var import_react2 = require("react");
@@ -2419,8 +2420,7 @@ diff --git a/client.js b/client.js
 -    { viewBox: "0 0 20 20", "aria-hidden": true },
 -    (0, import_react2.createElement)("path", { d: "M10 2.4l2.29 5.04 5.51.63-4.09 3.74 1.11 5.42L10 14.5l-4.82 2.73 1.11-5.42L2.2 8.07l5.51-.63z" })
 -  );
-+  };
- }
+-}
 -function useSettled(state) {
 -  const prev = (0, import_react2.useRef)(state);
 -  const [settled, setSettled] = (0, import_react2.useState)(false);
@@ -3849,7 +3849,8 @@ diff --git a/client.js b/client.js
      { type: "button", className: "bt-lead", "aria-label": t("Open {name}'s chat", { name: bot.name }), onClick: () => actions.openSession(bot.id) },
 -    (0, import_react6.createElement)(BotMark, { bot, size: 22 })
 +    (0, import_react8.createElement)(BotMark, { bot, size: 22 })
-+  );
+   );
+-  return (0, import_react6.createElement)(
 +  const name = (0, import_react8.createElement)(
 +    "span",
 +    { className: "bt-group-name", style: { color: inkText(colorOf(bot)) } },
@@ -3944,8 +3945,7 @@ diff --git a/client.js b/client.js
 +    { width: 10, height: 10, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", "aria-hidden": true },
 +    (0, import_react8.createElement)("circle", { cx: 12, cy: 12, r: 9 }),
 +    (0, import_react8.createElement)("path", { d: "M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" })
-   );
--  return (0, import_react6.createElement)(
++  );
 +}
 +function RemoteFiles({ files, plugin, botId }) {
 +  const [busy, setBusy] = (0, import_react8.useState)("");
@@ -4372,12 +4372,12 @@ diff --git a/client.js b/client.js
        if (reply.kind === "stopped") {
 -        return (0, import_react6.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("You stopped {name}'s work", { name: bot.name }));
 +        return (0, import_react8.createElement)("div", { key: `${reply.botId}-${index}`, className: "bt-event" }, t("You stopped {name}'s work", { name: bot.name }));
-       }
--      return (0, import_react6.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi });
++      }
 +      if (reply.kind === "notice" && room2?.origin === "face-to-face" && String(reply.text ?? "").trim() === WAITING_OTHERS_NOTICE) return null;
 +      if (reply.kind === "notice" || reply.kind === "joined" || reply.kind === "left" || reply.kind === "started") {
 +        return (0, import_react8.createElement)("div", { key: `notice-${index}`, className: "bt-event", "data-flybot": "face-notice" }, remoteMessageText(reply.text));
-+      }
+       }
+-      return (0, import_react6.createElement)(GroupMessage, { key: `${reply.botId}-${index}`, bot, text: reply.text, room: room2, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : void 0, useUi });
 +      const remote = reply.remote || reply.handle && !roster.byId[reply.botId];
 +      if (remote) {
 +        return (0, import_react8.createElement)(RemoteMessage, {
@@ -9818,13 +9818,13 @@ diff --git a/client.js b/client.js
      ),
 -    (0, import_react23.createElement)(
 +    face ? (0, import_react28.createElement)(
-       Card,
--      { title: t("Members · {count}", { count: members.length }) },
++      Card,
 +      { title: t("Members · {count}", { count: people2.length }) },
 +      people2.map((person) => (0, import_react28.createElement)(FacePersonRow, { key: person.key, person, onOpenBot: openBot, lead: room2.face?.lead?.handle }))
 +    ) : null,
 +    face ? null : (0, import_react28.createElement)(
-+      Card,
+       Card,
+-      { title: t("Members · {count}", { count: members.length }) },
 +      { title: t("Members · {count}", { count: members.length + humans.length + remotes.length }) },
 +      humans.map((person) => (0, import_react28.createElement)(
 +        "div",
@@ -11434,7 +11434,7 @@ diff --git a/client.js b/client.js
              key: ink,
              type: "button",
              className: "bt-swatch",
-@@ -10626,75 +10626,79 @@ function GeneralPage({ roster, actions, run }) {
+@@ -10626,75 +10626,87 @@ function GeneralPage({ roster, actions, run }) {
              style: { background: INKS[ink][0] },
              onClick: () => run(actions.setPrefs({ accent: INKS[ink][0] }))
            })),
@@ -11465,6 +11465,14 @@ diff --git a/client.js b/client.js
 +        hint: t("When your Bots finish, fail, or wait for your approval while you are in another chat or app."),
 +        on: prefs.notifications !== false,
 +        onChange: (on) => run(actions.setPrefs({ notifications: on }))
++      }),
++      // Email to yourself (#355): off by default, and only where the server has email set up.
++      (0, import_react33.createElement)(SwitchRow, {
++        label: t("Email me"),
++        hint: roster.email?.to ? t("The same news by email to {address}: a short line and a link back, at most every five minutes. Approve only in FlyBot.", { address: roster.email.to }) : t("Needs email set up on the server (see the Docker guide)."),
++        on: Boolean(roster.email?.to) && prefs.email === true,
++        disabled: !roster.email?.to,
++        onChange: (on) => run(actions.setPrefs({ email: on }))
 +      })
      )
    ];

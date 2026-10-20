@@ -16,6 +16,10 @@ services:
       # Passed only when set in your shell or in .env next to this file; otherwise save the
       # key in the app (it is kept on the data volume).
       - DEEPSEEK_API_KEY
+      # Email to yourself (#355), optional; set in .env, see docs/docker.md.
+      - FLYBOT_SMTP_URL
+      - FLYBOT_EMAIL_TO
+      - FLYBOT_URL
     volumes:
       - data:/data
 volumes:

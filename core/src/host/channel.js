@@ -99,6 +99,8 @@ export function install(rt) {
     permissions: rt.permissionCatalog?.() ?? null,
     modelsKey: modelsKey(),
     prefs: state.prefs,
+    // Email to yourself (#355): the address when this server has email set up, else null.
+    email: rt.emailView?.() ?? null,
     // Whether a Desktop window should serve Bot browser reads (see browser.js).
     browser: rt.browserEnabled,
     // False when config.memory turns memory off: no Memory row or panel.
@@ -169,6 +171,14 @@ export function install(rt) {
       if (body.notifications === null || body.notifications === true) delete state.prefs.notifications
       else if (body.notifications === false) state.prefs.notifications = false
       else throw invalid('Notifications must be on or off')
+    }
+    // Email to yourself is off unless switched on, and only where the server has it set up (#355).
+    if (body.email !== undefined) {
+      if (body.email === null || body.email === false) delete state.prefs.email
+      else if (body.email !== true) throw invalid('Email must be on or off')
+      else if (!rt.emailView?.()) throw invalid('Email is not set up on this server')
+      else state.prefs.email = true
+      rt.emailSwitched?.(body.email === true)
     }
     return rt.save()
   }
