@@ -291,6 +291,8 @@ export function install(rt) {
     rt.noticeOffApp?.(failure ? 'failed' : 'finished', entry)
   }
   const endedView = () => ended
+  // A scheduled run DSH could not deliver never became a turn; it joins them as a failure (#473).
+  const noteRunFailure = (entry) => { ended = [...ended, entry].slice(-ENDED_KEPT) }
 
   // Where a Session speaks, for the diagnostics log.
   const placeOf = (id) => {
@@ -358,6 +360,8 @@ export function install(rt) {
         break
       case 'user/message': {
         const source = event.data?.source
+        // A scheduled task's run (schedules.js, #473): its outcome is this turn's.
+        if (source?.kind === 'schedule') rt.scheduleRunStarted?.(id, event.data)
         // The strictest verdict of everything the turn took in; one 'other' stays for the whole turn.
         const verdict = originOfSource(source, rt.botOf(rt.selfOf(id)))
         if (verdict !== undefined) {
@@ -491,6 +495,7 @@ export function install(rt) {
         const reason = event.data?.reason
         const failure = reason?.kind === 'error' && !switched ? turnFailure(reason.error) : undefined
         if (failure !== undefined) noteTurnFailure(id, failure)
+        rt.scheduleRunEnded?.(id, { failed: failure === undefined ? undefined : failureLine(failure), aborted: reason?.kind === 'aborted' })
         if (switched) break
         // A model that writes its tool call as text ends the turn as if it were done,
         // though nothing ran. It gets one more turn on the same trigger, so a waiting
@@ -606,5 +611,5 @@ export function install(rt) {
     return found
   }
 
-  Object.assign(rt, { botTurnOrigin, live, liveOf, roomWaiters, roomProgress, roomInbox, activityView, workView, roomWorkView, endedView, callDetail, stopRoomTurn })
+  Object.assign(rt, { botTurnOrigin, live, liveOf, roomWaiters, roomProgress, roomInbox, activityView, workView, roomWorkView, endedView, noteRunFailure, callDetail, stopRoomTurn })
 }
