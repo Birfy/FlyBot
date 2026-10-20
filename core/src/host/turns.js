@@ -254,11 +254,22 @@ export function install(rt) {
   }
 
   // The latest turns of the user's own Bots that finished or failed, for a system notification
-  // (#353). Process-local and bounded; a window skips the ones from before it opened. Left out:
-  // a friend's Bots, turns a friend started, turns another Bot asked for (hidden in the chat),
-  // rooms shared with other people, and turns the user stopped.
+  // (#353) and the Agent inbox's failed turns (#471). Process-local and bounded; a window skips
+  // the ones from before it opened. Left out: a friend's Bots, turns a friend started, turns
+  // another Bot asked for (hidden in the chat), rooms shared with other people, and turns the
+  // user stopped. Past the last 20, a place's (Bot + group) latest turn is kept while it is a
+  // failure younger than 7 days, so busy Bots elsewhere do not push it out of the inbox.
   const ENDED_KEPT = 20
+  const FAILED_KEPT = 50
+  const FAILED_MS = 7 * 86_400_000
   let ended = []
+  const placeOfEnded = entry => `${entry.botId}|${entry.roomId ?? ''}`
+  const trimEnded = (list, now) => {
+    const latest = new Map(list.map(entry => [placeOfEnded(entry), entry]))
+    const older = list.slice(0, -ENDED_KEPT)
+      .filter(entry => entry.failed !== undefined && latest.get(placeOfEnded(entry)) === entry && now - entry.at <= FAILED_MS)
+    return [...older.slice(-FAILED_KEPT), ...list.slice(-ENDED_KEPT)]
+  }
   const noteEnded = (id, turn, info, reason, failure) => {
     if (failure === undefined && reason?.kind !== 'completed') return
     const owner = rt.groupOwners.get(id)
@@ -275,7 +286,7 @@ export function install(rt) {
       at,
       ...(failure ? { failed: (failure.message || failure.code).slice(0, 160) } : {}),
     }
-    ended = [...ended, entry].slice(-ENDED_KEPT)
+    ended = trimEnded([...ended, entry], at)
     // Email to yourself, when switched on (email.js, #355).
     rt.noticeOffApp?.(failure ? 'failed' : 'finished', entry)
   }
