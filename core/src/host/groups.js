@@ -26,6 +26,7 @@ import { mentionSpans } from '../shared/mentions.js'
 import { GROUP_REF, output } from './tools.js'
 import { failureLine } from './turns.js'
 import { currentParticipants, isFaceRoom } from './room-membership.js'
+import { FACE_LEAD_NOTE, FACE_LEAD_ROUTE, faceLeadIsRemote, faceMemberNote, faceRoster, isFaceLead } from './face-lead.js'
 import { faceMentions } from './face-mentions.js'
 import { stripSessionChips } from './delivery.js'
 import { createDshRoomParticipant } from './room-participant.js'
@@ -167,7 +168,8 @@ const slotLabel = (slot) => {
   return slot.name
 }
 
-const adminNote = room => [
+// A face-to-face room's admin is its lead (#476), with the lead's rules instead.
+const adminNote = room => isFaceRoom(room) ? FACE_LEAD_NOTE : [
   'You are this group\'s admin.',
   room.mode === 'admin' ? 'Plain messages come to you first: answer them, or call the members who should answer with @Name.' : '',
   '"@all" calls every member. When the user asks, change the group with update_group.',
@@ -223,7 +225,9 @@ export function install(rt) {
       'This line names no Bot, and the group should get the right answer, not one from everyone. Decide whether it is yours.',
       broadcast
         ? 'It is addressed to everyone (introductions, what each of you can do, a round of opinions): give your own short answer, but reply [PASS] if it would only repeat what a Bot before you said.'
-        : 'Default to [PASS]: exactly one Bot answers a line like this, and the first Bot that answers ends it, so the Bots after it are not asked. Answer only if it is for you: it names you or your role, no other member\'s role fits it better, or it follows up on your own last answer. Reply [PASS] when it is for another Bot by name or role, when it follows up on another Bot\'s answer, or when you would only be guessing.',
+        : isFaceLead(room, member)
+          ? FACE_LEAD_ROUTE
+          : 'Default to [PASS]: exactly one Bot answers a line like this, and the first Bot that answers ends it, so the Bots after it are not asked. Answer only if it is for you: it names you or your role, no other member\'s role fits it better, or it follows up on your own last answer. Reply [PASS] when it is for another Bot by name or role, when it follows up on another Bot\'s answer, or when you would only be guessing.',
       last && !broadcast ? `${last.name} spoke last before this line: a follow-up to what ${last.name} said ("what did you mean", "and then?", "say more") is for ${last.name}.` : '',
       roles.length > 0 ? `What members do: ${roles.join('; ')}.` : '',
       friends.length > 0 ? `Other owners' Bots here answer for themselves in their own home: ${friends.join(', ')}.` : '',
@@ -245,14 +249,14 @@ export function install(rt) {
     const index = round.slots.findIndex(slot => slot.status === 'speaking')
     const before = index
     const after = round.slots.length - index - 1
-    const members = `Members: the user${peers.length ? `, ${peers.join(', ')}` : ''} and you${leads ? ' (admin)' : ''}. Members speak one at a time; each message is posted before the next speaker starts. ${ROOM_CALLS}`
+    const members = `${isFaceRoom(room) ? `${faceRoster(room, member, rt.botOf)}\n` : `Members: the user${peers.length ? `, ${peers.join(', ')}` : ''} and you${leads ? ' (admin)' : ''}. `}Members speak one at a time; each message is posted before the next speaker starts. ${ROOM_CALLS}`
     const notice = room.notice ? `Group notice (shared instructions for every member):\n${room.notice}` : ''
     if (round.kickoff) return [members, notice, leads ? adminNote(room) : '', roomKickoff(rt.uiLanguage?.())].filter(Boolean).join('\n\n')
     const working = workingIn(room).filter(item => item.bot.id !== member.id)
     return [
       members,
       notice,
-      leads ? adminNote(room) : '',
+      leads ? adminNote(room) : faceMemberNote(room, member, rt.botOf),
       earlier.length ? `Earlier in the group, before this round (context only):\n${transcript(earlier)}` : '',
       current.length
         ? `This round so far${spokeThisRound ? ', since your last message' : ', starting with the new message'} (oldest first):\n${transcript(current)}`
@@ -371,11 +375,14 @@ export function install(rt) {
 
   // True once a routed round ended with every Bot silent on the owner's own line (a friend's line is not
   // forced: the friend's own home answers it). A line that follows up a friend's Bot is theirs to answer, and
-  // a line a friend's Bot already answered is answered (#475).
+  // a line a friend's Bot already answered is answered (#475). A room led by another home's Bot is
+  // that lead's to answer (#476); with no lead known, my own lead, or a lead who left, the fallback stays.
   function fallbackDue(room, round) {
     const route = round.route
     if (!route?.fallback || route.forced !== undefined || (route.last?.remote && !route.broadcast)) return false
     if (friendAnswers(room, round).length > 0) return false
+    // Another home's Bot leads this room (#476): it answers what my Bots leave, so mine are not forced.
+    if (faceLeadIsRemote(room)) return false
     const states = round.slots.map(slot => slot.status)
     return !states.some(status => status === 'posted' || status === 'working' || status === 'waiting-approval' || status === 'speaking' || status === 'waiting')
       && states.some(status => status === 'passed' || status === 'missed')
