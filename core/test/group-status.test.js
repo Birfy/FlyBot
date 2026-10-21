@@ -363,12 +363,24 @@ test('#608: an own-chat turn that carries no verdict still honours the Bot grant
   assert.equal(await host.askApproval('b', { toolName: 'bash', reason: ESCALATE }, () => 'from-dsh'), 'allowed-once')
   host.emit('b', 'turn/end', { reason: { kind: 'completed' } })
   host.emit('b', 'turn/start', { turn: 3 })
-  host.emit('b', 'user/message', { content: [{ type: 'text', text: 'note' }], source: { kind: 'ds-bot', role: 'mention' } })
+  host.emit('b', 'user/message', { content: [{ type: 'text', text: 'note' }], source: { kind: 'bot', form: 'relay', role: 'mention' } })
   assert.equal(await host.askApproval('b', { toolName: 'bash', reason: ESCALATE }, () => 'from-dsh'), 'allowed-once')
   // Someone else's turn in that chat still asks, and says once why the grant was not used.
   host.emit('b', 'turn/end', { reason: { kind: 'completed' } })
   host.emit('b', 'turn/start', { turn: 4 })
   host.emit('b', 'user/message', { content: [{ type: 'text', text: 'hi' }], source: { kind: 'bot', remote: { handle: '@friend' }, form: 'remote-chat' } })
+  assert.equal(await host.askApproval('b', { toolName: 'bash', reason: ESCALATE }, () => 'from-dsh'), 'from-dsh')
+})
+
+// #620: the own-chat widening the own-chat widening in standingCovers is for a turn nobody's request is in, not for a
+// source kind the host cannot read. An unrecognised kind fails closed, so the grant does not apply.
+test('#620: an unrecognised source kind in the Bot’s own chat still asks', async (t) => {
+  const host = await start()
+  t.after(host.stop)
+  await openTurn(t, host)
+  await grantFromGroup(host, 'always-bot')
+  host.emit('b', 'turn/start', { turn: 2 })
+  host.emit('b', 'user/message', { content: [{ type: 'text', text: 'from a future source' }], source: { kind: 'some-future-kind' } })
   assert.equal(await host.askApproval('b', { toolName: 'bash', reason: ESCALATE }, () => 'from-dsh'), 'from-dsh')
 })
 
@@ -434,3 +446,34 @@ test('a running Bot\'s work names its current step, in one short line, until the
   host.emit('gb', 'turn/end', { reason: { kind: 'error', error: new Error('boom') } })
   assert.equal((await bots()).b, undefined)
 })
+
+// #626: the shape a Bot actually hits — the owner asks for work, the turn calls `subagent`, and the
+// child settles while that same turn is still running. The notice is an account of work the owner
+// already asked for, not a new request, so the connector tools stay.
+test('#626: a subagent settling mid-turn does not take the connection away', async (t) => {
+  const host = await start()
+  t.after(host.stop)
+  await openTurn(t, host)
+  await grantFromGroup(host, 'always-bot')
+  host.emit('b', 'turn/start', { turn: 2 })
+  host.emit('b', 'user/message', { content: [{ type: 'text', text: 'read the repo and report' }], source: { kind: 'user' } })
+  host.emit('b', 'tool/call', { callId: 's1', name: 'subagent', arguments: JSON.stringify({ prompt: 'summarise the README' }) })
+  host.emit('b', 'user/message', { content: [{ type: 'text', text: 'Subagent finished: summarised the README.' }], source: { kind: 'subagent-settled', form: 'notice', summary: 'summarised the README', senderSessionId: 'child-1' } })
+  assert.equal(await host.askApproval('b', { toolName: 'bash', reason: ESCALATE }, () => 'from-dsh'), 'allowed-once')
+})
+
+// #626: the host and DSH inject context into ordinary owner turns — this host's clock snapshot
+// (`ds-bot-time-context`), DSH's own clock and cited-conversation snapshots, and the AGENTS.md
+// baseline. None of them carries a request, so a turn that took one in still honours the owner's
+// standing grant; treating one as `other` is what made the #608 card come back.
+for (const kind of ['ds-bot-time-context', 'time-context', 'session-reference', 'agent-instructions']) {
+  test(`#626: a turn that took in a ${kind} message still honours the Bot grant`, async (t) => {
+    const host = await start()
+    t.after(host.stop)
+    await openTurn(t, host)
+    await grantFromGroup(host, 'always-bot')
+    host.emit('b', 'turn/start', { turn: 2 })
+    host.emit('b', 'user/message', { content: [{ type: 'text', text: 'context' }], source: { kind, form: 'snapshot' } })
+    assert.equal(await host.askApproval('b', { toolName: 'bash', reason: ESCALATE }, () => 'from-dsh'), 'allowed-once')
+  })
+}
