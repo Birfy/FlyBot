@@ -139,7 +139,7 @@ The standing "file no new issues" rule covers design proposals only: a reproduci
 1. The self-test routine files issues only; the maintenance routine opens PRs; the release routine owns `CHANGELOG.md` and the version.
 2. No deploy of production Bot Social, and no change to the owner's local instances, without the owner's explicit yes.
 3. A routine PR is merged by the Bot that gated it (owner decision 2026-10-21, [self-gate](#owner-decision-the-bot-gates-and-merges-its-own-prs-2026-10-21-owner-authorized)). A typed chat reply is still not an approval for anything else, and an owner-only decision (scope, security surface, policy) still waits for the owner's word through the normal path (#349).
-4. Connector tools are on by default for the owner's Bots and off by default for other people's, until the owner opts in (#359).
+4. Connector tools are on for every turn of the owner's own Bots, whoever started it, unless the owner turns a connector off for one Bot; a friend's Bot never gets them (#359, owner decision 2026-10-22 on #601). For GitHub work a Bot uses the GitHub connector tools first and `$DSH_SECRET_GITHUB_TOKEN` with `gh`/`git` only as the fallback (for example `git push`).
 5. Bot Social has no keyword commitment scan.
 6. A schedule is per session, not per Bot: an empty `schedule_list` is not evidence that a schedule does not exist; never delete or recreate a schedule from it, and never report "no timers" as a finding (see [A schedule is per session](#a-schedule-is-per-session-not-per-bot-628)).
 
@@ -165,7 +165,7 @@ The Bot team:
 ## Hard rules
 
 1. **Build on DSH; never patch it.** Bot features use the documented plugin APIs. The desktop app starts DSH only through its documented entry points (`@deepseek-ai/dsh/profile-boot`, the `dsh` CLI). Never patch DeepSeek Harness or depend on files inside a DSH install. If something is missing in DSH, stop and say so; do not work around it with a patch.
-2. **No secrets.** Never write, print or commit API keys, tokens, cookies or `DSH_HOME` contents. Use the mock model (`core/dev/mock-llm.mjs`) for tests; it needs no key. A shell that holds no key this turn says why in `DSH_SECRETS_WITHHELD` (`NAME:reason`, never a value, #651): read the reason instead of assuming the owner did not configure it.
+2. **No secrets.** Never write, print or commit API keys, tokens, cookies or `DSH_HOME` contents. Use the mock model (`core/dev/mock-llm.mjs`) for tests; it needs no key. Every one of the owner's own Bots gets the owner's saved keys on every turn (owner decision 2026-10-22, #601); a key a shell cannot use is named in `DSH_SECRETS_WITHHELD` (`NAME:reason`, never a value: `remote-bot`, `not-in-scope`, `unknown-bot`): read the reason instead of assuming the owner did not configure it.
 3. **Only original material.** Do not copy code, text, icons, logos or graphics from other products or websites.
 4. **The core is ds-bot + patches.** Change `core/`, then run `node scripts/ds-bot-patches.mjs generate` and `check`, and commit `core/` and `patches/` together. CI fails if `ds-bot/` differs from the pin or `core/` differs from `ds-bot/` + patches.
 5. **`client.js` is generated.** Change `core/src/client/`, then run `npm run build` in `core/` and commit both files. Never edit `client.js` by hand.
