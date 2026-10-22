@@ -11,7 +11,10 @@
 //
 // So this is the step immediately before that call. It refuses — exit 1, the reason printed — when
 // the pull request carries `hold`, when the newest conclusion at its head is not a PASS, or when that
-// conclusion is itself marked "record only — do not merge". It reuses `judge({ mode: 'queue' })`, so
+// conclusion is itself marked "record only — do not merge". It also refuses a pull request that names
+// no issue in its body or carries no `agent-pr` label (#718; a mechanical release PR and a fork are
+// exempt), so
+// "one issue, one pull request" is checked rather than remembered. It reuses `judge({ mode: 'queue' })`, so
 // "may this enter the queue" keeps one definition: a rule added to the merge gate is enforced here
 // without being restated, unless someone deliberately changes both.
 //
@@ -21,7 +24,7 @@
 // routine's path rather than left to a check that reports after the queue is reached.
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { judge } from './merge-gate.mjs'
+import { isMechanicalRelease, judge } from './merge-gate.mjs'
 import { loadPolicy, parseReport } from './review-gate.mjs'
 
 const SHORT = 12
@@ -34,7 +37,16 @@ const SHORT = 12
 // pull request out` — must not freeze itself (#687). A bullet or a quote line is allowed, but nothing
 // may follow the marker on it except its other language half.
 const RECORD_ONLY = /^[\s>*+-]*(?:record only\s*[—–-]+\s*do not (?:merge|queue)(?:\s*[/／]\s*仅记录[、,，]?\s*禁止入队)?|仅记录[、,，]?\s*禁止入队)\s*[.。]?\s*$/im
+// AGENTS.md → Claim: a pull request says `Fixes #N` in its body, and one issue carries one pull request.
+// #718: a pull request with no issue behind it, or with no `agent-pr` label, is not the routine's work at
+// all — #711/#712/#713 arrived with neither and nothing refused them, because the guard only looked at
+// `hold`, the conclusions and the diff. The reference is a line of its own, so prose about "fixes" does
+// not pass; the spellings accepted are exactly `Fixes #<n>` and `Closes #<n>`, behind any `#`, `>` or `-`.
+// The rules only hold where the branch is ours: a fork is exempt, because we cannot push to its head
+// and the owner keeps their own workflow there (#711/#713).
+const ISSUE_REF = /^[\s>#-]*(?:fixes|closes)\s*#\d+/im
 const short = (s) => String(s ?? '').slice(0, SHORT)
+const labelNames = (labels) => (labels ?? []).map((l) => String(typeof l === 'string' ? l : l?.name ?? '').toLowerCase())
 
 // The newest conclusion that names this head, if it carries the record-only marker. Only a body that
 // parses as a conclusion counts, so ordinary prose quoting the phrase is no marker; only the newest
@@ -52,16 +64,27 @@ export function recordOnlyAt(reports, head) {
 }
 
 // The decision, without the network: `result` is merge-gate's `judge` output for this head.
-export function guard({ pr, head, labels, result, reports }) {
+export function guard({ pr, head, labels, body, mechanicalRelease, fork, result, reports }) {
   const quiet = recordOnlyAt(reports, result.head ?? head)
   const reasons = [...result.reasons]
   if (quiet) reasons.push('the newest conclusion at this head says "record only — do not merge"')
-  const ok = result.ok && !quiet
+  // Two exemptions, both about what the pull request is rather than how risky it is. A mechanical release
+  // PR carries neither an issue nor the label by design — it is the routine's own daily output under the
+  // standing approval (AGENTS.md 6). A fork is not ours: its head cannot be pushed by us, and the owner runs
+  // their own workflow there (#711/#713). `result.exempt` cannot stand in for either: it is true for T0/T1
+  // as well, and routine work still names its issue.
+  if (!mechanicalRelease && !fork) {
+    if (!ISSUE_REF.test(String(body ?? ''))) reasons.push('no issue reference in the pull request body: add "Fixes #<n>"')
+    if (!labelNames(labels).includes('agent-pr')) reasons.push('missing label: agent-pr')
+  }
+  const ok = result.ok && !quiet && reasons.length === 0
   return {
     ...result,
     ok,
     reasons,
     recordOnly: Boolean(quiet),
+    mechanicalRelease: Boolean(mechanicalRelease),
+    fork: Boolean(fork),
     labels: labels ?? [],
     // One loud sentence: a refusal says what to do ("do not enqueue") and why, so it cannot be read
     // as a warning that some other step may override.
@@ -106,7 +129,12 @@ export function main({ gh = realGh, env = process.env, repo: repoOption, pr: prO
   // The live head is judged, never a cached one: a push that moved the tip voids the PASS the caller
   // believes it has, and `--sha` lets a caller insist on the head it read a moment ago.
   const result = judge({ labels, files, head, author: pull.user?.login, reports, policy: loadPolicy(policyPath), expectedHead: arg('--sha'), mode: 'queue' })
-  const decision = guard({ pr, head, labels, result, reports })
+  const mechanicalRelease = isMechanicalRelease(files.map((f) => f.filename))
+  // The branch this repository owns, not a contributor's: `head.repo` is null when the fork was deleted,
+  // which is not ours either. Both sides are lower-cased because the repository name in the API paths is
+  // case-insensitive: `--repo thinkflowlab/flybot` used to read our own branch as a fork and print ALLOW.
+  const fork = String(pull.head?.repo?.full_name ?? '').toLowerCase() !== String(repo).toLowerCase()
+  const decision = guard({ pr, head, labels, body: pull.body, mechanicalRelease, fork, result, reports })
 
   console.log(`enqueue-guard: PR #${pr} head ${short(decision.head)}, labels [${labels.join(', ')}]`)
   console.log(decision.ok
