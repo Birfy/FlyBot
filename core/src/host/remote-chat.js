@@ -227,6 +227,13 @@ export function install(rt) {
 
   // A published list: every Bot gets its chat; a chat whose Bot left keeps its history, marked gone.
   async function sync(plugin, list) {
+    // `open()` clears `remote.gone` on a chat that is published again, so remember which chats
+    // were gone first. Then only a real change of `gone` may touch `hidden`: a chat the user hid
+    // from the sidebar (`roster.setFlags`) while its Bot is still published must stay hidden, or
+    // every publish would bring it back, and a returning chat still reappears (its `gone` hide
+    // is dropped).
+    const goneBefore = new Map()
+    for (const bot of chats()) if (bot.remote.plugin === plugin) goneBefore.set(bot.id, Boolean(bot.remote.gone))
     const handles = new Set()
     for (const member of list) {
       if (isHomeLevelRemote(member)) continue
@@ -237,13 +244,20 @@ export function install(rt) {
     for (const bot of chats()) {
       if (bot.remote.plugin !== plugin) continue
       const gone = isHomeLevelRemote(bot.remote) || !handles.has(normRemoteHandle(bot.remote.handle))
-      const wasGone = Boolean(bot.remote.gone)
-      const wasHidden = Boolean(bot.hidden)
-      if (wasGone !== gone || wasHidden !== gone) {
+      const wasGone = goneBefore.get(bot.id) ?? Boolean(bot.remote.gone)
+      if (wasGone !== gone) {
         bot.remote = { ...bot.remote, ...(gone ? { gone: true } : {}) }
         if (!gone) delete bot.remote.gone
-        if (gone) bot.hidden = true
-        else delete bot.hidden
+        if (gone) {
+          // Remember when *we* hide the chat because the Bot left the published list: on `hidden`
+          // alone that is indistinguishable from a hide the user set, so the return below would
+          // drop the user's own hide too (#631).
+          if (bot.hidden !== true) bot.remote.hiddenByGone = true
+          bot.hidden = true
+        } else if (bot.remote.hiddenByGone === true) {
+          delete bot.hidden
+          delete bot.remote.hiddenByGone
+        }
         changed = true
       }
     }
