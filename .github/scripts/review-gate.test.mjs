@@ -177,3 +177,92 @@ test('workflow: pull_request, read-only, not required, acts on nothing', () => {
   assert.doesNotMatch(wf, /gh pr merge|--approve|reviewDecision|gh api .*-X (POST|PATCH|DELETE)/)
   assert.doesNotMatch(testYml, /review-gate/, 'it is not a required check or part of tests-ok')
 })
+
+// #637: the fixed format. The first line is the whole conclusion, so a verdict Chief posts for a
+// Reviewer who cannot post (the required proxy case) parses exactly like the Reviewer's own.
+test('#637: a first-line verdict carries its own tip and its evidence below parses the same', () => {
+  const body = [
+    `Verdict: PASS at ${HEAD}`,
+    'Written by: Reviewer. Posted by: Chief (proxy — the Reviewer has no write channel).',
+    '',
+    'Ran: npm run verify → pass',
+    'Not run: smoke — host code unchanged',
+  ].join('\n')
+  const parsed = parseReport(body)
+  assert.equal(parsed.tip, HEAD)
+  assert.equal(parsed.verdict, 'PASS')
+  assert.deepEqual(parsed.ran, ['npm run verify → pass'])
+  assert.equal(parsed.hasNotRun, true)
+  assert.equal(decide({ head: HEAD, author: 'opener', reports: [comment('reviewer-agent', body)], policy }).ok, true)
+})
+
+test('#637: a verdict that is not the first line is not a conclusion', () => {
+  const body = ['Verdict (written by Reviewer, posted by Chief)', '', `Verdict: PASS at ${HEAD}`, 'Ran: npm test'].join('\n')
+  const result = decide({ head: HEAD, author: 'opener', reports: [comment('reviewer-agent', body)], policy })
+  assert.equal(result.ok, false)
+  assert.equal(result.verdict, null)
+})
+
+// #643: a body that quotes an older verdict at the same tip must not overwrite the first line. Seen
+// with an INC whose evidence quoted the PASS it replaced, at the same sha: it parsed as PASS.
+test('#643: a quoted verdict later in the body does not overwrite the first line', () => {
+  const body = [
+    'Verdict: INC at 1234567890abcdef',
+    'Written by: Reviewer',
+    '',
+    'Ran: node --test .github/scripts/review-gate.test.mjs → 40 pass',
+    'Not run: smoke',
+    '',
+    'Earlier, at the same tip, I wrote:',
+    'Verdict: PASS at 1234567890abcdef',
+  ].join('\n')
+  const parsed = parseReport(body)
+  assert.equal(parsed.verdict, 'INC', 'the first line is the conclusion')
+  assert.equal(parsed.tip, '1234567890abcdef')
+  assert.deepEqual(parsed.ran, ['node --test .github/scripts/review-gate.test.mjs → 40 pass'])
+  assert.equal(parsed.hasNotRun, true)
+
+  // The old block still parses, and there the last verdict in the block is the one that counts.
+  const legacy = ['Tip SHA: 1234567890abcdef', 'Ran:', '  - npm test → pass', 'Not run:', '  - smoke', 'Verdict: INC'].join('\n')
+  assert.equal(parseReport(legacy).verdict, 'INC')
+})
+
+// #640 INC point 1: the same hole in `out.tip`. A first line that names this tip, plus an older
+// report quoted in the body, used to move the tip, so `decide` dropped the INC as "about another
+// tip" and the PASS it refused stayed in force.
+test('#640: a quoted Tip SHA later in the body does not move the first line to another tip', () => {
+  const body = [
+    'Verdict: INC at 1234567890abcdef',
+    'Written by: Reviewer',
+    '',
+    'Ran: node --test .github/scripts/review-gate.test.mjs → 43 pass',
+    'Not run: smoke',
+    '',
+    'For comparison, the report this replaces said:',
+    'Tip SHA: 99887766554433221100ffeeddccbbaa99887766',
+    'Ran:',
+    '  - npm test → pass',
+    'Not run:',
+    '  - smoke',
+    'Verdict: PASS',
+  ].join('\n')
+  const parsed = parseReport(body)
+  assert.equal(parsed.verdict, 'INC')
+  assert.equal(parsed.tip, '1234567890abcdef', 'the first line names the tip being judged')
+  assert.deepEqual(parsed.ran, ['node --test .github/scripts/review-gate.test.mjs → 43 pass'])
+  assert.equal(parsed.hasNotRun, true)
+
+  // And the whole point: the INC is not dropped, so it still refuses the merge.
+  const head = '1234567890abcdef000000000000000000000000'
+  const at = (report, when) => ({ kind: 'comment', login: 'reviewer-agent', body: report, at: when })
+  const policy = { reviewers: ['reviewer-agent'], selfReview: [] }
+  const pass = ['Tip SHA: ' + head, 'Ran:', '  - npm test → pass', 'Not run:', '  - smoke', 'Verdict: PASS'].join('\n')
+  const result = decide({
+    head,
+    author: 'opener',
+    reports: [at(pass, '2026-10-21T10:00:00Z'), at(body, '2026-10-21T11:00:00Z')],
+    policy,
+  })
+  assert.equal(result.ok, false, 'the newer INC at this tip refuses')
+  assert.equal(result.verdict, 'INC')
+})

@@ -30,25 +30,45 @@ const SHORT = 12
 // one replaced, and only the last block is the verdict the reviewer stands behind.
 export function parseReport(body) {
   const lines = String(body ?? '').replace(/[*`]/g, '').split('\n')
+  const out = { tip: null, verdict: null, ran: [], hasNotRun: false }
+  // The fixed format (#637): the first non-empty line is the whole conclusion,
+  // `Verdict: PASS at <sha>` (or INC / REQUEST_CHANGES). The attribution line and the evidence go
+  // below it, so a verdict Chief posts for a Reviewer with no write channel parses the same way.
+  const firstLine = lines.find((line) => line.trim() !== '') ?? ''
+  const first = /^Verdict\s*:\s*(PASS|INC|REQUEST_CHANGES|FAIL)\s+(?:at\s+)?([0-9a-f]{7,40})\s*$/i.exec(firstLine.trim())
   let start = -1
   for (let i = 0; i < lines.length; i++) {
     if (/^Tip SHA\s*:/i.test(lines[i].trim())) start = i
   }
-  const out = { tip: null, verdict: null, ran: [], hasNotRun: false }
-  const from = start < 0 ? 0 : start
+  if (first) {
+    out.verdict = first[1].toUpperCase()
+    out.tip = first[2].toLowerCase()
+  }
+  // #643, #640: once the first line is the conclusion, the loop below must write neither field again.
+  // A body quotes older reports (a `Tip SHA: <sha>` block with an older `Verdict: PASS`), and letting
+  // either field through turned an INC at this tip into a PASS, or into a conclusion about some other
+  // tip that `decide` then dropped while the PASS it refused came back to life. Both fail open.
+  let ranSeen = false
+  const firstIsVerdict = first !== null
+  // With the first line as the conclusion the evidence is below it, so scan from the top; a
+  // legacy body is judged by its last block.
+  const from = firstIsVerdict || start < 0 ? 0 : start
   for (let i = from; i < lines.length; i++) {
     const line = lines[i].trim()
-    let m = /^Tip SHA\s*:\s*(.+)$/i.exec(line)
-    if (m) {
-      const hex = /[0-9a-f]{7,40}/i.exec(m[1])
+    const tipLine = /^Tip SHA\s*:\s*(.+)$/i.exec(line)
+    if (tipLine && !firstIsVerdict) {
+      const hex = /[0-9a-f]{7,40}/i.exec(tipLine[1])
       out.tip = hex ? hex[0].toLowerCase() : null
     }
-    m = /^Verdict\s*:\s*(PASS|FAIL|INC)\b/i.exec(line)
-    if (m) out.verdict = m[1].toUpperCase()
-    m = /^Ran\s*:\s*(.*)$/i.exec(line)
-    if (m) {
+    const verdictLine = /^Verdict\s*:\s*(PASS|FAIL|INC|REQUEST_CHANGES)\b/i.exec(line)
+    if (verdictLine && !firstIsVerdict) out.verdict = verdictLine[1].toUpperCase()
+    const ranLine = /^Ran\s*:\s*(.*)$/i.exec(line)
+    // With the first line as the conclusion, its own `Ran:` is the evidence; a quoted block's
+    // `Ran:` below it must not replace it. Without one, the last block wins as it always has.
+    if (ranLine && !(firstIsVerdict && ranSeen)) {
+      ranSeen = true
       out.ran = []
-      if (m[1].trim() && m[1].trim() !== '-') out.ran.push(m[1].trim())
+      if (ranLine[1].trim() && ranLine[1].trim() !== '-') out.ran.push(ranLine[1].trim())
       for (let j = i + 1; j < lines.length; j++) {
         const next = lines[j].trim()
         if (/^[-•]\s*\S/.test(next)) out.ran.push(next)
