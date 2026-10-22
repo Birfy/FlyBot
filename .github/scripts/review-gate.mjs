@@ -13,6 +13,9 @@
 //     its own pull requests; any other author still needs someone else);
 //   - it carries the Verifier block review-pr already writes, with a `Tip SHA:` that is the
 //     head being judged and a `Verdict:`;
+//   - it names its writer in the header: `Written-by: <Bot>` (the older prose `Written by: …` reads
+//     the same way) with a name from the policy's `writers`, or it refuses — a missing line and an
+//     unknown name are separate refusals (#627);
 //   - the verdict is PASS and the report lists a command it `Ran:` (a `- ` bullet, or a `$ ` line in a
 //     fenced block under a `Ran …:` heading): a report that ran nothing is not evidence.
 //   - `Not run:` is recommended but not checked (owner decision 2026-10-22 09:57 Asia/Shanghai, #667):
@@ -27,6 +30,10 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const SHORT = 12
+// #676: a conclusion is read only from someone GitHub ties to this repository. The fail-closed rule
+// above makes any newest conclusion refuse, so without this an outside comment saying `Verdict: INC`
+// could hold a merge. A comment from anyone else is not a conclusion: it can neither pass nor block.
+const ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR'])
 
 // The last Verifier block in one body: a comment may hold an earlier review that a later
 // one replaced, and only the last block is the verdict the reviewer stands behind.
@@ -35,7 +42,7 @@ export function parseReport(body) {
   // markdown emphasis, line for line, for everything else.
   const raw = String(body ?? '').split('\n')
   const lines = raw.map((line) => line.replace(/[*`]/g, ''))
-  const out = { tip: null, verdict: null, ran: [], hasNotRun: false }
+  const out = { tip: null, verdict: null, ran: [], hasNotRun: false, writer: null }
   // The fixed format (#637): the first non-empty line is the whole conclusion,
   // `Verdict: PASS at <sha>` (or INC / REQUEST_CHANGES). The attribution line and the evidence go
   // below it, so a verdict Chief posts for a Reviewer with no write channel parses the same way.
@@ -80,7 +87,25 @@ export function parseReport(body) {
     }
     if (/^Not run\b[^:\n]*:/i.test(line)) out.hasNotRun = true
   }
+  out.writer = parseWriter(lines)
   return out
+}
+
+// #627: the attribution line, `Written-by: <Bot>` (the older prose `Written by: Reviewer. Posted by:
+// …` reads the same way). Only the header is read — the first few non-empty lines — so a report that
+// arrives without one does not borrow a writer from a block it quotes further down.
+const HEADER_LINES = 3
+function parseWriter(lines) {
+  let seen = 0
+  for (const line of lines) {
+    const text = line.trim()
+    if (!text) continue
+    if (++seen > HEADER_LINES) break
+    const written = /^Written[- ]by\s*:\s*(.+)$/i.exec(text)
+    // The first clause is the name: `Reviewer. Posted by: Chief (proxy…)` names Reviewer.
+    if (written) return written[1].split(/[.,(;]/)[0].trim() || null
+  }
+  return null
 }
 
 // The commands under a `Ran` heading at line `at`: the inline text of a bare `Ran: <command>` (never
@@ -117,44 +142,64 @@ export function decide({ head, author, reports, policy }) {
   const authorLogin = String(author ?? '').toLowerCase()
   const reviewers = new Set((policy?.reviewers ?? []).map((l) => String(l).toLowerCase()))
   const selfReview = new Set((policy?.selfReview ?? []).map((l) => String(l).toLowerCase()))
-  const reasons = []
+  const writers = new Set((policy?.writers ?? []).map((w) => String(w).toLowerCase()))
+  const reasons = [] // reports that do not name this tip at all
   const judged = []
+  const atTip = [] // conclusions that name this tip, valid or not, in the order the API returned them
 
   for (const r of reports ?? []) {
     const parsed = parseReport(r.body)
     if (!parsed.tip && !parsed.verdict) continue // not a Verifier report
-    const entry = { login: r.login, verdict: parsed.verdict, tip: parsed.tip, at: r.at, kind: r.kind, parsed, counts: false }
+    const entry = { login: r.login, verdict: parsed.verdict, tip: parsed.tip, at: r.at, kind: r.kind, writer: parsed.writer, parsed, counts: false, why: null }
     judged.push(entry)
     if (!parsed.tip) { reasons.push(`${where(r)}: no Tip SHA`); continue }
     if (!headSha.startsWith(parsed.tip)) {
       reasons.push(`${where(r)}: names ${parsed.tip.slice(0, SHORT)}, not the tip ${headSha.slice(0, SHORT)}`)
       continue
     }
-    if (login(r) === authorLogin && !selfReview.has(authorLogin)) { reasons.push(`${where(r)}: the pull request's own author is not a reviewer (not in selfReview)`); continue }
-    if (!reviewers.has(login(r))) { reasons.push(`${where(r)}: not a reviewer listed in .github/agent/review-policy.json`); continue }
+    if (!parsed.verdict) continue // a `Tip SHA` block with no verdict is not a conclusion
+    const association = String(r.association ?? '').toUpperCase()
+    if (!ASSOCIATIONS.has(association)) {
+      reasons.push(`${where(r)}: author association ${association || 'missing'} is not OWNER, MEMBER or COLLABORATOR, so it is not a conclusion`)
+      continue
+    }
+    // #676: a conclusion at this tip belongs to the newest-word question even when it fails a check
+    // below, so it joins `atTip` carrying its reason instead of being dropped. Dropping it made a
+    // newer refusal invisible: an INC with no `Written-by:` line left an older PASS in force, and a
+    // human REQUEST_CHANGES from an unlisted login did the same.
+    atTip.push(entry)
+    // #627: a *conclusion* has to say who wrote it, refused on two separate grounds — a report with no
+    // attribution line and one that names a writer the policy does not list are different defects, and
+    // the log has to say which one fired. Both fail closed. An ordinary comment is not a conclusion, so
+    // a missing line is not held against it. With one shared GitHub identity the line is a self-report,
+    // so this buys presence and a name from a closed list, not proof (#633).
+    if (!parsed.writer) { entry.why = `${where(r)}: no Written-by line naming its writer`; continue }
+    if (!writers.has(parsed.writer.toLowerCase())) { entry.why = `${where(r)}: Written-by names "${parsed.writer}", who is not in the writers list of .github/agent/review-policy.json`; continue }
+    if (login(r) === authorLogin && !selfReview.has(authorLogin)) { entry.why = `${where(r)}: the pull request's own author is not a reviewer (not in selfReview)`; continue }
+    if (!reviewers.has(login(r))) { entry.why = `${where(r)}: not a reviewer listed in .github/agent/review-policy.json`; continue }
     entry.counts = true
   }
 
-  const counting = judged.filter((e) => e.counts)
-  if (!counting.length) {
-    const reason = reviewers.size
-      ? reasons.length ? reasons.join('; ') : `no Verifier report names the tip ${headSha.slice(0, SHORT)}`
-      : 'no reviewer is listed in .github/agent/review-policy.json'
+  if (!reviewers.size) return { ok: false, verdict: null, by: null, tip: null, reason: 'no reviewer is listed in .github/agent/review-policy.json', judged }
+  if (!atTip.length) {
+    const reason = reasons.length ? reasons.join('; ') : `no Verifier report names the tip ${headSha.slice(0, SHORT)}`
     return { ok: false, verdict: null, by: null, tip: null, reason, judged }
   }
 
-  // Newest first: the reviewer's latest word at this tip decides. Equal timestamps fall back to
-  // the order the API returned them in (oldest first), so the later comment still wins.
-  const last = counting
+  // The newest word at this tip decides, and that includes a conclusion the checks refused: an invalid
+  // PASS is not evidence, and an invalid INC is still someone saying not to merge (#676). Equal
+  // timestamps fall back to the order the API returned them in (oldest first), so the later one wins.
+  const last = atTip
     .map((e, i) => ({ e, i, t: Date.parse(e.at ?? 0) || 0 }))
     .sort((a, b) => a.t - b.t || a.i - b.i)
     .at(-1).e
+  if (!last.counts) return { ok: false, verdict: last.verdict, by: null, tip: last.tip, reason: last.why, judged }
   const { parsed } = last
-  if (last.verdict === 'PASS' && !parsed.ran.length) {
-    return { ok: false, verdict: 'PASS', by: last.login, tip: last.tip, reason: `${last.login}'s PASS lists no command it ran`, judged }
-  }
   if (last.verdict !== 'PASS') {
     return { ok: false, verdict: last.verdict, by: last.login, tip: last.tip, reason: `${last.login} says ${last.verdict ?? 'nothing'} at this tip`, judged }
+  }
+  if (!parsed.ran.length) {
+    return { ok: false, verdict: 'PASS', by: last.login, tip: last.tip, reason: `${last.login}'s PASS lists no command it ran`, judged }
   }
   return { ok: true, verdict: 'PASS', by: last.login, tip: last.tip, reason: `${last.login}'s PASS names this tip`, judged }
 }
@@ -170,7 +215,7 @@ export function render(result, { pr, head, author } = {}) {
     `Pull request #${pr}, author ${author}, head \`${String(head).slice(0, SHORT)}\`.`,
   ]
   const seen = result.judged.filter((e) => e.counts || e.verdict)
-  if (seen.length) out.push('', 'Verifier reports read:', ...seen.slice(0, 10).map((e) => `- ${e.login} (${e.kind}): ${e.verdict ?? 'no verdict'} at ${(e.tip ?? 'no tip').slice(0, SHORT)}${e.counts ? '' : ' (not counted)'}`))
+  if (seen.length) out.push('', 'Verifier reports read:', ...seen.slice(0, 10).map((e) => `- ${e.login} (${e.kind}): ${e.verdict ?? 'no verdict'} at ${(e.tip ?? 'no tip').slice(0, SHORT)}, written-by ${e.writer ?? 'nothing'}${e.counts ? '' : ' (not counted)'}`))
   out.push('', '_Report only (Phase 1): this does not block, label, approve or merge anything. Rules: `.github/agent/review-policy.json`; see [`docs/autonomous-dev.md`](../../docs/autonomous-dev.md)._')
   return out.join('\n')
 }
@@ -200,10 +245,10 @@ function main() {
   if (!head) throw new Error(`pull request ${pr} has no head sha`)
 
   const reports = [
-    ...list(`repos/${repo}/issues/${pr}/comments?per_page=100`).map((c) => ({ kind: 'comment', login: c.user?.login, body: c.body, at: c.created_at, url: c.html_url })),
+    ...list(`repos/${repo}/issues/${pr}/comments?per_page=100`).map((c) => ({ kind: 'comment', login: c.user?.login, body: c.body, at: c.created_at, association: c.author_association, url: c.html_url })),
     ...list(`repos/${repo}/pulls/${pr}/reviews?per_page=100`)
       .filter((v) => (v.body ?? '').trim())
-      .map((v) => ({ kind: 'review', login: v.user?.login, body: v.body, at: v.submitted_at, url: v.html_url })),
+      .map((v) => ({ kind: 'review', login: v.user?.login, body: v.body, at: v.submitted_at, association: v.author_association, url: v.html_url })),
   ]
 
   const result = decide({ head, author, reports, policy: loadPolicy(policyPath) })
