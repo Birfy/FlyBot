@@ -221,7 +221,7 @@ diff --git a/src/client/mark.js b/src/client/mark.js
 diff --git a/src/host/channel.js b/src/host/channel.js
 --- a/src/host/channel.js
 +++ b/src/host/channel.js
-@@ -3,7 +3,11 @@ import { randomUUID } from 'node:crypto'
+@@ -3,8 +3,16 @@
  import { createUserMessage } from '@deepseek-ai/dsh-llm'
  import { questionReply } from './parts.js'
  import { COLORS, EXTRA_COLORS, ROUTE } from './constants.js'
@@ -231,9 +231,14 @@ diff --git a/src/host/channel.js b/src/host/channel.js
  
 +const NOTIFY_KINDS = ['approval', 'finished', 'failed']
  const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
++// How long a burst of the user's lines is collected before it opens one turn (#642).
++const SETTLE_MS = 1_500
++// How many windows a held burst is retried on its own before it waits for the user's next line.
++const SETTLE_RETRIES = 3
  
  const invalid = message => Object.assign(new Error(message), { code: 'bot/invalid' })
-@@ -21,14 +21,21 @@ export function install(rt) {
+ // Programming and file system errors are DS Bot's own faults, logged with their stack;
+@@ -21,14 +21,95 @@
  
    // The DSH interface language of the last browser that asked for the team.
    let uiLocale
@@ -245,6 +250,80 @@ diff --git a/src/host/channel.js b/src/host/channel.js
 +  let watchedAt = 0
 +  rt.watched = () => Date.now() - watchedAt < WATCH_MS
 +  rt.uiLanguage = () => (uiLocale === undefined ? 'English' : LANGUAGES[uiLocale.split('-')[0].toLowerCase()] ?? uiLocale)
++
++  // A burst of the user's own lines (#642): with no turn running, hold them for a moment and open
++  // one turn with every line in arrival order. A line that arrives while a turn runs is not held —
++  // it lands as its own queued item, so a burst never reorders work that is already under way.
++  const settling = new Map()
++  const turnRunning = sessionId => rt.live?.get(sessionId)?.turn !== undefined
++  const armSettled = (sessionId, held) => {
++    clearTimeout(held.timer)
++    held.timer = setTimeout(() => {
++      void flushSettled(sessionId).catch(error => rt.warn?.('ds-bot: held user lines were not delivered; they are kept: %s', error))
++    }, SETTLE_MS)
++    held.timer?.unref?.()
++  }
++  const openSettledTurn = async (sessionId, lines) => {
++    await rt.ensureCapabilities(sessionId)
++    await ctx.sessionController.prompt({
++      requestId: randomUUID(),
++      sessionId,
++      mode: 'queue',
++      content: [{ type: 'text', text: lines.join('\n') }],
++    }, AbortSignal.timeout(30_000))
++  }
++  // Throws when the turn could not be opened (#682): the caller that is still waiting for an
++  // answer gets the error, and the lines stay held — a held line is not dropped because a
++  // prompt failed, and `send` never answers ok for a line that then disappears.
++  const flushSettled = async (sessionId) => {
++    const held = settling.get(sessionId)
++    if (held === undefined) return
++    clearTimeout(held.timer)
++    held.timer = undefined
++    const lines = held.lines.splice(0)
++    try {
++      await openSettledTurn(sessionId, lines)
++    } catch (error) {
++      held.lines.unshift(...lines)
++      held.failures += 1
++      // Retried on the next window a few times; past that the lines wait for the user's next
++      // line instead of retrying on their own forever.
++      if (held.failures < SETTLE_RETRIES) armSettled(sessionId, held)
++      else rt.warn?.('ds-bot: %d held user lines for %s could not be delivered after %d tries; they go out with the next line', lines.length, sessionId, held.failures)
++      throw error
++    }
++    held.failures = 0
++    // A line that arrived while the prompt was in flight stays in order behind the ones just sent.
++    if (held.lines.length > 0) armSettled(sessionId, held)
++    else settling.delete(sessionId)
++  }
++  // True when the line was held for the window; false means the caller opens its own turn.
++  const settleLine = async (sessionId, text) => {
++    if (turnRunning(sessionId)) {
++      // A turn began inside the window: the held lines queue ahead of this one, in order, and a
++      // failure there is the caller's to report.
++      await flushSettled(sessionId)
++      return false
++    }
++    const held = settling.get(sessionId)
++    if (held !== undefined) {
++      held.lines.push(text)
++      // A failed flush past its retries leaves the entry without a timer: this line re-arms it.
++      if (held.timer === undefined) {
++        held.failures = 0
++        armSettled(sessionId, held)
++      }
++      return true
++    }
++    const waiting = { lines: [text], failures: 0, timer: undefined }
++    armSettled(sessionId, waiting)
++    settling.set(sessionId, waiting)
++    return true
++  }
++  ctx.effect(() => () => {
++    for (const held of settling.values()) clearTimeout(held.timer)
++    settling.clear()
++  }, 'ds-bot: settle window')
  
    const ok = value => ({ ok: true, value })
 -  const fail = (message, code = 'bot/error') => ({ ok: false, error: { code, message, details: {} } })
@@ -258,7 +337,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
      revision: state.revision,
      workspaceId: state.workspaceId ?? null,
      // `mainBotId` is the first Main Bot, which the sidebar shows as its tile.
-@@ -36,17 +36,52 @@ export function install(rt) {
+@@ -36,17 +36,52 @@
      mainBotIds: state.mainBotIds,
      // `sessionId` is the Bot's current own-chat part; `parts` its earlier ones.
      // `waiting`: the Bot holds its greeting until the user picks its model.
@@ -316,7 +395,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
      // The team's DSH Agent (at most one): plain dsh Sessions, not Bots.
      agents: Object.values(state.agents),
      // Key names and who may use them; values never leave the host.
-@@ -54,7 +54,8 @@ export function install(rt) {
+@@ -54,7 +54,8 @@
      capabilities: rt.capabilityLibraryView(),
      secretRequests: state.secretRequests ?? {},
      colors: [...COLORS, ...EXTRA_COLORS],
@@ -326,7 +405,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
      defaultModel: rt.cachedDefault() ?? null,
      permissions: rt.permissionCatalog?.() ?? null,
      modelsKey: modelsKey(),
-@@ -65,22 +65,49 @@ export function install(rt) {
+@@ -65,22 +65,49 @@
      memory: rt.memoryEnabled !== false,
      // Set while another dsh host holds the team (store.js): why this one cannot change it.
      readOnly: rt.readOnly() ?? null,
@@ -387,7 +466,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
  
    function setPrefs(body) {
      if (body.theme !== undefined) {
-@@ -97,28 +97,57 @@ export function install(rt) {
+@@ -97,28 +97,57 @@
        else if (body.motion === 'quiet' || body.motion === 'lively') state.prefs.motion = body.motion
        else throw invalid('Motion must be quiet, normal or lively')
      }
@@ -449,7 +528,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
          case 'duplicate-bot':
            await rt.load()
            return ok(await rt.duplicateBot(body.id))
-@@ -141,7 +141,7 @@ export function install(rt) {
+@@ -141,7 +141,7 @@
            return ok([...rt.roomProgress.entries()].filter(([, entry]) => entry.roomId === body.roomId).map(([callId, entry]) => ({ callId, replies: entry.replies, speaking: entry.speaking ?? null })))
          case 'create-bot': {
            await rt.bootstrap()
@@ -458,7 +537,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
            return ok(bot)
          }
          case 'update-bot':
-@@ -150,17 +150,23 @@ export function install(rt) {
+@@ -150,17 +150,23 @@
          case 'delete-bot':
            await rt.load()
            await rt.deleteBot(body.id)
@@ -485,7 +564,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
            if (body.greet === true) await rt.greetRoom(room.id).catch(error => rt.warn('ds-bot: greeting in %s failed: %s', room.name, error))
            return ok(room)
          }
-@@ -175,8 +175,26 @@ export function install(rt) {
+@@ -175,8 +175,26 @@
              add: Array.isArray(body.add) ? body.add : undefined,
              remove: Array.isArray(body.remove) ? body.remove : undefined,
              workDir: body.workDir,
@@ -514,7 +593,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
          }
          case 'folders':
          case 'folder-pick':
-@@ -203,17 +203,19 @@ export function install(rt) {
+@@ -203,17 +203,19 @@
          case 'remove-agent':
            await rt.load()
            await rt.removeAgent(body.agentId)
@@ -537,7 +616,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
          case 'stop-member-work':
            return ok(await rt.stopMemberWork(String(body.roomId ?? ''), String(body.botId ?? '')))
          case 'dismiss-question':
-@@ -231,6 +231,9 @@ export function install(rt) {
+@@ -231,6 +231,9 @@
            await rt.load()
            return ok(await rt.secretEndpoint(endpoint, body))
          case 'connector-connect':
@@ -547,7 +626,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
          case 'connector-disconnect':
          case 'connector-retry':
            await rt.load()
-@@ -241,11 +241,22 @@ export function install(rt) {
+@@ -241,11 +241,22 @@
          case 'bot-capability':
            await rt.load()
            return ok(await rt.capabilityEndpoint(endpoint, body))
@@ -571,7 +650,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
          case 'memory-view':
          case 'memory-ask':
          case 'memory-forget':
-@@ -258,8 +258,17 @@ export function install(rt) {
+@@ -258,8 +258,17 @@
            const sessionId = rt.botOf(body.sessionId) ? rt.chatOf(body.sessionId) : past && past.roomId === undefined ? rt.chatOf(past.botId) : body.sessionId
            const question = state.questions[sessionId]
            if (question === undefined || question.id !== body.questionId) return fail('This question is no longer open', 'bot/stale')
@@ -589,7 +668,7 @@ diff --git a/src/host/channel.js b/src/host/channel.js
            // Claim the question before queueing so a second answer is refused.
            delete state.questions[sessionId]
            try {
-@@ -278,9 +278,43 @@ export function install(rt) {
+@@ -278,9 +278,46 @@
            const text = String(body.text ?? '').trim()
            if (text === '' || typeof body.sessionId !== 'string') return fail('Nothing to send', 'bot/invalid')
            await rt.load()
@@ -630,10 +709,13 @@ diff --git a/src/host/channel.js b/src/host/channel.js
 +            await ctx.sessions.flush(agent.session)
 +            return ok(true)
 +          }
++          // The Bot's own chat holds a burst into one turn; a group room already joins a mid-round
++          // line to the round it belongs to (#642), so its line must not wait behind a timer.
++          if (room === undefined && await settleLine(sessionId, text)) return ok(true)
            await rt.ensureCapabilities(sessionId)
            await ctx.sessionController.prompt({
              requestId: randomUUID(),
-@@ -319,32 +319,112 @@ export function install(rt) {
+@@ -319,32 +319,112 @@
          case 'diagnostics-clear':
            await rt.diagnostics.clear()
            return ok(true)
