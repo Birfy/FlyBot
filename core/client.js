@@ -3953,12 +3953,13 @@ var CONVERSATION_CSS = `
 [data-step-process]>[data-step-process-body]{display:block!important;content-visibility:visible!important;max-height:none!important;overflow:visible!important;mask-image:none!important;scrollbar-gutter:auto!important}
 :is([data-step-process],[data-turn-process-hidden])[hidden]{content-visibility:visible!important}
 [class*="_flowItem"]:has(> [data-slot="conversation.chat.node"]:empty){display:none!important}
-[class*="_header"]:has(.bt-head){border-bottom-color:transparent!important;box-shadow:none!important}
-/* The transcript runs under a floating header pill. */
-header[class*="_header"]:has(.bt-head){position:absolute!important;top:0;left:0;right:0;z-index:8;display:flex!important;padding:10px 0 0!important;background:transparent!important;pointer-events:none;justify-content:center}
-header[class*="_header"]:has(.bt-head)::before{content:"";position:absolute;inset:0 0 auto;height:60px;background:linear-gradient(to bottom,var(--bt-main),color-mix(in srgb,var(--bt-main) 0%,transparent));pointer-events:none;z-index:-1}
-header[class*="_header"]:has(.bt-head)>[class*="_headerLeading"]{position:absolute;left:12px;top:10px;pointer-events:auto}
-header[class*="_header"] .bt-head{flex:1 1 auto;width:100%}
+/* FlyBot's pill rides the shell's own Session header utilities, beside the seats
+   the native header renders (actions: the subagent catalog; lineage; corner).
+   It is a compact control in that row now, not a floating replacement for the
+   whole header, so the header keeps its own layout, border and drag row. */
+[class*="_header"] .bt-head{display:flex;align-items:center;height:auto;flex:none;width:auto;pointer-events:auto}
+[class*="_header"] .bt-head .bt-pill{height:30px;padding:3px 10px 3px 4px;gap:6px;font-size:13px;line-height:18px;max-width:min(320px,32vw)}
+[class*="_header"] .bt-head .bt-mark{width:22px!important;height:22px!important;--bt-size:22px}
 [class*="_body"]:has(> [class*="_scrollBody"]){--dsh-chat-content-width:min(960px,100%)}
 /* DSH's turn tail keeps what plugins put in it (delivered files, the Bot's separators),
    without its copy and branch row; a tail with nothing in it takes no room. */
@@ -8183,9 +8184,8 @@ function MemoryNotice({ shown }) {
     (0, import_react14.createElement)("span", { className: "bt-pill-mem-in", ref: inner }, (0, import_react14.createElement)("span", { className: "bt-pill-mem-ico" }, (0, import_react14.createElement)(MemoryIcon)), label)
   );
 }
-function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSession, useActivity, useMemoryNews, useTurnClock, useUi, useLive, actions }) {
+function HeaderSeats({ sessionId, useRoster, useSessions, useUi, useTurnClock, actions }) {
   const roster = useRoster((value) => value);
-  const title = useSessions((list) => list.byId[sessionId]?.displayTitle ?? list.byId[sessionId]?.title ?? "");
   const firstTurns = useSessions((list) => {
     const outline = list.projectionsBySession?.[sessionId]?.values?.turnOutline ?? list.byId[sessionId]?.projectionValues?.turnOutline;
     return Array.isArray(outline) ? outline.slice(0, 8).map((entry) => entry.turn).join(",") : "";
@@ -8201,19 +8201,10 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
     else document.body.style.removeProperty("--bt-first-sep");
     return () => document.body.style.removeProperty("--bt-first-sep");
   }, [opening]);
-  const running = useSessionStatus((map) => map.get(sessionId)?.running === true);
-  const owner = roster.byId[sessionId]?.id ?? sessionId;
-  const doing = useActivity((map) => map[owner]);
   const bot = roster.byId[sessionId];
   const room2 = roster.roomsById[sessionId];
-  const detailsOpen = useUi((state) => state.details === sessionId);
-  const name = bot?.remote ? friendBotTitle(bot) : room2?.displayName || (room2?.sharedFrom ? sharedRoomTitle(room2.sharedFrom.inviterName) : room2?.name) || bot?.name || "";
-  const useNews = useMemoryNews ?? noNews;
-  const memoryIds = bot ? [bot.id] : room2?.members ?? [];
-  const notice = useMemoryNotice(memoryIds, useNews);
-  const changed2 = useNews((map) => latestMemoryChange(map, memoryIds));
-  const composerLabel = name ? t("Message {name}", { name }) : t("Message");
   const blank3 = useSessions((list) => list.byId[sessionId]?.blank === true);
+  const name = bot?.remote ? friendBotTitle(bot) : room2?.displayName || (room2?.sharedFrom ? sharedRoomTitle(room2.sharedFrom.inviterName) : room2?.name) || bot?.name || "";
   const remoteEmptyHint = t("Send a message. Your friend approves unless Auto-send is on.");
   (0, import_react14.useEffect)(() => {
     if (bot?.remote && blank3) {
@@ -8235,6 +8226,7 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
       delete document.body.dataset.btFriendChat;
     };
   }, [bot?.remote]);
+  const composerLabel = name ? t("Message {name}", { name }) : t("Message");
   (0, import_react14.useLayoutEffect)(() => holdComposerLabel(document, composerLabel), [composerLabel]);
   (0, import_react14.useEffect)(() => {
     actions.beginVisit(sessionId);
@@ -8249,6 +8241,23 @@ function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSe
       delete document.body.dataset.btRoom;
     };
   }, [Boolean(room2)]);
+  return null;
+}
+function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSession, useActivity, useMemoryNews, useTurnClock, useUi, useLive, actions }) {
+  const roster = useRoster((value) => value);
+  const title = useSessions((list) => list.byId[sessionId]?.displayTitle ?? list.byId[sessionId]?.title ?? "");
+  const hiddenTurns = roster.exchangeTurns?.[sessionId];
+  const running = useSessionStatus((map) => map.get(sessionId)?.running === true);
+  const owner = roster.byId[sessionId]?.id ?? sessionId;
+  const doing = useActivity((map) => map[owner]);
+  const bot = roster.byId[sessionId];
+  const room2 = roster.roomsById[sessionId];
+  const detailsOpen = useUi((state) => state.details === sessionId);
+  const name = bot?.remote ? friendBotTitle(bot) : room2?.displayName || (room2?.sharedFrom ? sharedRoomTitle(room2.sharedFrom.inviterName) : room2?.name) || bot?.name || "";
+  const useNews = useMemoryNews ?? noNews;
+  const memoryIds = bot ? [bot.id] : room2?.members ?? [];
+  const notice = useMemoryNotice(memoryIds, useNews);
+  const changed2 = useNews((map) => latestMemoryChange(map, memoryIds));
   const memoryNotice = notice && changed2 !== null && roster.memory !== false;
   return (0, import_react14.createElement)(
     "div",
@@ -17877,7 +17886,14 @@ function apply(ctx) {
     installCompiledStyles(CONVERSATION_CSS, "conversation"),
     installMentions(),
     installAtMenu(),
-    shadow("conversation.session.header", { priority: -10, inject: face }, HeaderPill),
+    // The shell's own Session header stays, so the child seats it renders keep
+    // working — notably the subagent catalog `conversation.session.header.actions`
+    // (ui-subagent) and the lineage title. FlyBot's pill is appended to the
+    // utilities list beside them instead of replacing the whole header.
+    shadow("conversation.session.header.utilities", { id: "bot-pill", order: 100, inject: face }, HeaderPill),
+    // The shell draws .utilities only while its chrome shows (a blank Session hides it), so what the
+    // pill does to the page rides .corner, which the shell draws in every state (#803).
+    shadow("conversation.session.header.corner", { id: "bot-header-seats", order: 100, inject: face }, HeaderSeats),
     shadow("conversation.chat.node", { key: "assistant-step", priority: -10, locale: "chat", inject: assistantFace }, AssistantCell),
     shadow("conversation.chat.node", { key: "turn-trigger", priority: -10, locale: "chat", inject: face }, TriggerCell),
     shadow("conversation.chat.node", { key: "tool-call", priority: -10, locale: "chat", inject: face }, ToolCell),

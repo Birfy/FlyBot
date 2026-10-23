@@ -44,9 +44,13 @@ function MemoryNotice({ shown }) {
     h('span', { className: 'bt-pill-mem-in', ref: inner }, h('span', { className: 'bt-pill-mem-ico' }, h(MemoryIcon)), label))
 }
 
-export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSession, useActivity, useMemoryNews, useTurnClock, useUi, useLive, actions }) {
+// Everything the header pill does to the page — the empty-chat hint, the visit ledger, the composer
+// placeholder, the room and face flags — lives here rather than in the pill. The shell renders
+// `conversation.session.header.utilities`, and the pill with it, only while its chrome shows
+// (`!hideChrome`, the shell's `blank`), so a Session without a first message would drop every one of
+// those effects; `conversation.session.header.corner` is rendered in every state, so they ride there (#803).
+export function HeaderSeats({ sessionId, useRoster, useSessions, useUi, useTurnClock, actions }) {
   const roster = useRoster(value => value)
-  const title = useSessions(list => list.byId[sessionId]?.displayTitle ?? list.byId[sessionId]?.title ?? '')
   const firstTurns = useSessions((list) => {
     const outline = list.projectionsBySession?.[sessionId]?.values?.turnOutline ?? list.byId[sessionId]?.projectionValues?.turnOutline
     return Array.isArray(outline) ? outline.slice(0, 8).map(entry => entry.turn).join(',') : ''
@@ -64,23 +68,12 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
     else document.body.style.removeProperty('--bt-first-sep')
     return () => document.body.style.removeProperty('--bt-first-sep')
   }, [opening])
-  const running = useSessionStatus(map => map.get(sessionId)?.running === true)
-  const owner = roster.byId[sessionId]?.id ?? sessionId
-  const doing = useActivity(map => map[owner])
   const bot = roster.byId[sessionId]
   const room = roster.roomsById[sessionId]
-  const detailsOpen = useUi(state => state.details === sessionId)
+  const blank = useSessions(list => list.byId[sessionId]?.blank === true)
   const name = bot?.remote
     ? friendBotTitle(bot)
     : (room?.displayName || (room?.sharedFrom ? sharedRoomTitle(room.sharedFrom.inviterName) : room?.name) || bot?.name || '')
-  const useNews = useMemoryNews ?? noNews
-  const memoryIds = bot ? [bot.id] : room?.members ?? []
-  const notice = useMemoryNotice(memoryIds, useNews)
-  // While the notice shows, the pill opens the memory of the Bot that changed.
-  const changed = useNews(map => latestMemoryChange(map, memoryIds))
-  // The composer placeholder is not localizable per Session, so CSS reads it from here.
-  const composerLabel = name ? t('Message {name}', { name }) : t('Message')
-  const blank = useSessions(list => list.byId[sessionId]?.blank === true)
   const remoteEmptyHint = t("Send a message. Your friend approves unless Auto-send is on.")
   useEffect(() => {
     if (bot?.remote && blank) {
@@ -102,6 +95,8 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
     document.body.dataset.btFriendChat = ''
     return () => { delete document.body.dataset.btFriendChat }
   }, [bot?.remote])
+  // The composer placeholder is not localizable per Session, so CSS reads it from here.
+  const composerLabel = name ? t('Message {name}', { name }) : t('Message')
   // Before the first paint, and again whenever the shell renders its own composer copy (#419, #499).
   useLayoutEffect(() => holdComposerLabel(document, composerLabel), [composerLabel])
   useEffect(() => {
@@ -117,6 +112,27 @@ export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus
     else delete document.body.dataset.btRoom
     return () => { delete document.body.dataset.btRoom }
   }, [Boolean(room)])
+  return null
+}
+
+export function HeaderPill({ sessionId, useRoster, useSessions, useSessionStatus, useSession, useActivity, useMemoryNews, useTurnClock, useUi, useLive, actions }) {
+  const roster = useRoster(value => value)
+  const title = useSessions(list => list.byId[sessionId]?.displayTitle ?? list.byId[sessionId]?.title ?? '')
+  const hiddenTurns = roster.exchangeTurns?.[sessionId]
+  const running = useSessionStatus(map => map.get(sessionId)?.running === true)
+  const owner = roster.byId[sessionId]?.id ?? sessionId
+  const doing = useActivity(map => map[owner])
+  const bot = roster.byId[sessionId]
+  const room = roster.roomsById[sessionId]
+  const detailsOpen = useUi(state => state.details === sessionId)
+  const name = bot?.remote
+    ? friendBotTitle(bot)
+    : (room?.displayName || (room?.sharedFrom ? sharedRoomTitle(room.sharedFrom.inviterName) : room?.name) || bot?.name || '')
+  const useNews = useMemoryNews ?? noNews
+  const memoryIds = bot ? [bot.id] : room?.members ?? []
+  const notice = useMemoryNotice(memoryIds, useNews)
+  // While the notice shows, the pill opens the memory of the Bot that changed.
+  const changed = useNews(map => latestMemoryChange(map, memoryIds))
   const memoryNotice = notice && changed !== null && roster.memory !== false
   return h('div', { className: 'bt-head' },
     h('button', {
