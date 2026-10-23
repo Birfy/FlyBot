@@ -21,7 +21,7 @@
 // Percentiles are nearest-rank: the sorted value at `ceil(p/100 * n) - 1`, so a p99 of a
 // small sample is its maximum. The report prints that definition too.
 import { DatabaseSync } from 'node:sqlite'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
