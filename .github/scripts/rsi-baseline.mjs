@@ -12,8 +12,14 @@
 //
 // Group 2 is daily CI outcomes per repository. It counts **runs**, not PRs, so a retried workflow (two
 // attempts of the same PR) is two runs and one PR. Runs are bucketed by conclusion — success,
-// failure, cancelled, other/unknown — and the success rate is
+// failure, cancelled, skipped, other/unknown — and the success rate is
 // `success / (success + failure + cancelled + other)`, printed as numerator/denominator/percent.
+// `skipped` and `unknown` are reported in their own columns and stay out of the denominator: a run
+// that measured nothing must move the number neither way (#814).
+//
+// A listing that reaches the page cap is marked, never rounded off: `allPages` says whether the last
+// allowed page came back full, and the report prints "at least 2000, possibly truncated" for that
+// repository instead of a clean total.
 // `pull_request` runs and `merge_group` runs are reported separately: a green PR-head run says
 // nothing about the merge-queue run, so the two are never summed into one "green" number.
 //
@@ -29,13 +35,17 @@ export const API = 'https://api.github.com'
 export const TIMEZONE = 'UTC'
 export const UNKNOWN = 'unknown/not available'
 export const GROUPS = ['issuesOpened', 'issuesClosed', 'prsOpened', 'prsMerged', 'prsClosedUnmerged', 'netOpenIssues', 'netOpenPulls']
-export const CONCLUSION_BUCKETS = ['success', 'failure', 'cancelled', 'other', 'unknown']
+export const CONCLUSION_BUCKETS = ['success', 'failure', 'cancelled', 'skipped', 'other', 'unknown']
+// Conclusions that are counted as an outcome of their own; everything else known falls into `other`.
+const KNOWN_CONCLUSIONS = ['success', 'failure', 'cancelled', 'skipped']
 // Events worth separating: a queue run and a PR-head run answer different questions.
 export const EVENT_GROUPS = ['pull_request', 'merge_group', 'push', 'other']
 
 const DAY_MS = 24 * 60 * 60 * 1000
 // A day with 800 runs must not turn the report into a wall of links; past this the API query is the source.
 const MAX_LINKS = 120
+// 20 pages of 100: the cap the GitHub listings are read to before the report has to admit it stopped.
+export const MAX_PAGES = 20
 
 // A calendar day as a half-open window [00:00, 24:00) in the given fixed offset (minutes east of UTC).
 // GitHub timestamps are UTC, so the offset only moves the boundaries; the day itself is what a human
@@ -102,7 +112,7 @@ export function summarizeRuns({ runs = [] } = {}) {
     }
     const conclusion = run.conclusion
     const bucket = !conclusion ? 'unknown'
-      : conclusion === 'success' || conclusion === 'failure' || conclusion === 'cancelled' ? conclusion
+      : KNOWN_CONCLUSIONS.includes(conclusion) ? conclusion
         : 'other'
     all[bucket] += 1
     const event = EVENT_GROUPS.includes(run.event) ? run.event : 'other'
@@ -111,9 +121,11 @@ export function summarizeRuns({ runs = [] } = {}) {
   return { all, byEvent, running, ...rates(all) }
 }
 
-// The denominator is every completed run with a known conclusion. Cancelled runs are known — a
-// concurrency cancellation is a real outcome — so they stay in the denominator; folding them out
-// would let a day of cancelled runs look perfect.
+// The denominator is every completed run that produced an outcome. Cancelled runs are outcomes — a
+// concurrency cancellation is a real result — so they stay in the denominator; folding them out
+// would let a day of cancelled runs look perfect. `skipped` is the opposite case: the run was
+// completed, but nothing in it measured anything, so it is reported in its own column and kept out
+// of the denominator together with `unknown` (#814).
 export function rates(buckets) {
   const denominator = buckets.success + buckets.failure + buckets.cancelled + buckets.other
   return {
@@ -138,8 +150,13 @@ export function rollingAverage(values) {
   return clean.reduce((sum, value) => sum + value, 0) / clean.length
 }
 
+// A capped listing is a floor, not a total. This line is what a reader keeps when they copy the
+// table, so the marker stays next to the numbers it qualifies (#814).
+const truncationLine = (repo, what, unit, label) =>
+  `- \`${repo}\`: the ${what} stopped at the page cap — **at least ${MAX_PAGES * 100} ${unit}, possibly truncated**; the ${label} are a lower bound.`
+
 export function renderReport(model) {
-  const { win, repos, generatedAt, throughputByRepo, runsByRepo, notes = [] } = model
+  const { win, repos, generatedAt, throughputByRepo, runsByRepo, truncatedByRepo = {}, notes = [] } = model
   const zone = formatOffset(win.offsetMinutes)
   const lines = []
   lines.push(`# RSI baseline — ${win.day}`)
@@ -158,18 +175,21 @@ export function renderReport(model) {
     const row = throughputByRepo[repo] ?? {}
     lines.push(`| \`${repo}\` | ${GROUPS.slice(0, 5).map((key) => formatCount(row[key])).join(' | ')} | ${formatCount(row.netOpenIssues)} | ${formatCount(row.netOpenPulls)} |`)
   }
+  for (const repo of repos) {
+    if (truncatedByRepo[repo]?.listing) lines.push(truncationLine(repo, 'issue/PR listing', 'items', 'throughput counts above'))
+  }
   lines.push('')
   lines.push('Formulas: a count is the number of those entities whose terminal timestamp falls inside the window; `closed unmerged` requires `closed_at` inside the window and `merged_at` empty; `net open` is `created before the end of the window - closed before the end of the window`, computed from search counts and shown as unknown when a count is unavailable. A labelled, claimed or converted Issue is not counted as processed.')
   lines.push('')
 
   lines.push('## 2. Daily CI outcomes')
   lines.push('')
-  lines.push('| Repository | Event | Runs | Success | Failure | Cancelled | Other | Unknown | Success rate |')
-  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- |')
+  lines.push('| Repository | Event | Runs | Success | Failure | Cancelled | Skipped | Other | Unknown | Success rate |')
+  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |')
   for (const repo of repos) {
     const summary = runsByRepo[repo]
     if (!summary) {
-      lines.push(`| \`${repo}\` | all | ${UNKNOWN} | ${UNKNOWN} | ${UNKNOWN} | ${UNKNOWN} | ${UNKNOWN} | ${UNKNOWN} | ${UNKNOWN} |`)
+      lines.push(`| \`${repo}\` | all | ${UNKNOWN} | ${UNKNOWN} | ${UNKNOWN} | ${UNKNOWN} | ${UNKNOWN} | ${UNKNOWN} | ${UNKNOWN} | ${UNKNOWN} |`)
       continue
     }
     for (const event of EVENT_GROUPS) {
@@ -177,14 +197,15 @@ export function renderReport(model) {
       const total = CONCLUSION_BUCKETS.reduce((sum, key) => sum + buckets[key], 0)
       if (total === 0) continue
       const { denominator, successRate } = rates(buckets)
-      lines.push(`| \`${repo}\` | ${event} | ${total} | ${buckets.success} | ${buckets.failure} | ${buckets.cancelled} | ${buckets.other} | ${buckets.unknown} | ${successRate === null ? UNKNOWN : formatRate(buckets.success, denominator)} |`)
+      lines.push(`| \`${repo}\` | ${event} | ${total} | ${buckets.success} | ${buckets.failure} | ${buckets.cancelled} | ${buckets.skipped} | ${buckets.other} | ${buckets.unknown} | ${successRate === null ? UNKNOWN : formatRate(buckets.success, denominator)} |`)
     }
     const { all, ...rest } = summary
     const total = CONCLUSION_BUCKETS.reduce((sum, key) => sum + all[key], 0)
-    lines.push(`| \`${repo}\` | **all** | ${total} | ${all.success} | ${all.failure} | ${all.cancelled} | ${all.other} | ${all.unknown} | ${rest.successRate === null ? UNKNOWN : formatRate(all.success, rest.denominator)} |`)
+    lines.push(`| \`${repo}\` | **all** | ${total} | ${all.success} | ${all.failure} | ${all.cancelled} | ${all.skipped} | ${all.other} | ${all.unknown} | ${rest.successRate === null ? UNKNOWN : formatRate(all.success, rest.denominator)} |`)
+    if (truncatedByRepo[repo]?.runs) lines.push(truncationLine(repo, 'run listing', 'runs', 'counts above'))
   }
   lines.push('')
-  lines.push('Formulas: `runs` counts runs whose `created_at` is inside the window, not unique PRs, so a retried workflow is two runs; `unknown` is a completed run with no conclusion and `other` is any conclusion outside success/failure/cancelled; the denominator is `success + failure + cancelled + other` (cancelled runs stay in it); an empty denominator prints as unknown rather than 0%. `merge_group` runs are the queue, `pull_request` runs are the head; a green head run is not evidence about the queue.')
+  lines.push('Formulas: `runs` counts runs whose `created_at` is inside the window, not unique PRs, so a retried workflow is two runs; `unknown` is a completed run with no conclusion, `skipped` is a run that measured nothing, and `other` is any conclusion outside success/failure/cancelled/skipped; the denominator is `success + failure + cancelled + other` (cancelled runs stay in it; `skipped` and `unknown` do not); an empty denominator prints as unknown rather than 0%. `merge_group` runs are the queue, `pull_request` runs are the head; a green head run is not evidence about the queue.')
   lines.push('')
 
   const linked = repos.flatMap((repo) => (runsByRepo[repo]?.urls ?? []).map((run) => `- \`${repo}\` [${run.name ?? 'run'} ${run.id}](${run.html_url}) — ${run.event}, ${run.conclusion ?? run.status}`))
@@ -217,15 +238,18 @@ async function gh(path, token) {
   return response.json()
 }
 
-async function allPages(path, token, pick = (page) => page) {
-  const out = []
-  for (let page = 1; page <= 20; page += 1) {
-    const body = await gh(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`, token)
-    const items = pick(body)
-    out.push(...items)
-    if (items.length < 100) break
+// The page cap is a request budget, not a claim about the data. When the last allowed page comes back
+// full the listing was cut short, and the caller has to say so: a silently short list reads as the
+// whole day (#814). `request` is injected so the cap is tested without the network.
+export async function allPages(path, token, pick = (page) => page, request = gh) {
+  const items = []
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const body = await request(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`, token)
+    const batch = pick(body)
+    items.push(...batch)
+    if (batch.length < 100) return { items, truncated: false }
   }
-  return out
+  return { items, truncated: true }
 }
 
 // Search counts power the historical open count. `incomplete_results` means the number is not the
@@ -237,7 +261,7 @@ async function searchCount(query, token) {
 
 export async function collectRepo(repo, token, win) {
   const sinceIso = new Date(win.start).toISOString()
-  const items = await allPages(`/repos/${repo}/issues?state=all&since=${encodeURIComponent(sinceIso)}`, token)
+  const { items, truncated } = await allPages(`/repos/${repo}/issues?state=all&since=${encodeURIComponent(sinceIso)}`, token)
   const issues = items.filter((item) => !item.pull_request)
   const pulls = items.filter((item) => item.pull_request)
   // `merged_at` is not on the issues payload; fetch the few PRs that closed inside the window.
@@ -251,7 +275,7 @@ export async function collectRepo(repo, token, win) {
     issues: await openAtEnd(repo, 'issue', endIso, token),
     pulls: await openAtEnd(repo, 'pr', endIso, token),
   }
-  return { issues, pulls, netOpen }
+  return { issues, pulls, netOpen, truncated }
 }
 
 async function openAtEnd(repo, kind, endIso, token) {
@@ -267,9 +291,9 @@ async function openAtEnd(repo, kind, endIso, token) {
 
 export async function collectRuns(repo, token, win) {
   const day = win.day
-  const runs = await allPages(`/repos/${repo}/actions/runs?created=${day}`, token, (page) => page.workflow_runs ?? [])
+  const { items: runs, truncated } = await allPages(`/repos/${repo}/actions/runs?created=${day}`, token, (page) => page.workflow_runs ?? [])
   const inside = runs.filter((run) => withinWindow(run.created_at, win))
-  return { runs: inside.map((run) => ({ ...run, urls: { html_url: run.html_url } })) }
+  return { runs: inside.map((run) => ({ ...run, urls: { html_url: run.html_url } })), truncated }
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
@@ -292,14 +316,21 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const win = dayWindow(args.day, args.offset)
   const throughputByRepo = {}
   const runsByRepo = {}
+  const truncatedByRepo = {}
   for (const repo of args.repos) {
-    const { issues, pulls, netOpen } = await collectRepo(repo, token, win)
+    const { issues, pulls, netOpen, truncated: listingTruncated } = await collectRepo(repo, token, win)
     throughputByRepo[repo] = throughput({ win, issues, pulls, netOpen })
-    const { runs } = await collectRuns(repo, token, win)
+    const { runs, truncated: runsTruncated } = await collectRuns(repo, token, win)
     runsByRepo[repo] = summarizeRuns({ runs })
     runsByRepo[repo].urls = runs.map((run) => ({ id: run.id, name: run.name, html_url: run.html_url, event: run.event, conclusion: run.conclusion, status: run.status }))
+    truncatedByRepo[repo] = { listing: listingTruncated, runs: runsTruncated }
+    if (listingTruncated || runsTruncated) {
+      // Loud on the console too: a truncated run is still a green exit, but whoever ran it should see it.
+      const what = [listingTruncated ? 'issue/PR listing' : null, runsTruncated ? 'run listing' : null].filter(Boolean).join(' and ')
+      console.error(`rsi-baseline: ${repo}: the ${what} hit the ${MAX_PAGES}-page cap; counts are a lower bound`)
+    }
   }
-  const report = renderReport({ win, repos: args.repos, generatedAt: new Date().toISOString(), throughputByRepo, runsByRepo, notes: env.RSI_BASELINE_NOTES ? env.RSI_BASELINE_NOTES.split('|') : [] })
+  const report = renderReport({ win, repos: args.repos, generatedAt: new Date().toISOString(), throughputByRepo, runsByRepo, truncatedByRepo, notes: env.RSI_BASELINE_NOTES ? env.RSI_BASELINE_NOTES.split('|') : [] })
   if (args.out) writeFileSync(args.out, `${report}\n`)
   else console.log(report)
   return 0

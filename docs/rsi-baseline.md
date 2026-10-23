@@ -14,7 +14,8 @@ The generated daily reports live in [`docs/reports/`](reports/); the first one i
    merge; net open workload at the end of the day where the API can support it.
 2. **Daily CI outcomes** — runs by conclusion, and the success rate as
    `success / (success + failure + cancelled + other)`, with `pull_request` runs and `merge_group`
-   runs reported separately.
+   runs reported separately. `skipped` has its own column and stays out of the denominator, as
+   `unknown` does.
 
 Nothing else is measured yet: task cycle time, review quality, defect escape rate, human
 intervention, token/cost attribution and statistical significance are explicitly out of scope until
@@ -32,6 +33,14 @@ a concrete experiment needs them.
 - **Unknown is not zero.** A search count the API marks incomplete, a closed run with no conclusion
   yet, or a metric that could not be read prints as `unknown/not available`. A day with no CI data
   shows no rate at all rather than `0%`.
+- **A skipped run measured nothing.** `skipped` means the workflow completed without running what it
+  measures — a `needs:` guard said no, or nothing matched. It has its own column and, like `unknown`,
+  is out of the denominator: counting it as either a success or a failure would let a day of "did not
+  run" move the number.
+- **A capped listing is a floor, not a total.** A listing is read up to 20 pages of 100. When page 20
+  comes back full the report prints `at least 2000 …, possibly truncated` for that repository and
+  says the counts above are a lower bound; a page that comes back short means the list ended and
+  nothing is marked. A truncated run still exits 0 — the marker, not the exit code, is the signal.
 - **Every report names its window, timezone and repositories.** The default day is the previous UTC
   day, half-open `[00:00, 24:00)`. A fixed offset (`--offset +08:00`) is supported; a named zone is
   refused, because a DST day is 23 or 25 hours long and an implicit day length is not auditable.
@@ -66,6 +75,12 @@ nothing to GitHub.
 - throughput counts terminal events only, and a merged PR is not also counted as closed unmerged;
 - cancelled runs stay in the denominator, a run with no conclusion does not, and an in-progress run
   is not counted at all;
+- a skipped run is its own bucket and stays out of the denominator (3 success + 2 skipped is
+  `skipped: 2`, denominator 3, rate `3/3 = 100.0%`);
+- a 20-page sequence that ends on a full page is marked truncated, 1999 items are not, and a short
+  page stops the walk instead of reading on;
+- the report carries the `Skipped` column, names the exclusion in its formula, and prints the
+  truncation marker only for a repository whose listing was capped;
 - a retried workflow is two runs and one PR;
 - per-event rates keep `merge_group` apart from `pull_request`;
 - missing data prints as `unknown/not available`, and an empty denominator is not `0%`;
@@ -74,7 +89,10 @@ nothing to GitHub.
 ## First baseline
 
 The 2026-10-22 report is the starting point: 65 Issues opened and 69 closed upstream, 78 PRs opened
-and 68 merged, and 825 upstream workflow runs with a 87.3% success rate overall (95.5% on PR heads,
-85.5% on queue entries). Those numbers describe the day; they do not describe a healthy process, and
-the report says nothing about whether any change made them better. The fork ran no workflows that
-day, and its row is `unknown/not available` rather than a zero that would flatter the rate.
+and 68 merged, and 825 upstream workflow runs with a 92.8% success rate overall (95.5% on PR heads,
+85.5% on queue entries). The rate reads 92.8%, not the 87.3% the first cut of this report printed,
+because its denominator is now the 776 runs that produced an outcome instead of 825: the 49 `skipped`
+runs measured nothing and are their own column. Those numbers describe the day; they do not describe
+a healthy process, and the report says nothing about whether any change made them better. The fork
+ran no workflows that day, and its row is `unknown/not available` rather than a zero that would
+flatter the rate.
