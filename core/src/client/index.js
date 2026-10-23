@@ -9,7 +9,7 @@ import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } fro
 import { installBrandChrome, installTabTitle } from './brand.js'
 import { lookOf } from './mark.js'
 import { TeamSidebar, ConnectApps, YouAvatar, AccountLauncher, ModelsSettingsStep, MODELS_STEP_ID, MODELS_STEP_ORDER, FooterAccount, BrandMark, BrandName, BotReturn, SIDEBAR_CSS, RETURN_CSS, holdShellShortcuts } from './sidebar.js'
-import { HeaderPill } from './header.js'
+import { HeaderPill, HeaderSeats } from './header.js'
 import { ComposerIdentity, ComposerPlus, ComposerVoice, menuIcons } from './composer.js'
 import { CHATS_SOURCE, atSources } from './at-menu.js'
 import { watchFaceMenu } from './face-at-filter.js'
@@ -878,7 +878,14 @@ export function apply(ctx) {
     installCompiledStyles(CONVERSATION_CSS, 'conversation'),
     installMentions(),
     installAtMenu(),
-    shadow('conversation.session.header', { priority: -10, inject: face }, HeaderPill),
+    // The shell's own Session header stays, so the child seats it renders keep
+    // working — notably the subagent catalog `conversation.session.header.actions`
+    // (ui-subagent) and the lineage title. FlyBot's pill is appended to the
+    // utilities list beside them instead of replacing the whole header.
+    shadow('conversation.session.header.utilities', { id: 'bot-pill', order: 100, inject: face }, HeaderPill),
+    // The shell draws .utilities only while its chrome shows (a blank Session hides it), so what the
+    // pill does to the page rides .corner, which the shell draws in every state (#803).
+    shadow('conversation.session.header.corner', { id: 'bot-header-seats', order: 100, inject: face }, HeaderSeats),
     shadow('conversation.chat.node', { key: 'assistant-step', priority: -10, locale: 'chat', inject: assistantFace }, AssistantCell),
     shadow('conversation.chat.node', { key: 'turn-trigger', priority: -10, locale: 'chat', inject: face }, TriggerCell),
     shadow('conversation.chat.node', { key: 'tool-call', priority: -10, locale: 'chat', inject: face }, ToolCell),
