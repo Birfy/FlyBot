@@ -566,6 +566,13 @@ window.__ModuleLoader__.load({
       if (['invalid_code', 'code_void', 'locked_out', 'unauthorized', 'rate_limited'].includes(code)) return true
       return STOP_JOIN.test(String(e?.message ?? e ?? ''))
     }
+    // An invite refusal is about the ticket or the room, so it answers the same way for every Bot and
+    // the link path stops after the first one; a refusal about one Bot alone (already in the room, its
+    // token revoked, forbidden) keeps the other Bots going (#817).
+    const STOP_INVITE = ['invite_not_found', 'expired', 'revoked', 'ended', 'room_full']
+    function stopInviteJoin(e) {
+      return STOP_INVITE.includes(String(e?.code ?? '')) || shouldStopJoin(e)
+    }
     function memberIsMine(member, bots, room) {
       if (member?.remote === false) return true
       const handle = typeof member?.handle === 'object' && member.handle
@@ -1270,6 +1277,8 @@ window.__ModuleLoader__.load({
       // Since #798 the room is shown first: `previewLink` asks the host for it, and only the card's
       // own Join runs `joinTicket`. The preview never gates the join — `joinTicket` is the path that
       // already worked and still runs alone when there is no card.
+      // Every selected Bot joins, as through the number (#817): one host call each, the same
+      // per-Bot failure list, and one failure never hides the others.
       const joinTicket = async (text, ticket) => {
         if (!selected.length) {
           setInvite({ link: text, status: { tone: 'error', text: 'Pick a Bot first.' } })
@@ -1279,18 +1288,45 @@ window.__ModuleLoader__.load({
         setFailures([])
         setInvite({ link: text, status: { tone: 'hint', text: 'Joining with that link…' } })
         try {
-          const result = await call('social/face-join-invite', { ticket, botId: selected[0] })
-          if (result?.unsupported) {
-            setInvite({ link: text, status: { tone: 'error', text: INVITE_UNSUPPORTED } })
+          const mine = []
+          const joined = []
+          const failed = []
+          let last
+          for (const botId of selected) {
+            const bot = bots.find(item => item.id === botId)
+            try {
+              const result = await call('social/face-join-invite', { ticket, botId })
+              if (result?.unsupported) {
+                setInvite({ link: text, status: { tone: 'error', text: INVITE_UNSUPPORTED } })
+                return
+              }
+              last = result
+              if (result?.joinedAs?.handle) {
+                mine.push(result.joinedAs.handle)
+                joined.push(result.joinedAs)
+              }
+            } catch (e) {
+              failed.push({ botId, name: bot?.name || 'Bot', text: errorText(e) })
+              if (stopInviteJoin(e) && !last) {
+                setInvite({ link: text, status: { tone: 'error', text: errorText(e) } })
+                setFailures(failed)
+                return
+              }
+              if (stopInviteJoin(e)) break
+            }
+          }
+          setFailures(failed)
+          if (!last) {
+            setInvite({ link: text, status: { tone: 'error', text: failed[0]?.text || 'Could not join that room with that link.' } })
             return
           }
           setInvite({ link: text, status: null })
-          setRoom({ ...result, mineHandles: [], mineBots: [], joinCode: result?.joinCode })
+          setRoom({ ...last, mineHandles: mine, mineBots: joined, joinCode: last.joinCode })
           setStep('waiting')
-          if (result?.roomId && typeof actions?.openSession === 'function') actions.openSession(result.roomId)
-        } catch (e) {
-          setInvite({ link: text, status: { tone: 'error', text: errorText(e) } })
-        } finally { setBusy(false) }
+          if (last.roomId && typeof actions?.openSession === 'function') actions.openSession(last.roomId)
+        } finally {
+          setBusy(false)
+        }
       }
       // The card's Clear is the dialog's other way out: the field empties and nothing is joined.
       const clearInvite = () => setInvite({ link: '', status: null })

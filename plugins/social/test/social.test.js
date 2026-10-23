@@ -9053,9 +9053,9 @@ async function scanCase({ detector, media } = {}) {
 
 // A dialog that re-renders after its own state writes, so a two-step flow can be followed: #798 shows
 // a room before it joins it, and fixed states cannot show a card that only exists after a click.
-function dialogWithState(callImpl, { link = INVITE_URL } = {}) {
+function dialogWithState(callImpl, { link = INVITE_URL, bots = [{ id: 'a', name: 'Chief', isMain: true }], selected = ['a'] } = {}) {
   const { registered, walk } = loadSocialClient(callImpl)
-  const store = ['setup', [{ id: 'a', name: 'Chief', isMain: true }], ['a'], '', false, null, [], null, 0, null, { link, status: null }]
+  const store = ['setup', bots, selected, '', false, null, [], null, 0, null, { link, status: null }]
   let at = 0
   let node = []
   const plugin = registered[0].factory(() => ({
@@ -9080,7 +9080,7 @@ function dialogWithState(callImpl, { link = INVITE_URL } = {}) {
   const text = (n) => (n.children ?? []).map(child => typeof child === 'string' ? child : '').join('')
   const settle = async () => { for (let i = 0; i < 6; i += 1) await new Promise(resolve => setImmediate(resolve)) }
   render()
-  return { render, find, has, text, settle }
+  return { render, find, has, text, settle, store }
 }
 
 test('#798: a pasted link shows the room before any Bot joins, and the card is what joins it', async () => {
@@ -9147,6 +9147,114 @@ test('#798: an older host says so and does not join; a 404 still joins', async (
   assert.deepEqual(calls.map(([endpoint]) => endpoint), ['social/face-invite-preview', 'social/face-join-invite'], 'a missing preview is not a refusal')
   assert.equal(missing.has('face-link-preview'), false, 'no card')
   assert.ok(missing.has('face-wait'), 'the join that already worked still ran')
+})
+
+test('#817: every selected Bot joins through the link, one host call each', async () => {
+  const calls = []
+  const bots = [{ id: 'a', name: 'Chief', isMain: true }, { id: 'b', name: 'Dev' }]
+  const dialog = dialogWithState(async (endpoint, payload) => {
+    calls.push([endpoint, payload])
+    if (endpoint === 'social/face-invite-preview') return { roomId: 'frm_9', name: 'Kitchen sync', lead: 'Chief', members: 2, maxMembers: 8 }
+    return { roomId: 'r_1', status: 'open', joinedAs: { handle: `@${payload.botId}.me.home` } }
+  }, { bots, selected: ['a', 'b'] })
+  dialog.find('face-link-join-go').props.onClick()
+  await dialog.settle()
+  dialog.render()
+  dialog.find('face-link-preview-join').props.onClick()
+  await dialog.settle()
+  const joinedCalls = calls
+    .filter(([endpoint]) => endpoint === 'social/face-join-invite')
+    .map(([endpoint, payload]) => [endpoint, JSON.parse(JSON.stringify(payload))])
+  assert.deepEqual(joinedCalls, [
+    ['social/face-join-invite', { ticket: INVITE_TICKET, botId: 'a' }],
+    ['social/face-join-invite', { ticket: INVITE_TICKET, botId: 'b' }],
+  ], 'one call per selected Bot, not only the first')
+  dialog.render()
+  assert.ok(dialog.has('face-wait'), 'the room joined')
+})
+
+test('#817: one Bot\'s link failure is listed and the others still join', async () => {
+  const calls = []
+  const bots = [{ id: 'a', name: 'Chief', isMain: true }, { id: 'b', name: 'Dev' }]
+  const dialog = dialogWithState(async (endpoint, payload) => {
+    calls.push([endpoint, payload])
+    if (endpoint === 'social/face-invite-preview') return { roomId: 'frm_9', name: 'Kitchen sync', lead: 'Chief', members: 2, maxMembers: 8 }
+    if (payload.botId === 'a') throw Object.assign(new Error('HTTP 500'), { code: 'HTTP_500' })
+    return { roomId: 'r_1', status: 'open', joinedAs: { handle: '@dev.me.home' } }
+  }, { bots, selected: ['a', 'b'] })
+  dialog.find('face-link-join-go').props.onClick()
+  await dialog.settle()
+  dialog.render()
+  dialog.find('face-link-preview-join').props.onClick()
+  await dialog.settle()
+  assert.equal(calls.filter(([endpoint]) => endpoint === 'social/face-join-invite').length, 2, 'the second Bot is still tried')
+  dialog.render()
+  assert.ok(dialog.has('face-wait'), 'the Bot that could join brought the room up')
+  assert.match(dialog.text(dialog.find('face-join-fail')), /^Chief: /, 'the failed Bot is named, not swallowed')
+})
+
+test('#817: a ticket refusal stops after the first Bot, a Bot refusal does not', async () => {
+  const twoBots = [{ id: 'a', name: 'Chief', isMain: true }, { id: 'b', name: 'Dev' }]
+  const preview = { roomId: 'frm_9', name: 'Kitchen sync', lead: 'Chief', members: 2, maxMembers: 8 }
+
+  const expired = []
+  const dead = dialogWithState(async (endpoint, payload) => {
+    expired.push([endpoint, payload])
+    if (endpoint === 'social/face-invite-preview') return preview
+    throw Object.assign(new Error('That invite has expired. Ask for a new one.'), { code: 'expired' })
+  }, { bots: twoBots, selected: ['a', 'b'] })
+  dead.find('face-link-join-go').props.onClick()
+  await dead.settle()
+  dead.render()
+  dead.find('face-link-preview-join').props.onClick()
+  await dead.settle()
+  dead.render()
+  assert.equal(expired.filter(([endpoint]) => endpoint === 'social/face-join-invite').length, 1, 'a dead ticket is asked about once, not once per Bot')
+  assert.equal(dead.text(dead.find('face-link-status')), 'That invite has expired. Ask for a new one.')
+  assert.equal(dead.has('face-wait'), false, 'nobody is in the room')
+
+  const already = []
+  const partly = dialogWithState(async (endpoint, payload) => {
+    already.push([endpoint, payload])
+    if (endpoint === 'social/face-invite-preview') return preview
+    if (payload.botId === 'a') throw Object.assign(new Error('You are already in that room.'), { code: 'already_member' })
+    return { roomId: 'r_1', status: 'open', joinedAs: { handle: '@dev.me.home' } }
+  }, { bots: twoBots, selected: ['a', 'b'] })
+  partly.find('face-link-join-go').props.onClick()
+  await partly.settle()
+  partly.render()
+  partly.find('face-link-preview-join').props.onClick()
+  await partly.settle()
+  partly.render()
+  assert.equal(already.filter(([endpoint]) => endpoint === 'social/face-join-invite').length, 2, 'a Bot that is already in does not stop the other one')
+  assert.ok(partly.has('face-wait'), 'the second Bot still brings the room up')
+  assert.match(partly.text(partly.find('face-join-fail')), /^Chief: /, 'and the one that could not join is named')
+})
+
+test('#817: the dialog keeps every joined Bot in the room roster, not only the last', async () => {
+  const bots = [{ id: 'a', name: 'Chief', isMain: true }, { id: 'b', name: 'Dev' }]
+  const dialog = dialogWithState(async (endpoint, payload) => {
+    if (endpoint === 'social/face-invite-preview') return { roomId: 'frm_9', name: 'Kitchen sync', lead: 'Chief', members: 2, maxMembers: 8 }
+    return {
+      roomId: 'r_1',
+      status: 'open',
+      joinedAs: { handle: `@${payload.botId}.me.home` },
+      members: [{ handle: '@a.me.home' }, { handle: '@b.me.home' }],
+    }
+  }, { bots, selected: ['a', 'b'] })
+  dialog.find('face-link-join-go').props.onClick()
+  await dialog.settle()
+  dialog.render()
+  dialog.find('face-link-preview-join').props.onClick()
+  await dialog.settle()
+  dialog.render()
+  const kept = JSON.parse(JSON.stringify({ handles: dialog.store[7].mineHandles, bots: dialog.store[7].mineBots.map(bot => bot.handle) }))
+  assert.deepEqual(kept.handles, ['@a.me.home', '@b.me.home'], 'both handles are kept, not just the last')
+  assert.deepEqual(kept.bots, ['@a.me.home', '@b.me.home'])
+  const tiles = dialog.render().filter(item => item.props['data-flybot'] === 'face-member')
+  assert.equal(tiles.length, 1, 'two own Bots read as one person, mine')
+  assert.equal(tiles[0].props['data-handles'], '@a.me.home @b.me.home')
+  assert.ok(tiles[0].props['data-mine'], 'and the roster marks that person as mine')
 })
 
 test('#773: without a platform decoder the scan says so, and the number field stays', async () => {
