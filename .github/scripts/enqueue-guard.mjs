@@ -42,9 +42,14 @@ const RECORD_ONLY = /^[\s>*+-]*(?:record only\s*[—–-]+\s*do not (?:merge|que
 // all — #711/#712/#713 arrived with neither and nothing refused them, because the guard only looked at
 // `hold`, the conclusions and the diff. The reference is a line of its own, so prose about "fixes" does
 // not pass; the spellings accepted are exactly `Fixes #<n>` and `Closes #<n>`, behind any `#`, `>` or `-`.
+// The issue is not always in this repository: a pull request opened in the code fork names the upstream
+// one in full (`Fixes ThinkFlowLab/FlyBot#801`), and a bare `#801` there points at a number the fork does
+// not have. Both spellings are accepted, and the repository part is not compared with anything — the guard
+// asks "does this pull request name an issue at all"; one issue carrying one pull request is the gate's
+// report, not this regex's job.
 // The rules only hold where the branch is ours: a fork is exempt, because we cannot push to its head
 // and the owner keeps their own workflow there (#711/#713).
-const ISSUE_REF = /^[\s>#-]*(?:fixes|closes)\s*#\d+/im
+const ISSUE_REF = /^[\s>#-]*(?:fixes|closes)\s*(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#\d+/im
 const short = (s) => String(s ?? '').slice(0, SHORT)
 const labelNames = (labels) => (labels ?? []).map((l) => String(typeof l === 'string' ? l : l?.name ?? '').toLowerCase())
 
@@ -74,7 +79,7 @@ export function guard({ pr, head, labels, body, mechanicalRelease, fork, result,
   // their own workflow there (#711/#713). `result.exempt` cannot stand in for either: it is true for T0/T1
   // as well, and routine work still names its issue.
   if (!mechanicalRelease && !fork) {
-    if (!ISSUE_REF.test(String(body ?? ''))) reasons.push('no issue reference in the pull request body: add "Fixes #<n>"')
+    if (!ISSUE_REF.test(String(body ?? ''))) reasons.push('no issue reference in the pull request body: add "Fixes #<n>" or "Fixes owner/repo#<n>"')
     if (!labelNames(labels).includes('agent-pr')) reasons.push('missing label: agent-pr')
   }
   const ok = result.ok && !quiet && reasons.length === 0
