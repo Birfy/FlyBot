@@ -476,22 +476,16 @@ window.__ModuleLoader__.load({
             }))
           : null)
     }
-    function makeArchivedSection(flybot) {
+    // The host hands every section the live roster, and that roster is the same Bot view
+    // `flybot.bots()` resolves to (it keeps `fields`), so the section reads it instead of polling the
+    // bridge a second time: with the structure entry registered too, one 10 s tick is one roster read
+    // (#818). Rows follow an `archived` change and a removal on their own, because the roster the
+    // sidebar renders is what changes; the component keeps its identity, so `expanded` survives.
+    function makeArchivedSection() {
       return function ArchivedSection(props) {
         useStyles()
-        const [bots, setBots] = useState([])
-        // Local, so the 10 s roster refresh re-renders the rows without closing the section.
+        const bots = archivedOf(props?.roster?.bots)
         const [expanded, setExpanded] = useState(false)
-        const refresh = useCallback(async () => { try { setBots(archivedOf(await flybot.bots())) } catch { /* keep last */ } }, [])
-        useEffect(() => {
-          refresh()
-          const offs = []
-          try { offs.push(flybot.fields?.on?.('change', c => { if (c && (c.key === 'archived' || c.key === 'parent' || c.key === 'treeRole' || c.removed)) refresh() })) } catch { /* no change feed */ }
-          try { if (typeof flybot.on === 'function') offs.push(flybot.on('bot.removed', refresh)) } catch { /* no removal event */ }
-          const timer = setInterval(refresh, REFRESH_MS)
-          offs.push(() => clearInterval(timer))
-          return () => { for (const off of offs) { try { off?.() } catch { /* already gone */ } } }
-        }, [refresh])
         const openSession = props?.actions?.openSession
         return h(ArchivedView, { bots, expanded, onToggle: () => setExpanded(e => !e), openBot: typeof openSession === 'function' ? id => openSession(id) : undefined })
       }
@@ -511,7 +505,7 @@ window.__ModuleLoader__.load({
       if (ctx.flybot?.slots) offs.push(registerStructure(ctx.flybot))
       // Archived Bots (#810) are hidden from ds-bot's list (#452), which left their chats reachable only
       // from the right-click menu. Draws nothing when no Bot is archived.
-      if (ctx.flybot?.slots && config?.archivedSection !== false) offs.push(ctx.flybot.slots.register('flybot.sidebar.section', { id: 'flybot-tree-archived', order: 88, component: makeArchivedSection(ctx.flybot) }))
+      if (ctx.flybot?.slots && config?.archivedSection !== false) offs.push(ctx.flybot.slots.register('flybot.sidebar.section', { id: 'flybot-tree-archived', order: 88, component: makeArchivedSection() }))
       // The reorganization notice (#446) is on by default (config.reorgNotice: false hides it); it draws nothing until a reorganization ran.
       if (ctx.flybot?.slots && config?.reorgNotice !== false) offs.push(ctx.flybot.slots.register('flybot.sidebar.section', { id: 'flybot-tree-reorg', order: 89, component: makeReorgNotice(ctx.flybot) }))
       const off = () => { for (const fn of offs.splice(0)) fn?.() }

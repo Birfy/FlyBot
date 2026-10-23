@@ -14,6 +14,18 @@ const loadClient = () => {
   return mod
 }
 
+// A react stub that records effects without running them, so a test can mount the section the way the
+// sidebar does: render it, then run what it asked for.
+const loadRecording = () => {
+  const effects = []
+  const react = { ...reactStub, useEffect: fn => { effects.push(fn) } }
+  let mod
+  globalThis.window = { __ModuleLoader__: { load: ({ factory }) => { mod = factory(() => react) } } }
+  new Function(readFileSync(new URL('../client.js', import.meta.url), 'utf8'))()
+  return { mod, react, effects }
+}
+const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+
 const archived = (id, name, own = { archived: { reason: 'idle' } }) => ({ id, name, createdAt: 1, fields: { 'flybot-tree': own } })
 
 test('#810: the section draws nothing when no Bot is archived', () => {
@@ -100,4 +112,47 @@ test('#810: the section is registered on the sidebar slot, and archived Bots sta
   const off = []
   mod.apply({ flybot: { ...flybot, slots: { register: (name, entry) => { if (name === 'flybot.sidebar.section') off.push(entry.id); return () => {} } } } }, { archivedSection: false })
   assert.ok(!off.includes('flybot-tree-archived'), 'config.archivedSection: false turns the section off')
+})
+
+test('#818: the section draws from the roster it is given, with no roster read of its own', async () => {
+  const { mod, react, effects } = loadRecording()
+  const bots = [archived('old', 'Old Dev')]
+  let reads = 0
+  const flybot = { bots: async () => { reads += 1; return bots }, fields: { on: () => () => {} }, slots: { register: () => () => {} } }
+  // The host hands every section the live roster; the same Bot view `flybot.bots()` would return.
+  const html = renderToString(react.createElement(mod.makeArchivedSection(), { flybot, roster: { bots }, actions: {} }))
+  assert.match(html, />Archived \(1\)</, 'the header comes from the roster prop, not from a mount-time fetch')
+  for (const effect of effects) effect()
+  await settle()
+  assert.equal(reads, 0, 'the section does not read the roster a second time')
+  assert.equal(effects.length, 1, 'one effect: the stylesheet; the polling effect is gone')
+})
+
+test('#818: one roster read per 10 s tick with the structure and the archived section both live', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const { mod, react, effects } = loadRecording()
+  const bots = [archived('old', 'Old Dev'), { id: 'c', name: 'Chief', createdAt: 1, isMain: true, fields: {} }]
+  let reads = 0
+  const registered = []
+  const flybot = {
+    bots: async () => { reads += 1; return bots },
+    fields: { on: () => () => {} },
+    slots: { register: (name, entry) => { registered.push({ name, entry }); return () => {} } },
+  }
+  const dispose = mod.apply({ flybot })
+  await settle()
+  const entry = registered.find(item => item.name === 'flybot.sidebar.section' && item.entry.id === 'flybot-tree-archived').entry
+  // Mount it the way the sidebar does: render, then run the effects it asked for.
+  renderToString(react.createElement(entry.component, { roster: { bots }, actions: {} }))
+  const cleanups = effects.map(effect => effect()).filter(fn => typeof fn === 'function')
+  await settle()
+  const before = reads
+  t.mock.timers.tick(10000)
+  await settle()
+  assert.equal(reads - before, 1, 'one tick, one roster read: the structure entry already refreshes it')
+  // The section is registered once and reads the roster it is given, so React keeps the instance and an
+  // expanded group stays expanded across a tick.
+  assert.equal(registered.filter(item => item.entry.id === 'flybot-tree-archived').length, 1, 'the entry is not re-registered per tick')
+  for (const cleanup of cleanups) cleanup()
+  dispose()
 })
