@@ -235,6 +235,12 @@ window.__ModuleLoader__.load({
 .fs-link-row{flex:none;display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 0 0}
 .fs-link-input{flex:1 1 180px;min-width:0;height:28px;padding:0 8px;border:1px solid var(--bt-line-2,rgba(20,20,20,.15));border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:12px;outline:none}
 .fs-link-input:focus{border-color:var(--bt-accent,#4d6bfe)}
+.fs-preview{flex:none;display:flex;flex-direction:column;gap:4px;padding:6px 8px;border-radius:8px;box-shadow:inset 0 0 0 1px var(--bt-line-2,rgba(20,20,20,.15))}
+.fs-preview-name{font-size:12px;line-height:16px;font-weight:600;color:var(--bt-ink,#141414);overflow-wrap:anywhere}
+.fs-preview-meta{font-size:11px;line-height:15px;color:var(--bt-ink-3,rgba(20,20,20,.36))}
+.fs-preview-foot{display:flex;align-items:center;gap:6px;padding-top:2px}
+.fs-preview-foot .fs-btn{flex:0 0 auto;width:auto;height:28px}
+
 .fs-invite{flex:none;display:flex;flex-direction:column;gap:4px;padding:6px 0 2px}
 .fs-invite-head{display:flex;align-items:center;gap:6px;justify-content:space-between}
 .fs-label-inline{font-size:11px;line-height:14px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--bt-ink-3,rgba(20,20,20,.36))}
@@ -868,6 +874,33 @@ window.__ModuleLoader__.load({
     const faceInviteTicket = (text) => String(text ?? '').trim().match(/^(?:https?:)?\/\/[^\s/]+\/r\/([A-Za-z0-9_-]{16,64})\/?(?:[?#].*)?$/i)?.[1] ?? ''
     const INVITE_UNSUPPORTED = 'Invites need a newer Bot Social. The 6-digit number still works.'
     const INVITE_LINK_COPY = 'That is not an invite link. It looks like https://…/r/…'
+    // The preview card names a room the person has not entered (#798). `name` is that room's own
+    // string and the host passes it through as sent, so the last place before a person reads it
+    // cleans it: one line, no controls, brackets, markup or @, capped — the same rules as the
+    // server's cleanFaceName, applied to the one value the server hands over uncleaned.
+    const ROOM_NAME_MAX = 60
+    const cleanRoomName = (value, fallback = '') => String(value ?? '')
+      .replace(/<\/?\s*untrusted-(?:file|message)/gi, '')
+      .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ')
+      .replace(/[[\]"<>`@]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, ROOM_NAME_MAX) || fallback
+    // What the card can honestly say, and nothing else: a room with no field worth showing is no
+    // card at all, so the join below runs as before.
+    const faceInvitePreview = (seen) => {
+      if (!seen || typeof seen !== 'object' || seen.unsupported === true) return null
+      const name = cleanRoomName(seen.name)
+      const lead = cleanRoomName(seen.lead)
+      const members = seen.members === undefined || seen.members === null ? NaN : Number(seen.members)
+      const maxMembers = seen.maxMembers === undefined || seen.maxMembers === null ? NaN : Number(seen.maxMembers)
+      const people = Number.isFinite(members) && Number.isFinite(maxMembers)
+        ? `${members} / ${maxMembers} in the room`
+        : Number.isFinite(members) ? `${members} in the room` : ''
+      const expiresAt = typeof seen.expiresAt === 'string' ? seen.expiresAt : ''
+      if (!name && !lead && !people && !expiresAt) return null
+      return { name, lead, people, expiresAt, clockOffsetMs: Number(seen.clockOffsetMs) || 0 }
+    }
     const qrPath = (modules) => {
       const parts = []
       for (let y = 0; y < modules.length; y += 1) {
@@ -1120,6 +1153,11 @@ window.__ModuleLoader__.load({
         if (step !== 'waiting' || room?.status !== 'candidate' || !room?.expiresAt) return undefined
         return everySecond(() => setTick(n => n + 1))
       }, [step, room?.status, room?.expiresAt])
+      // A preview that came with a deadline counts down too, before any Bot has joined (#798).
+      useEffect(() => {
+        if (!invite?.preview?.expiresAt) return undefined
+        return everySecond(() => setTick(n => n + 1))
+      }, [invite?.preview?.expiresAt])
       useEffect(() => {
         if (step !== 'waiting' || room?.status !== 'open' || opened.current) return undefined
         const id = room.roomId
@@ -1229,13 +1267,10 @@ window.__ModuleLoader__.load({
         setSelected(list => list.includes(id) ? list.filter(item => item !== id) : [...list, id])
       }
       // A link is the other way in (#773): same pipeline in the host, same waiting dialog after it.
-      const joinLink = async (typed) => {
-        const text = String(typed ?? invite.link ?? '').trim()
-        const ticket = faceInviteTicket(text)
-        if (!ticket) {
-          setInvite({ link: text, status: { tone: 'error', text: INVITE_LINK_COPY } })
-          return
-        }
+      // Since #798 the room is shown first: `previewLink` asks the host for it, and only the card's
+      // own Join runs `joinTicket`. The preview never gates the join — `joinTicket` is the path that
+      // already worked and still runs alone when there is no card.
+      const joinTicket = async (text, ticket) => {
         if (!selected.length) {
           setInvite({ link: text, status: { tone: 'error', text: 'Pick a Bot first.' } })
           return
@@ -1257,6 +1292,39 @@ window.__ModuleLoader__.load({
           setInvite({ link: text, status: { tone: 'error', text: errorText(e) } })
         } finally { setBusy(false) }
       }
+      // The card's Clear is the dialog's other way out: the field empties and nothing is joined.
+      const clearInvite = () => setInvite({ link: '', status: null })
+      const previewLink = async (typed) => {
+        const text = String(typed ?? invite.link ?? '').trim()
+        const ticket = faceInviteTicket(text)
+        if (!ticket) {
+          setInvite({ link: text, status: { tone: 'error', text: INVITE_LINK_COPY } })
+          return
+        }
+        setBusy(true)
+        setFailures([])
+        setInvite({ link: text, status: { tone: 'hint', text: 'Looking up that room…' } })
+        let seen = null
+        try {
+          seen = await call('social/face-invite-preview', { ticket })
+        } catch {
+          // A 404 or a timeout is information we do not have, not a refusal.
+          seen = null
+        }
+        setBusy(false)
+        // The invite feature itself is off on that server, so a join would answer the same sentence
+        // and reach no route: the dialog stops here, the way the join path already did (#798).
+        if (seen?.unsupported === true) {
+          setInvite({ link: text, status: { tone: 'error', text: INVITE_UNSUPPORTED } })
+          return
+        }
+        const card = faceInvitePreview(seen)
+        if (card) {
+          setInvite({ link: text, status: null, preview: { ...card, ticket } })
+          return
+        }
+        await joinTicket(text, ticket)
+      }
       // One sentence per way a scan can fail, and the number field is untouched either way.
       const beginScan = () => {
         setScan({ tone: 'hint', text: 'Point the camera at a FlyBot room code.' })
@@ -1268,7 +1336,7 @@ window.__ModuleLoader__.load({
           const raw = String(result?.raw ?? '')
           if (faceInviteTicket(raw)) {
             setScan({ tone: 'ok', text: 'Scanned an invite link.' })
-            void joinLink(raw)
+            void previewLink(raw)
             return
           }
           const digits = faceQrCode(raw)
@@ -1283,6 +1351,7 @@ window.__ModuleLoader__.load({
         })
       }
       const members = room?.members ?? []
+      const preview = invite?.preview ?? null
       const candidate = room?.status === 'candidate'
       const waiting = step === 'waiting' && room
       const digitsTyped = String(code).replace(/\D/g, '').length === 6
@@ -1362,11 +1431,25 @@ window.__ModuleLoader__.load({
               }),
               h('button', {
                 type: 'button', className: 'fs-btn', 'data-flybot': 'face-link-join-go', disabled: !!busy,
-                onClick: () => joinLink(),
+                onClick: () => previewLink(),
               }, 'Join with link'),
               invite.status ? h('div', {
                 className: 'fs-hint fs-scan-hint', 'data-flybot': 'face-link-status', 'data-tone': invite.status.tone, role: 'status',
               }, invite.status.text) : null),
+            preview ? h('div', { className: 'fs-preview', 'data-flybot': 'face-link-preview', role: 'status' },
+              h('div', { className: 'fs-preview-name', 'data-flybot': 'face-link-preview-name' }, preview.name || 'A room with no name'),
+              preview.lead ? h('div', { className: 'fs-preview-meta', 'data-flybot': 'face-link-preview-lead' }, `Lead: ${preview.lead}`) : null,
+              preview.people ? h('div', { className: 'fs-preview-meta', 'data-flybot': 'face-link-preview-members' }, preview.people) : null,
+              preview.expiresAt ? h('div', { className: 'fs-preview-meta', 'data-flybot': 'face-link-preview-expiry' }, countdown(preview.expiresAt, preview.clockOffsetMs)) : null,
+              h('div', { className: 'fs-preview-foot' },
+                h('button', {
+                  type: 'button', className: 'fs-btn fs-btn-sm', 'data-flybot': 'face-link-preview-clear',
+                  disabled: !!busy, onClick: clearInvite,
+                }, 'Clear'),
+                h('button', {
+                  type: 'button', className: 'fs-btn fs-btn-sm fs-btn-primary', 'data-flybot': 'face-link-preview-join',
+                  disabled: !!busy, onClick: () => joinTicket(preview.link ?? invite.link, preview.ticket),
+                }, 'Join'))) : null,
             h('div', { className: 'fs-scan-row' },
               h('button', {
                 type: 'button', className: 'fs-btn', 'data-flybot': 'face-scan', disabled: !!busy,

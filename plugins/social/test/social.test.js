@@ -9051,6 +9051,104 @@ async function scanCase({ detector, media } = {}) {
   return { calls, setters, last, tree }
 }
 
+// A dialog that re-renders after its own state writes, so a two-step flow can be followed: #798 shows
+// a room before it joins it, and fixed states cannot show a card that only exists after a click.
+function dialogWithState(callImpl, { link = INVITE_URL } = {}) {
+  const { registered, walk } = loadSocialClient(callImpl)
+  const store = ['setup', [{ id: 'a', name: 'Chief', isMain: true }], ['a'], '', false, null, [], null, 0, null, { link, status: null }]
+  let at = 0
+  let node = []
+  const plugin = registered[0].factory(() => ({
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() }),
+    Fragment: 'F',
+    useEffect() {},
+    useMemo: fn => fn(),
+    useRef: value => ({ current: value }),
+    useState: (value) => {
+      const slot = at++
+      if (store[slot] === undefined) store[slot] = value
+      return [store[slot], next => { store[slot] = typeof next === 'function' ? next(store[slot]) : next }]
+    },
+  }))
+  const render = () => { at = 0; node = walk(plugin.FaceToFaceGroup({})); return node }
+  const find = (mark) => {
+    const found = node.find(item => item.props['data-flybot'] === mark)
+    assert.ok(found, `no ${mark}`)
+    return found
+  }
+  const has = (mark) => node.some(item => item.props['data-flybot'] === mark)
+  const text = (n) => (n.children ?? []).map(child => typeof child === 'string' ? child : '').join('')
+  const settle = async () => { for (let i = 0; i < 6; i += 1) await new Promise(resolve => setImmediate(resolve)) }
+  render()
+  return { render, find, has, text, settle }
+}
+
+test('#798: a pasted link shows the room before any Bot joins, and the card is what joins it', async () => {
+  const calls = []
+  const dialog = dialogWithState(async (endpoint, payload) => {
+    calls.push([endpoint, payload])
+    if (endpoint === 'social/face-invite-preview') {
+      return { roomId: 'frm_9', name: 'Kitchen sync', lead: 'Chief', members: 3, maxMembers: 8, expiresAt: '2099-01-01T00:00:00.000Z' }
+    }
+    return { roomId: 'r_1', status: 'open' }
+  })
+  dialog.find('face-link-join-go').props.onClick()
+  await dialog.settle()
+  dialog.render()
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['social/face-invite-preview', { ticket: INVITE_TICKET }]], 'the room is asked for and nobody joined yet')
+  assert.equal(dialog.text(dialog.find('face-link-preview-name')), 'Kitchen sync')
+  assert.equal(dialog.text(dialog.find('face-link-preview-lead')), 'Lead: Chief')
+  assert.equal(dialog.text(dialog.find('face-link-preview-members')), '3 / 8 in the room')
+  assert.match(dialog.text(dialog.find('face-link-preview-expiry')), /left to join$/)
+
+  dialog.find('face-link-preview-join').props.onClick()
+  await dialog.settle()
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)).at(-1), ['social/face-join-invite', { ticket: INVITE_TICKET, botId: 'a' }], 'the card joins the room it named')
+  dialog.render()
+  assert.ok(dialog.has('face-wait'), 'the join moved on to the waiting pane it always had')
+})
+
+test('#798: a room name with markup renders cleaned, and a count without a maximum still shows', async () => {
+  const dialog = dialogWithState(async (endpoint) => {
+    if (endpoint === 'social/face-invite-preview') return { name: '  <b>Kitchen</b>\n@everyone  ', lead: 'Chief', members: 2 }
+    return {}
+  })
+  dialog.find('face-link-join-go').props.onClick()
+  await dialog.settle()
+  dialog.render()
+  const name = dialog.find('face-link-preview-name')
+  assert.deepEqual(name.children, ['bKitchen/b everyone'], 'the raw string never reaches the dialog')
+  assert.doesNotMatch(dialog.text(name), /[<>`@]/)
+  assert.equal(dialog.text(dialog.find('face-link-preview-members')), '2 in the room')
+})
+
+test('#798: an older host says so and does not join; a 404 still joins', async () => {
+  const older = []
+  const unsupported = dialogWithState(async (endpoint, payload) => {
+    older.push([endpoint, payload])
+    return endpoint === 'social/face-invite-preview' ? { unsupported: true } : { roomId: 'r_1', status: 'open' }
+  })
+  unsupported.find('face-link-join-go').props.onClick()
+  await unsupported.settle()
+  unsupported.render()
+  assert.deepEqual(older.map(([endpoint]) => endpoint), ['social/face-invite-preview'], 'the invite feature is off, so no join is tried')
+  assert.equal(unsupported.text(unsupported.find('face-link-status')), 'Invites need a newer Bot Social. The 6-digit number still works.')
+  assert.equal(unsupported.has('face-link-preview'), false, 'no card')
+
+  const calls = []
+  const missing = dialogWithState(async (endpoint, payload) => {
+    calls.push([endpoint, payload])
+    if (endpoint === 'social/face-invite-preview') throw Object.assign(new Error('HTTP 404'), { code: 'HTTP_404' })
+    return { roomId: 'r_1', status: 'open' }
+  })
+  missing.find('face-link-join-go').props.onClick()
+  await missing.settle()
+  missing.render()
+  assert.deepEqual(calls.map(([endpoint]) => endpoint), ['social/face-invite-preview', 'social/face-join-invite'], 'a missing preview is not a refusal')
+  assert.equal(missing.has('face-link-preview'), false, 'no card')
+  assert.ok(missing.has('face-wait'), 'the join that already worked still ran')
+})
+
 test('#773: without a platform decoder the scan says so, and the number field stays', async () => {
   let asked = 0
   const media = { getUserMedia: async () => { asked += 1; return { getTracks: () => [] } } }
@@ -9189,7 +9287,10 @@ test('#773: a pasted link joins through social/face-join-invite, and a non-link 
   const good = dialog(INVITE_URL)
   good.find(n => n.props['data-flybot'] === 'face-link-join-go').props.onClick()
   for (let i = 0; i < 4; i += 1) await new Promise(resolve => setImmediate(resolve))
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['social/face-join-invite', { ticket: INVITE_TICKET, botId: 'a' }]])
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ['social/face-invite-preview', { ticket: INVITE_TICKET }],
+    ['social/face-join-invite', { ticket: INVITE_TICKET, botId: 'a' }],
+  ], 'the room is asked for first, and an empty answer still joins (#798)')
 
   // A friend-invite link, or nothing at all, is answered in the panel and calls nobody.
   const statuses = []
@@ -9209,10 +9310,11 @@ test('#773: a pasted link joins through social/face-join-invite, and a non-link 
     },
   }))
   const tree = walk(plugin.FaceToFaceGroup({}))
+  const before = calls.length
   tree.find(n => n.props['data-flybot'] === 'face-link-join-go').props.onClick()
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(statuses.at(-1).status.text, 'That is not an invite link. It looks like https://…/r/…')
-  assert.equal(calls.length, 1, 'the invalid link went nowhere')
+  assert.equal(calls.length, before, 'the invalid link went nowhere')
 })
 
 test('#773: scanning a room invite link joins that room with its ticket', async () => {
@@ -9220,7 +9322,10 @@ test('#773: scanning a room invite link joins that room with its ticket', async 
     detector: class { detect() { return Promise.resolve([{ rawValue: INVITE_URL }]) } },
     media: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) },
   })
-  assert.deepEqual(JSON.parse(JSON.stringify(scanned.calls)), [['social/face-join-invite', { ticket: INVITE_TICKET, botId: 'a' }]])
+  assert.deepEqual(JSON.parse(JSON.stringify(scanned.calls)), [
+    ['social/face-invite-preview', { ticket: INVITE_TICKET }],
+    ['social/face-join-invite', { ticket: INVITE_TICKET, botId: 'a' }],
+  ], 'a scanned invite is previewed like a pasted one (#798)')
   assert.deepEqual(JSON.parse(JSON.stringify(scanned.last(9))), { tone: 'ok', text: 'Scanned an invite link.' })
 })
 
