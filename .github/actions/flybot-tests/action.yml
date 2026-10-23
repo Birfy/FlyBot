@@ -42,7 +42,10 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
+        # `+`: actions/checkout can leave refs/remotes/origin/main ahead of the base fetched here
+        # (two pushes seconds apart), and an unforced refspec then dies with "! [rejected]
+        # ... (non-fast-forward)" before lint and the suite ever run (#807).
+        git fetch --no-tags --depth=1 origin +main:refs/remotes/origin/main
         for n in 50 200 1000 5000; do
           if git merge-base origin/main HEAD >/dev/null 2>&1; then
             break
