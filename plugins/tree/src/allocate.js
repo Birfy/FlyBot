@@ -12,7 +12,7 @@
 //   Docs" goes under "FlyBot Lead"), else the caller.
 // - Teams: a project or group with several roles becomes a lead plus children, one slot under the
 //   parent (Chief → FlyBot Lead → {Dev, Test, …}); an existing lead of that group is reused.
-import { profileOf, keysOf, leadNameOf, canLead, sameRole, matchOf, norm } from './roles.js'
+import { profileOf, keysOf, kindOf, labelOf, leadNameOf, canLead, sameRole, matchOf, norm } from './roles.js'
 import { checkCreate, MAX_NAME_LENGTH } from './limits.js'
 
 export const LEAD_SUFFIX = ' Lead'
@@ -20,7 +20,7 @@ export const MAX_TEAM_LENGTH = MAX_NAME_LENGTH - LEAD_SUFFIX.length
 const MAX_FOUND = 30
 const MAX_OVERVIEW = 100
 
-export function createAllocator({ fb, limits, snapshot, childrenOf, depthOf, traceOf, shared, createUnder, withParentLock, refreshAll, classify }) {
+export function createAllocator({ fb, limits, snapshot, childrenOf, depthOf, traceOf, shared, createUnder, withParentLock, refreshAll, classify, burst = true }) {
   const { profile, subtreeOf, heightOf, fits, homesFor, createLead, markLead, move, begin, commit, exclusive } = shared
   const get = (id, key) => fb.getField(id, key)
   const profileFor = (name, role) => profileOf({ name, treeRole: role }, classify)
@@ -102,11 +102,40 @@ export function createAllocator({ fb, limits, snapshot, childrenOf, depthOf, tra
     return { parentId: homesFor(nodes, callerId, x, { leadsOnly: true }).find(ok) ?? callerId }
   }
 
+  const burstSeats = new Map() // callerId -> seats of calls that have started and not decided yet
+  const burstLeads = new Map() // `${callerId}\0${key}` -> Promise<leadId | undefined>
+
   /**
    * create_child_bot(name, role_description, parent?): reuse, or create under the planned parent
-   * (its per-parent lock; limits checked there). Resolves { created } or { reused, note }.
+   * (its per-parent lock; limits checked there). Resolves { created } or { reused, note }. Two calls
+   * in flight at once become one group (#810, below).
    */
   async function createChild(callerId, name, role, parentRef) {
+    // An explicit parent is the caller's own placement, and it is how a burst opts out of grouping.
+    // A group needs a concrete key: `area:` is the bucket roles the vocabulary cannot place fall into
+    // (roles.js), and forcing a batch of unrelated Bots under one 'General Lead' is not a group.
+    const first = keysOf(profileFor(String(name ?? '').trim(), role))[0]
+    const key = burst && kindOf(first) !== 'area' && !(typeof parentRef === 'string' && parentRef.trim()) ? first : undefined
+    if (!key) return placeAlone(callerId, name, role, parentRef)
+    const seat = { key, name: String(name ?? '').trim(), group: undefined }
+    const seats = burstSeats.get(callerId) ?? []
+    seats.push(seat)
+    burstSeats.set(callerId, seats)
+    // One turn of the event loop, so a sibling create already on the stack takes its seat before
+    // this call decides. That is the whole burst window: a call that starts after this decision
+    // never joins, and nothing ever waits for a third call.
+    await new Promise(resolve => setImmediate(resolve))
+    // The first of the seats to wake marks every seat of its key: the others read that mark when
+    // their own turn comes, so both sides of the burst agree on the same group.
+    for (const s of seats) if (s.key === key) s.group ??= seats.filter(o => o.key === key).map(o => o.name)
+    const group = seat.group
+    leaveSeat(callerId, seat)
+    if (!group || group.length < 2) return placeAlone(callerId, name, role, parentRef)
+    return (await joinGroup(callerId, key, group, String(name ?? '').trim(), role)) ?? placeAlone(callerId, name, role, parentRef)
+  }
+
+  /** Today's path (one Bot at a time): reuse, or create under the planned parent. Also the fallback. */
+  async function placeAlone(callerId, name, role, parentRef) {
     for (let attempt = 0; ; attempt++) {
       const plan = planChild(callerId, name, role, parentRef)
       if (plan.reused) return plan
@@ -121,6 +150,73 @@ export function createAllocator({ fb, limits, snapshot, childrenOf, depthOf, tra
       })
       if (!out.retry) return out
     }
+  }
+
+  // ------------------------------------------------------------ concurrent burst (#810)
+  // Two create_child_bot calls from the same caller that are in flight at the same time, whose
+  // profiles share the first key, become ONE group: one lead for that key (reused when `leadIn()`
+  // finds one, created once otherwise) with every member of the burst under it. The overlap is the
+  // definition, never clock time; a call that starts after the previous one returned keeps the
+  // plain path above. Different keys are not forced together, and no classifier is consulted.
+  function leaveSeat(callerId, seat) {
+    const seats = burstSeats.get(callerId)
+    if (!seats) return
+    const at = seats.indexOf(seat)
+    if (at >= 0) seats.splice(at, 1)
+    if (!seats.length) burstSeats.delete(callerId)
+  }
+
+  /** The one lead for this caller and key: the existing one, or one created now, shared by the burst. */
+  function leadFor(callerId, key, names, parentId) {
+    const id = `${callerId}\u0000${key}`
+    let lead = burstLeads.get(id)
+    if (!lead) {
+      lead = withParentLock(parentId, () => exclusive(() => openGroupLead(callerId, key, names, parentId)))
+        // A lead that cannot be made must not fail the members: each takes today's path and reports
+        // the real reason from the parent it would have used.
+        .catch(() => undefined)
+      burstLeads.set(id, lead)
+      const done = () => { if (burstLeads.get(id) === lead) burstLeads.delete(id) }
+      lead.then(done, done)
+    }
+    return lead
+  }
+
+  /** Reuse a lead of this group, or create one taking the slot the first member would have taken. */
+  async function openGroupLead(callerId, key, names, parentId) {
+    const nodes = snapshot()
+    if (!nodes[callerId] || !nodes[parentId]) return undefined
+    const label = labelOf(key, names)
+    const existing = leadIn(nodes, callerId, key, label)
+    if (existing) return existing
+    // Nothing the limits or the roster would refuse: then the members keep today's placement and
+    // its message, instead of a half-made group.
+    const name = leadNameOf(label)
+    if (fb.listBots().some(b => norm(b.name) === norm(name))) return undefined
+    if (depthOf(nodes, parentId) + 2 > limits.maxDepth) return undefined
+    if (checkCreate({ parentName: nodes[parentId].name, parentDepth: depthOf(nodes, parentId), siblings: childrenOf(nodes, parentId), name, limits })) return undefined
+    const run = begin('team')
+    const leadId = await createLead(run, parentId, { key, label, movers: [], memberNames: names })
+    if (!leadId) return undefined
+    // No existing Bot moved, so this is a plain create and not a reorganization (as create_team does).
+    refreshAll()
+    return leadId
+  }
+
+  /** Put one burst member under the shared lead; undefined sends it back to today's path. */
+  async function joinGroup(callerId, key, names, name, role) {
+    const plan = planChild(callerId, name, role, '')
+    if (plan.reused) return plan
+    const leadId = await leadFor(callerId, key, names, plan.parentId)
+    if (!leadId) return undefined
+    const created = await withParentLock(leadId, async () => {
+      if (!snapshot()[leadId]) return undefined // the lead left the tree while the burst was being placed
+      return createUnder(leadId, name, role)
+    })
+    if (!created) return undefined
+    refreshAll()
+    const nodes = snapshot()
+    return { created: { ...created, parent: { id: leadId, name: nodes[leadId]?.name }, path: traceOf(nodes, created.id) }, group: { id: leadId, path: traceOf(nodes, leadId) } }
   }
 
   // ------------------------------------------------------------ teams
