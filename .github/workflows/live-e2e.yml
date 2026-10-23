@@ -7,6 +7,12 @@ name: Live E2E
 # live job runs on main only, the key is mapped step-scoped, and everything uploaded has
 # passed the runner's evidence sanitizer (no `token=`, no key material, no cookies) and
 # is an explicit allow-list — never a raw bench home.
+#
+# Without the repository secret DEEPSEEK_API_KEY the suite cannot run at all, and a run
+# that is red every night for a reason nobody can act on teaches the team to ignore red
+# (#794). So a missing key warns, skips the six steps that need it, and leaves the run
+# green while the step summary says plainly that nothing ran and nothing was measured. A
+# real failure of the suite still fails the run: the skip is never a pass.
 
 on:
   schedule:
@@ -76,16 +82,21 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: core/package-lock.json
-      - name: Preflight (the key must exist; never a silent skip)
+      # The key decides whether anything can run, so it is checked once and published as an
+      # output that every step below gates on. The decision itself lives in a script with tests
+      # (.github/scripts/live-e2e-preflight.test.mjs): a missing key warns and skips, never fails.
+      - name: Preflight (a missing key skips every step, and says so)
+        id: preflight
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: |
-          [ -n "$DEEPSEEK_API_KEY" ] || { echo "::error::DEEPSEEK_API_KEY is not configured as a repository secret"; exit 1; }
+        run: node .github/scripts/live-e2e-preflight.mjs
       - name: npm ci (core)
+        if: steps.preflight.outputs.key == 'true'
         working-directory: core
         run: npm ci --no-fund --no-audit
         timeout-minutes: 5
       - name: Install the pinned DSH runtime
+        if: steps.preflight.outputs.key == 'true'
         working-directory: core
         run: |
           DSH=$(node -p "require('./dev/harness/package.json').dependencies['@deepseek-ai/dsh']")
@@ -93,12 +104,14 @@ jobs:
           echo "DSH=$DSH" >> "$GITHUB_ENV"
         timeout-minutes: 5
       - name: Clone DeepSeek Harness at the pinned tag
+        if: steps.preflight.outputs.key == 'true'
         run: |
           git clone --depth 1 --branch "dsh-v$DSH" https://github.com/deepseek-ai/deepseek-harness.git deepseek-harness
           corepack enable
           pnpm install --dir deepseek-harness
         timeout-minutes: 10
       - name: Start the usage tap
+        if: steps.preflight.outputs.key == 'true'
         run: |
           mkdir -p ".dsh-test-$BENCH"
           setsid node core/dev/llm-tap.mjs "$TAP_PORT" https://api.deepseek.com ".dsh-test-$BENCH/tap.jsonl" \
@@ -110,12 +123,14 @@ jobs:
             sleep 1
           done
       - name: Start the real-model bench
+        if: steps.preflight.outputs.key == 'true'
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           DEEPSEEK_BASE_URL="http://127.0.0.1:$TAP_PORT/anthropic" node dev/live-e2e/bench.mjs "$BENCH" "$WEB_PORT" reset
         timeout-minutes: 8
       - name: Run the four checks
+        if: steps.preflight.outputs.key == 'true'
         id: run
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
@@ -126,7 +141,7 @@ jobs:
             --model "$MODEL" --harness deepseek-harness \
             --tap ".dsh-test-$BENCH/tap.jsonl" --evidence evidence --tz Asia/Shanghai
       - name: Stop the bench and the tap
-        if: always()
+        if: always() && steps.preflight.outputs.key == 'true'
         run: |
           node dev/live-e2e/bench.mjs "$BENCH" "$WEB_PORT" stop || true
           if [ -f ".dsh-test-$BENCH/tap.pid" ]; then

@@ -30,9 +30,12 @@ suite is one of its columns, not the map's owner.
   it is covered keyless (`npm run test:live-e2e`, part of `verify`) through a fake
   adapter. The live command itself is never part of `verify`.
 - The live run uses a real key from the environment and a fresh isolated bench home
-  (`.dsh-test-*`, never under `~/.dsh`). It fails closed on a missing/mock key, a
+  (`.dsh-test-*`, never under `~/.dsh`). The runner fails closed on a mock key, a
   loopback endpoint (except the usage tap with a real upstream), or the user's own
   DSH home. No retries hide regressions.
+- When the key is absent altogether, `live-e2e.yml` skips the six steps that need it and
+  warns instead of failing every night (#794). A skipped run proves nothing about the
+  suite, and the run summary says exactly that; a failure inside the suite still fails.
 - The mock suites stay separate: this bench never starts the mock model, and the mock
   benches never gain a real key.
 - Evidence is an explicit allow-list that passed the sanitizer (no `token=` URLs, no
