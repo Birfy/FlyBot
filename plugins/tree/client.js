@@ -453,6 +453,50 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // ---- Archived Bots (#810): out of the default Bot list (#452) and out of the tree, which left the
+    // only way back to one of their chats the right-click menu. This section is a list of them through
+    // the slot the sidebar already renders; `include()` keeps returning false, so the list itself does
+    // not change. Collapsed by default, and the section draws nothing at all when there is none.
+    const archivedOf = bots => (bots ?? []).filter(b => b?.fields?.['flybot-tree']?.archived || ARCHIVE_NAME_RE.test(String(b?.name ?? '')))
+    function ArchivedView({ bots = [], expanded = false, onToggle, openBot }) {
+      if (bots.length === 0) return null
+      return h('section', { className: 'flybot-tree flybot-tree-archived', 'aria-label': 'Archived bots' },
+        h('button', { type: 'button', className: 'flybot-tree-head', 'aria-expanded': expanded, onClick: onToggle },
+          h('span', { className: 'flybot-tree-chev', 'aria-hidden': true }, '▾'),
+          h('span', { className: 'flybot-tree-title' }, `Archived (${bots.length})`)),
+        expanded
+          ? h('ul', { className: 'flybot-tree-list', role: 'group' }, bots.map(b => {
+              const tag = statusOf(b)
+              return h('li', { key: b.id, className: 'flybot-tree-node', 'data-bot-id': b.id },
+                h('div', { className: 'flybot-tree-row' },
+                  h('span', { className: 'flybot-tree-dot', 'aria-hidden': true }, '●'),
+                  h('button', { type: 'button', className: 'flybot-tree-open', title: b.name, onClick: () => openBot?.(b.id) },
+                    h('span', { className: 'flybot-tree-name' }, b.name),
+                    tag ? h('span', { className: 'flybot-tree-role' }, tag) : null)))
+            }))
+          : null)
+    }
+    function makeArchivedSection(flybot) {
+      return function ArchivedSection(props) {
+        useStyles()
+        const [bots, setBots] = useState([])
+        // Local, so the 10 s roster refresh re-renders the rows without closing the section.
+        const [expanded, setExpanded] = useState(false)
+        const refresh = useCallback(async () => { try { setBots(archivedOf(await flybot.bots())) } catch { /* keep last */ } }, [])
+        useEffect(() => {
+          refresh()
+          const offs = []
+          try { offs.push(flybot.fields?.on?.('change', c => { if (c && (c.key === 'archived' || c.key === 'parent' || c.key === 'treeRole' || c.removed)) refresh() })) } catch { /* no change feed */ }
+          try { if (typeof flybot.on === 'function') offs.push(flybot.on('bot.removed', refresh)) } catch { /* no removal event */ }
+          const timer = setInterval(refresh, REFRESH_MS)
+          offs.push(() => clearInterval(timer))
+          return () => { for (const off of offs) { try { off?.() } catch { /* already gone */ } } }
+        }, [refresh])
+        const openSession = props?.actions?.openSession
+        return h(ArchivedView, { bots, expanded, onToggle: () => setExpanded(e => !e), openBot: typeof openSession === 'function' ? id => openSession(id) : undefined })
+      }
+    }
+
     const inject = ['flybot']
     // The tree lives in ds-bot's own Bot list now, so this plugin's separate sidebar section is off by
     // default (config.sidebarSection: true brings it back). Always: a SYNCHRONOUS helper for ds-bot's
@@ -465,12 +509,15 @@ window.__ModuleLoader__.load({
       if (globalThis.__flybot__) { globalThis.__flybot__.tree = helper; offs.push(() => { if (globalThis.__flybot__?.tree === helper) delete globalThis.__flybot__.tree }) }
       if (config?.sidebarSection === true) offs.push(ctx.flybot.slots.register('flybot.sidebar.section', { id: 'flybot-tree', order: 90, component: makeSection(ctx.flybot) }))
       if (ctx.flybot?.slots) offs.push(registerStructure(ctx.flybot))
+      // Archived Bots (#810) are hidden from ds-bot's list (#452), which left their chats reachable only
+      // from the right-click menu. Draws nothing when no Bot is archived.
+      if (ctx.flybot?.slots && config?.archivedSection !== false) offs.push(ctx.flybot.slots.register('flybot.sidebar.section', { id: 'flybot-tree-archived', order: 88, component: makeArchivedSection(ctx.flybot) }))
       // The reorganization notice (#446) is on by default (config.reorgNotice: false hides it); it draws nothing until a reorganization ran.
       if (ctx.flybot?.slots && config?.reorgNotice !== false) offs.push(ctx.flybot.slots.register('flybot.sidebar.section', { id: 'flybot-tree-reorg', order: 89, component: makeReorgNotice(ctx.flybot) }))
       const off = () => { for (const fn of offs.splice(0)) fn?.() }
       ctx.effect?.(() => off, 'flybot-tree: tree helper')
       return off
     }
-    return { name: 'flybot-tree', inject, apply, forestOf, registerStructure, makeReorgNotice, ReorgCard, noticeRun, statusOf, makeStatusTag, REORG_CSS, makeMenuItems, makeInviteAction, copyInvite, copyText, INVITE_CSS, buildForest, treeOf, TreeView, countNodes, EMPTY, CSS }
+    return { name: 'flybot-tree', inject, apply, forestOf, registerStructure, makeReorgNotice, ReorgCard, noticeRun, statusOf, makeStatusTag, archivedOf, ArchivedView, makeArchivedSection, REORG_CSS, makeMenuItems, makeInviteAction, copyInvite, copyText, INVITE_CSS, buildForest, treeOf, TreeView, countNodes, EMPTY, CSS }
   },
 })

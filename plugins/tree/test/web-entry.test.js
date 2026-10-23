@@ -58,8 +58,9 @@ test('tree web entry activates under real Cordis once ds-bot provides flybot, an
   assert.deepEqual(failures, [])
   // Tree registers no Tree sidebar section by default; it feeds ds-bot's Bot list through the
   // public 'flybot.sidebar.structure' slot and exposes its synchronous helper.
-  // Its only section is the reorganization notice (#446), which draws nothing until a reorganization ran.
-  assert.deepEqual(registry.entries('flybot.sidebar.section').map(e => e.id), ['flybot-tree-reorg'])
+  // Two sections, neither of which draws anything until it has something to show: the Archived list
+  // (#810, order 88) and the reorganization notice (#446, order 89).
+  assert.deepEqual(registry.entries('flybot.sidebar.section').map(e => e.id), ['flybot-tree-archived', 'flybot-tree-reorg'])
   assert.ok(registry.entries('flybot.sidebar.structure').length >= 1)
   assert.equal(typeof flybot.tree?.forest, 'function')
   assert.equal(typeof globalThis.__flybot__.tree?.forest, 'function')

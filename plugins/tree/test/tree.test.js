@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import * as plugin from '../index.js'
 import { DEFAULT_LIMITS, resolveLimits, checkCreate } from '../src/limits.js'
 import { treeSendMiddleware } from '../src/middleware.js'
+import { createTree } from '../src/tree.js'
 import { createMockFlybot } from './mock-flybot.js'
 import { reactStub, renderToString, findAll } from './render.js'
 
@@ -335,7 +336,7 @@ test('client: injects flybot, registers into FlyBot slots (not the shell slots s
   const reg = []
   const effects = []
   const off = mod.apply({ flybot: { slots: { register: (name, entry) => { reg.push([name, entry]); return () => { const i = reg.findIndex(r => r[1] === entry); if (i >= 0) reg.splice(i, 1) } } } }, effect: fn => effects.push(fn) }, { sidebarSection: true })
-  assert.deepEqual(reg.map(r => [r[0], r[1].id]), [['flybot.sidebar.section', 'flybot-tree'], ['flybot.sidebar.structure', 'flybot-tree'], ['flybot.sidebar.section', 'flybot-tree-reorg']])
+  assert.deepEqual(reg.map(r => [r[0], r[1].id]), [['flybot.sidebar.section', 'flybot-tree'], ['flybot.sidebar.structure', 'flybot-tree'], ['flybot.sidebar.section', 'flybot-tree-archived'], ['flybot.sidebar.section', 'flybot-tree-reorg']])
   assert.equal(typeof reg[0][1].component, 'function')
   assert.equal(effects.length, 1)
   off(); assert.equal(reg.length, 0)
@@ -670,9 +671,9 @@ test('sidebar section is off by default; sync tree.forest(bots) helper is expose
   const flybot = { slots: { register: (n) => { reg.push(n); return () => {} } } }
   globalThis.__flybot__ = {}
   const off = mod.apply({ flybot })
-  // No separate Tree section (ds-bot's list draws the tree); only the reorganization notice (#446),
-  // which draws nothing until a reorganization ran. reorgNotice: false leaves it out.
-  assert.deepEqual(reg, ['flybot.sidebar.structure', 'flybot.sidebar.section'])
+  // No separate Tree section (ds-bot's list draws the tree); the Archived list (#810) and the
+  // reorganization notice (#446), both of which draw nothing until they have something to show.
+  assert.deepEqual(reg, ['flybot.sidebar.structure', 'flybot.sidebar.section', 'flybot.sidebar.section'])
   assert.equal(typeof flybot.tree.forest, 'function')
   assert.equal(globalThis.__flybot__.tree, flybot.tree)
   const bots = [
@@ -1280,7 +1281,7 @@ test('#446 client: reorganization notice (what moved, Undo, Dismiss), idle / arc
   const mod = loadClient()
   const reg = []
   mod.apply({ flybot: { slots: { register: (n) => { reg.push(n); return () => {} } } } }, { reorgNotice: false })
-  assert.deepEqual(reg, ['flybot.sidebar.structure'])
+  assert.deepEqual(reg, ['flybot.sidebar.structure', 'flybot.sidebar.section'], 'reorgNotice: false leaves only the Archived list (#810)')
   const at = Date.now() - 60_000
   const run = { id: 'r1', at, trigger: 'full', summary: ['created FlyBot Lead under Chief to lead the FlyBot group', 'moved FlyBot Dev from Chief to FlyBot Lead'], actions: [] }
   assert.equal(mod.noticeRun({ runs: [run] }), run)
@@ -1788,4 +1789,155 @@ test('#764: a name taken anywhere refuses the whole team before anything is crea
   assert.deepEqual(reused.team.members.map(x => [x.name, Boolean(x.reused)]), [['Dev', false], ['Reviewer', true]])
   assert.match(reused.note, /Reused where they are: Chief → Review → Reviewer/)
   assert.equal(f(m, existing, 'parent'), review, 'reused where it stands, not moved')
+})
+
+// #810 B: a concurrent burst is placed as one group. Two create_child_bot calls from the same caller
+// that are in flight at the same time (the second started before the first returned) and share the
+// first key get ONE lead for that key, with both members under it; without the change each call picks
+// its own home from the broader level it fits into (#450: a Dev Lead that already has a Programmer).
+// No timer is involved: the fixture holds the two creates open, which is exactly "in flight".
+function fakeAdapter() {
+  const bots = new Map()
+  const gates = new Map() // name -> { promise, open }: that create stays open until the test opens it
+  let seq = 0
+  const hold = name => {
+    let open
+    const promise = new Promise(resolve => { open = resolve })
+    gates.set(name, { promise, open })
+    return () => { gates.delete(name); open() }
+  }
+  const fb = {
+    listBots: () => [...bots.values()].map(b => ({ id: b.id, name: b.name, isMain: b.isMain === true, systemPrompt: b.systemPrompt ?? '' })),
+    getBot: id => bots.get(id),
+    getField: (id, k) => bots.get(id)?.fields?.[k],
+    setField: (id, k, v) => { const b = bots.get(id); if (!b) return; b.fields ??= {}; if (v === undefined || v === null) delete b.fields[k]; else b.fields[k] = v },
+    getSystemPrompt: id => bots.get(id)?.systemPrompt ?? '',
+    setSystemPrompt: (id, text) => { const b = bots.get(id); if (b) b.systemPrompt = String(text ?? '') },
+    updateBot: async (id, patch) => { const b = bots.get(id); if (b) Object.assign(b, patch) },
+    createBot: async spec => {
+      const id = `b${++seq}`
+      bots.set(id, { id, name: spec.name, isMain: false, systemPrompt: spec.systemPrompt ?? '', fields: { ...spec.fields } })
+      await gates.get(spec.name)?.promise
+      return id
+    },
+  }
+  const add = (name, fields = {}, isMain = false) => {
+    const id = `b${++seq}`
+    bots.set(id, { id, name, isMain, systemPrompt: '', fields })
+    return id
+  }
+  // The fixture: Chief → Dev Lead (a domain:dev group lead) → Programmer, so a dev Bot has a broader
+  // group to fall into — the level a burst must not split across.
+  const chief = add('Chief', { parent: null, treeRole: 'root' }, true)
+  const devLead = add('Dev Lead', { parent: chief, treeRole: 'leads the dev group', lead: { key: 'domain:dev', label: 'Dev' } })
+  const programmer = add('Existing Programmer', { parent: devLead, treeRole: 'writes the code' })
+  return { fb, bots, hold, chief, devLead, programmer }
+}
+const until = async (what, ok, ms = 2000) => {
+  const at = Date.now()
+  while (!ok()) {
+    if (Date.now() - at > ms) throw new Error(`timed out waiting for ${what}`)
+    await new Promise(r => setTimeout(r, 2))
+  }
+}
+const byName = (f, name) => [...f.bots.values()].find(b => b.name === name)
+const childrenIn = (f, id) => [...f.bots.values()].filter(b => b.fields?.parent === id)
+
+test('#810: two creates in flight at once in one domain get one lead and two children', async () => {
+  const f = fakeAdapter()
+  const tree = createTree(f.fb, { limits: { maxDepth: 5, maxChildren: 2 } })
+  const releaseA = f.hold('FlyBot Programmer')
+  const releaseB = f.hold('FlyBot Tester')
+  const a = tree.allocateChild(f.chief, 'FlyBot Programmer', 'writes code', undefined)
+  const b = tree.allocateChild(f.chief, 'FlyBot Tester', 'tests code', undefined)
+  // The first create is open and the second call is waiting on the lead's lock: both calls are in
+  // flight at the same time, which is the burst. Releasing lets both finish.
+  await until('a create to start', () => byName(f, 'FlyBot Programmer') || byName(f, 'FlyBot Tester'))
+  releaseA(); releaseB()
+  const [ra, rb] = await Promise.all([a, b])
+  const lead = byName(f, 'FlyBot Lead')
+  assert.ok(lead, 'one lead for the group')
+  assert.equal(lead.fields.parent, f.devLead, 'the lead takes the slot the first member would have taken')
+  assert.equal(lead.fields.lead?.key, 'project:flybot')
+  assert.equal([...f.bots.values()].filter(x => x.fields?.lead?.key === 'project:flybot').length, 1, 'exactly one lead was created')
+  assert.equal(ra.created.parent.id, lead.id)
+  assert.equal(rb.created.parent.id, lead.id, 'the second member does not fall into the broader Dev Lead')
+  assert.deepEqual(childrenIn(f, lead.id).map(x => x.name).sort(), ['FlyBot Programmer', 'FlyBot Tester'])
+  assert.deepEqual(childrenIn(f, f.devLead).map(x => x.name).sort(), ['Existing Programmer', 'FlyBot Lead'])
+  const path = tree.traceOf(tree.snapshot(), lead.id)
+  assert.match(path, /FlyBot Lead$/)
+  assert.ok(ra.created.path.startsWith(`${path} → `), ra.created.path)
+  assert.ok(rb.created.path.startsWith(`${path} → `), rb.created.path)
+})
+
+test('#810: with the burst path off, the same fixture places them under two different parents', async () => {
+  const f = fakeAdapter()
+  const tree = createTree(f.fb, { limits: { maxDepth: 5, maxChildren: 2 }, burstGrouping: false })
+  const releaseA = f.hold('FlyBot Programmer')
+  const releaseB = f.hold('FlyBot Tester')
+  const a = tree.allocateChild(f.chief, 'FlyBot Programmer', 'writes code', undefined)
+  const b = tree.allocateChild(f.chief, 'FlyBot Tester', 'tests code', undefined)
+  await until('a create to start', () => byName(f, 'FlyBot Programmer') || byName(f, 'FlyBot Tester'))
+  releaseA(); releaseB()
+  const [ra, rb] = await Promise.all([a, b])
+  assert.equal(byName(f, 'FlyBot Lead'), undefined, 'no group is made without the burst path')
+  assert.equal(ra.created.parent.id, f.devLead, 'the first fills the broader group')
+  assert.equal(rb.created.parent.id, f.chief, 'the second lands at the caller')
+  assert.notEqual(ra.created.parent.id, rb.created.parent.id, 'the case fails for the right reason: two parents')
+})
+
+test('#810: different keys are not forced together, and a serial call keeps today\'s tree', async () => {
+  const f = fakeAdapter()
+  const tree = createTree(f.fb, { limits: { maxDepth: 5, maxChildren: 8 } })
+  const releaseA = f.hold('FlyBot Programmer')
+  const releaseB = f.hold('Recipe Chef')
+  const a = tree.allocateChild(f.chief, 'FlyBot Programmer', 'writes code', undefined)
+  const b = tree.allocateChild(f.chief, 'Recipe Chef', 'cooks dinner', undefined)
+  await until('a create to start', () => byName(f, 'FlyBot Programmer') || byName(f, 'Recipe Chef'))
+  releaseA(); releaseB()
+  const [ra, rb] = await Promise.all([a, b])
+  assert.equal(byName(f, 'FlyBot Lead'), undefined, 'no lead for a mixed burst')
+  assert.equal(byName(f, 'Recipe Lead'), undefined)
+  assert.equal(ra.created.parent.id, f.devLead)
+  assert.equal(rb.created.parent.id, f.chief)
+  // Serial: the second call starts after the first returned, so the tree is exactly today's.
+  const s = fakeAdapter()
+  const serial = createTree(s.fb, { limits: { maxDepth: 5, maxChildren: 8 } })
+  const first = await serial.allocateChild(s.chief, 'FlyBot Programmer', 'writes code', undefined)
+  const second = await serial.allocateChild(s.chief, 'FlyBot Tester', 'tests code', undefined)
+  assert.equal(first.created.parent.id, s.devLead)
+  assert.equal(second.created.parent.id, s.devLead, 'no burst: both keep today\'s placement in the broader group')
+  assert.equal(byName(s, 'FlyBot Lead'), undefined)
+  assert.deepEqual(childrenIn(s, s.devLead).map(x => x.name).sort(), ['Existing Programmer', 'FlyBot Programmer', 'FlyBot Tester'])
+  // An explicit parent opts out: it is the caller's own placement.
+  const t = fakeAdapter()
+  const explicit = createTree(t.fb, { limits: { maxDepth: 5, maxChildren: 8 } })
+  const relA = t.hold('FlyBot Programmer')
+  const relB = t.hold('FlyBot Tester')
+  const pa = explicit.allocateChild(t.chief, 'FlyBot Programmer', 'writes code', t.chief)
+  const pb = explicit.allocateChild(t.chief, 'FlyBot Tester', 'tests code', t.chief)
+  await until('an explicit create to start', () => byName(t, 'FlyBot Programmer') || byName(t, 'FlyBot Tester'))
+  relA(); relB()
+  const [qa, qb] = await Promise.all([pa, pb])
+  assert.equal(byName(t, 'FlyBot Lead'), undefined)
+  assert.deepEqual([qa.created.parent.id, qb.created.parent.id], [t.chief, t.chief])
+})
+
+test('#810: an existing lead of the group is reused, and no second lead is made', async () => {
+  const f = fakeAdapter()
+  // A group lead for this key already sits under the caller: the burst joins it. Its name is not the
+  // one the label would give, so only the marked key can find it — reuse, not a lucky name match.
+  const leadId = `b${100}`
+  f.bots.set(leadId, { id: leadId, name: 'Team Alpha', isMain: false, systemPrompt: '', fields: { parent: f.chief, treeRole: 'leads the FlyBot group', lead: { key: 'project:flybot', label: 'FlyBot' } } })
+  const tree = createTree(f.fb, { limits: { maxDepth: 5, maxChildren: 8 } })
+  const releaseA = f.hold('FlyBot Programmer')
+  const releaseB = f.hold('FlyBot Tester')
+  const a = tree.allocateChild(f.chief, 'FlyBot Programmer', 'writes code', undefined)
+  const b = tree.allocateChild(f.chief, 'FlyBot Tester', 'tests code', undefined)
+  await until('a create to start', () => byName(f, 'FlyBot Programmer') || byName(f, 'FlyBot Tester'))
+  releaseA(); releaseB()
+  const [ra, rb] = await Promise.all([a, b])
+  assert.equal([...f.bots.values()].filter(x => x.fields?.lead?.key === 'project:flybot').length, 1, 'the existing lead is reused')
+  assert.deepEqual([ra.created.parent.id, rb.created.parent.id], [leadId, leadId])
+  assert.deepEqual(childrenIn(f, leadId).map(x => x.name).sort(), ['FlyBot Programmer', 'FlyBot Tester'])
 })
