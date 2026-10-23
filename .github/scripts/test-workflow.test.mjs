@@ -41,3 +41,52 @@ test('main keeps its run (no cancel), every other ref, queue branches included, 
   assert.match(text, /cancel-in-progress: \$\{\{ github\.ref != 'refs\/heads\/main' \}\}/)
   assert.match(text, /group: test-\$\{\{ github\.ref \}\}/)
 })
+
+// live-e2e.yml (#811): the gates that make a keyless run touch nothing. The preflight decides and
+// publishes `key=true|false`; the step that reads the secret and the six steps that need it are
+// gated on that output. The hole this closes is real: on #30, deleting one `if:` changed what a
+// keyless run does and every test still passed, because nothing read this file.
+const live = readFileSync(new URL('../workflows/live-e2e.yml', import.meta.url), 'utf8')
+const liveSteps = live
+  .split(/^ {6}- /m)
+  .slice(1)
+  .map(block => ({
+    block,
+    name: (/^name: (.+)$/m.exec(block)?.[1] ?? '(no name)').trim(),
+    id: (/^ {8}id: (.+)$/m.exec(block)?.[1] ?? '').trim(),
+    gate: (/^ {8}if: (.+)$/m.exec(block)?.[1] ?? '').trim(),
+    // The step's own `env:` mapping, not a mention of the secret anywhere in the block.
+    mapsSecret: /^ {8}env:\n(?: {10}.*\n)+/m.test(block) && /secrets\./.test(block),
+  }))
+const KEYED = [
+  'npm ci (core)',
+  'Install the pinned DSH runtime',
+  'Clone DeepSeek Harness at the pinned tag',
+  'Start the usage tap',
+  'Start the real-model bench',
+  'Run the four checks',
+]
+
+test('#811: a step that maps a secret is gated on the preflight, and the preflight is gated on nothing', () => {
+  const preflight = liveSteps.filter(step => step.id === 'preflight')
+  assert.equal(preflight.length, 1, 'exactly one step decides, and it is found by id: preflight')
+  assert.equal(preflight[0].gate, '', 'the deciding step cannot be gated on its own output')
+  assert.ok(preflight[0].mapsSecret, 'the deciding step has to read the key, or nothing is decided')
+  for (const step of liveSteps) {
+    if (step.mapsSecret && step.id !== 'preflight') {
+      assert.ok(step.gate, `"${step.name}" maps a secret without an if:; a keyless run would execute it`)
+      assert.match(step.gate, /steps\.preflight\.outputs\.key/, `"${step.name}" must be gated on steps.preflight.outputs.key`)
+    }
+  }
+})
+
+test('#811: the seven steps that need the key carry the same gate', () => {
+  for (const name of [...KEYED, 'Stop the bench and the tap']) {
+    const step = liveSteps.find(s => s.name === name)
+    assert.ok(step, `no step named "${name}"`)
+    assert.match(step.gate, /steps\.preflight\.outputs\.key == 'true'/, `"${name}" lost its gate`)
+  }
+  const cleanup = liveSteps.find(s => s.name === 'Stop the bench and the tap')
+  assert.match(cleanup.gate, /^always\(\) &&/, 'the cleanup runs only after a keyed run started')
+  assert.equal(KEYED.length, 6, 'six steps need the key; a seventh would not be covered here')
+})
