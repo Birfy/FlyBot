@@ -41,6 +41,8 @@ const ROOM_TURNS_EACH = 2
 const ROOM_ADMIN_TURNS_EACH = 4
 // A plain line in a face-to-face room lets this many local Bots answer (#295); a larger room is cut off here.
 const FACE_PLAIN_SPEAKERS = 6
+// Nobody whose call the per-member cap does not bound (see callMembers).
+const NOBODY = new Set()
 
 // Logs written before rooms were versioned get sequence numbers in place.
 const ensureRoomLog = (room) => {
@@ -277,10 +279,11 @@ export function install(rt) {
   // A called member moves up if it is still waiting, or gets one more turn if it
   // already spoke; either way it goes right after slot `index`. `cap` is the caller's
   // per-member turn bound for the round; `by` is the calling member, if a member called.
-  function callMembers(round, turns, index, callees, note, cap, by) {
+  // `uncapped` names the callees that bound does not apply to (#804).
+  function callMembers(round, turns, index, callees, note, cap, by, uncapped = NOBODY) {
     let next = index + 1
     for (const peer of callees) {
-      if ((turns.get(peer.id) ?? 0) >= cap) continue
+      if (!uncapped.has(peer.id) && (turns.get(peer.id) ?? 0) >= cap) continue
       const waiting = round.slots.findIndex((other, at) => at > index && other.id === peer.id && other.status === 'waiting')
       const called = waiting === -1 ? { id: peer.id, name: peer.name, status: 'waiting' } : round.slots.splice(waiting, 1)[0]
       called.note = note
@@ -511,7 +514,11 @@ export function install(rt) {
       const { all, found: named } = mentionsIn(reply, everyone)
       const found = named.filter(other => other.id !== member.id)
       const callees = leads && all ? [...found, ...others.filter(other => !found.includes(other))] : found
-      if (!round.single) callMembers(round, turns, index, callees, `${member.name} mentioned you`, leads ? ROOM_ADMIN_TURNS_EACH : ROOM_TURNS_EACH, member.id)
+      // The room's admin is the coordinator: a member that names it is reporting in or asking for work,
+      // and dropping that is the failure #804 was filed for. Everyone else keeps the cap, so a chain of
+      // Bots naming each other cannot keep a round talking.
+      const uncapped = new Set(found.filter(other => rt.isAdminOf(room, other.id)).map(other => other.id))
+      if (!round.single) callMembers(round, turns, index, callees, `${member.name} mentioned you`, leads ? ROOM_ADMIN_TURNS_EACH : ROOM_TURNS_EACH, member.id, uncapped)
     }
   }
 

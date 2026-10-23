@@ -1449,3 +1449,42 @@ test('#595: a Bot\'s failure notice mid-round is held too, never raw in the Sess
   await answer(turn.sessionId, turn.message.source.exchangeId, 'Thanks.', 1)
   await running
 })
+
+// #804: a member's "@Chief" is a direct request. The per-member turn cap must not swallow it:
+// with the admin already answered twice, the mention used to be dropped with nothing posted.
+test("#804: a member's @Admin is honoured after the admin already spoke in the round", async (t) => {
+  const { call, emit, userMessage, relay, answer, stop, sent } = start()
+  t.after(stop)
+  const chief = (await call('state', {})).value.mainBotId
+  const writer = (await call('create-bot', { name: 'Writer' })).value
+  const third = (await call('create-bot', { name: 'Third' })).value
+  const room = (await call('create-room', { name: 'R804', members: [chief, writer.id, third.id] })).value
+  await call('update-room', { id: room.id, mode: 'everyone' })
+  sent.length = 0
+
+  await emit(room.id, userMessage('Start'))
+  const running = relay(room.id, 'r804')
+  const first = await turnFor(sent)
+  assert.ok(first, 'the admin speaks first')
+  await answer(first.sessionId, first.message.source.exchangeId, 'Chief here.', 1)
+
+  // Writer names the admin: it speaks again, so the admin has spoken twice in this round.
+  const second = await turnFor(sent, first)
+  assert.ok(second)
+  await answer(second.sessionId, second.message.source.exchangeId, '@Chief I am free.', 2)
+  const again = await turnFor(sent, first, second)
+  assert.ok(again, 'the admin answers the first mention')
+  await answer(again.sessionId, again.message.source.exchangeId, 'Noted, one thing for you.', 3)
+
+  // The round's last member names the admin too: it must answer here as well.
+  const last = await turnFor(sent, first, second, again)
+  assert.ok(last, 'the third member speaks')
+  await answer(last.sessionId, last.message.source.exchangeId, '@Chief nothing left on my side.', 4)
+  const answerToLast = await turnFor(sent, first, second, again, last)
+  assert.ok(answerToLast, "the admin answers the second mention; it is not dropped by the turn cap")
+  assert.equal(answerToLast.sessionId, first.sessionId, 'the admin answers in its own Session')
+  await answer(answerToLast.sessionId, answerToLast.message.source.exchangeId, 'Understood.', 5)
+
+  const result = JSON.parse(await running)
+  assert.deepEqual(result.replies.map(reply => reply.name ?? 'User'), ['Chief', 'Writer', 'Chief', 'Third', 'Chief'])
+})
