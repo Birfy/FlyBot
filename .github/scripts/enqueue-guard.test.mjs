@@ -175,7 +175,7 @@ test('#602: the self-gate case (author Birfy, PASS by Birfy) is allowed', () => 
 test('#718: a body that names no issue is not enqueued', () => {
   const r = run({ body: '## Summary\n\nTidy up the dock.', comments: [comment()] })
   assert.equal(r.ok, false)
-  assert.match(r.reasons.join('; '), /no issue reference in the pull request body: add "Fixes #<n>"/)
+  assert.match(r.reasons.join('; '), /no issue reference in the pull request body: add "Fixes #<n>" or "Fixes owner\/repo#<n>"/)
   assert.match(r.message, /^do not enqueue #566: /)
 })
 
@@ -190,6 +190,28 @@ test('#718: a Closes reference and the agent-pr label let it through', () => {
   const r = main({ gh, env: { REVIEW_POLICY: POLICY, GH_REPO: 'ThinkFlowLab/FlyBot', PR: '566' }, repo: 'ThinkFlowLab/FlyBot', pr: 566 })
   assert.equal(r.ok, true, r.reasons.join('; '))
   assert.equal(r.command, `gh pr merge 566 --auto --squash --match-head-commit ${HEAD}`)
+})
+
+// The branch lives in the code fork now, and the issue stays upstream, so the body names it in full:
+// `Fixes ThinkFlowLab/FlyBot#801`. The bare spelling there points at a number the fork does not have, so
+// the guard has to accept the qualified one or every fork pull request is refused at the last step.
+test('a cross-repository Fixes reference is an issue reference', () => {
+  const gh = fakeGh({ body: 'Fixes ThinkFlowLab/FlyBot#801\n\nthe detail', labels: ['agent-pr'], files: [HOST_FILE], comments: [comment()] })
+  const r = main({ gh, env: { REVIEW_POLICY: POLICY, GH_REPO: 'ThinkFlowLab/FlyBot', PR: '566' }, repo: 'ThinkFlowLab/FlyBot', pr: 566 })
+  assert.equal(r.ok, true, r.reasons.join('; '))
+})
+
+test('the bare Fixes #<n> spelling still counts next to the cross-repository one', () => {
+  const gh = fakeGh({ body: 'Fixes #801\n\nthe detail', labels: ['agent-pr'], files: [HOST_FILE], comments: [comment()] })
+  const r = main({ gh, env: { REVIEW_POLICY: POLICY, GH_REPO: 'ThinkFlowLab/FlyBot', PR: '566' }, repo: 'ThinkFlowLab/FlyBot', pr: 566 })
+  assert.equal(r.ok, true, r.reasons.join('; '))
+})
+
+// The number alone is not a reference: `Fixes 801` names no issue in either repository.
+test('a Fixes line without the hash is not an issue reference', () => {
+  const r = run({ body: 'Fixes 801\n\nthe detail', comments: [comment()] })
+  assert.equal(r.ok, false)
+  assert.match(r.reasons.join('; '), /no issue reference in the pull request body/)
 })
 
 test('#718: a mechanical release pull request needs neither an issue nor the label', () => {
