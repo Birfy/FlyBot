@@ -6,6 +6,20 @@ New entries are written as one fragment file per change in [changelog.d/](change
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-10-24
+
+### Added
+
+- A face-to-face room now shows its 6-digit number as a QR code, and FlyBot can scan one instead of typing: the waiting dialog and the room panel draw `FLYBOT-` plus the number locally (byte mode, error correction M, version 1 — every module computed in the browser, no request and no image service), the code disappears when joining ends or the room opens, a QR from anywhere else is refused in one sentence, and a scan ends in the same `social/face-join` the number field uses. A browser without `BarcodeDetector` says so before it asks for the camera, a refused camera gets one sentence, and typing the number keeps working either way ([#773](https://github.com/ThinkFlowLab/FlyBot/issues/773)). An open room also offers **Invite by link** (`data-flybot=face-invite`): **Create link** asks Bot Social for one and draws the link itself as the QR, so a phone camera opens the room and FlyBot's scan joins with the same ticket; the card shows the link, **Copy link**, the deadline, and **Withdraw link**. Pasting or scanning accepts only `https://…/r/<ticket>`, and each refusal — expired, withdrawn, full, closed, already in it — is one sentence. The card stays off on a server without the `face_room_invites` feature, which says *Invites need a newer Bot Social. The 6-digit number still works.*
+- `core/dev/token-report.mjs` reads the usage ledger into the numbers #796 asks for: per Bot, per Session and per day, with fresh input, cache read, cache write and their sum (prompt) as separate columns, per-call prompt percentiles, the top Sessions by prompt, and each Session's prompt growth between consecutive calls, splitting at a compaction or a new part instead of counting it as a negative delta. It opens the ledger read-only, defaults `--db` to `$DSH_HOME/usage.sqlite`, and exits non-zero naming the path when it is missing. The first report is [docs/reports/2026-10-23-token-spend.md](../docs/reports/2026-10-23-token-spend.md) ([#799](https://github.com/ThinkFlowLab/FlyBot/issues/799)).
+
+### Fixed
+
+- `create_team` now refuses a team before it writes anything when the lead's name or a member's name is already taken anywhere on this home: it names every clashing name and the path of the Bot that holds it ([#764](https://github.com/ThinkFlowLab/FlyBot/issues/764)). Previously it created the lead first, so a member whose name was taken was dropped and the team was left half-built with a childless `<team> Lead`.
+- A PASS whose `Written-by:` names someone outside `writers` in `.github/agent/review-policy.json` is refused by `review-gate` and `merge-gate`, but until now only a log line said so: the reviewer assumed a conclusion that counted, nobody enqueued, and the pull request waited with every check green. The `pass` label job now leaves one comment per tip naming the author, the tip and the file to edit, and still adds no label for it ([#767](https://github.com/ThinkFlowLab/FlyBot/issues/767)).
+- An image that no model can read now arrives as a placeholder that names its file on disk (`<home>/attachments/v1/objects/<first two>/<sha256>`), so a Bot can pick the bytes up with its own file tools instead of asking the user to describe the picture. The path is given only when the file is really there, and only when the file sandbox can open it; a chat and a group relay share one placeholder ([#779](https://github.com/ThinkFlowLab/FlyBot/issues/779)).
+- Handing the Main role to another Bot now moves the tree's root with it on the next turn: exactly one root remains, the previous Chief is demoted and placed in the tree, and the new Main gets the tree tools instead of waiting for a restart ([#748](https://github.com/ThinkFlowLab/FlyBot/issues/748)). A tree that already sits at `maxDepth` stays inside it on the swap: the demoted root's branch is re-attached under the new root instead of being placed one level too deep.
+
 ## [0.2.4] - 2026-10-23
 
 ### Added
