@@ -4,8 +4,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  UNKNOWN, dayWindow, withinWindow, parseOffset, formatOffset, throughput, summarizeRuns, rates,
-  formatRate, formatCount, rollingAverage, renderReport, closedUnmergedAt,
+  UNKNOWN, MAX_PAGES, dayWindow, withinWindow, parseOffset, formatOffset, throughput, summarizeRuns, rates,
+  formatRate, formatCount, rollingAverage, renderReport, closedUnmergedAt, allPages,
 } from './rsi-baseline.mjs'
 
 const DAY = '2026-10-22'
@@ -61,7 +61,8 @@ test('cancelled runs stay in the denominator, missing conclusions do not', () =>
       { status: 'in_progress', conclusion: null }, // not completed: not counted at all
     ],
   })
-  assert.deepEqual(summary.all, { success: 1, failure: 1, cancelled: 1, other: 1, unknown: 1 })
+  // A skipped run is not an outcome: it has its own bucket and stays out of the denominator (#814).
+  assert.deepEqual(summary.all, { success: 1, failure: 1, cancelled: 1, skipped: 0, other: 1, unknown: 1 })
   assert.equal(summary.running, 1)
   assert.equal(summary.denominator, 4, 'success + failure + cancelled + other; unknown and running are out')
   assert.equal(summary.successRate, 0.25)
@@ -122,4 +123,78 @@ test('the seven-day average is context and never replaces the raw counts', () =>
   assert.equal(rollingAverage([2, 4, null, 6]), 4)
   assert.equal(rollingAverage([]), null)
   assert.equal(rollingAverage([null, undefined]), null)
+})
+
+test('a skipped run is its own bucket and never moves the rate', () => {
+  const run = (conclusion, event = 'pull_request') => ({ status: 'completed', conclusion, event })
+  const summary = summarizeRuns({ runs: [run('success'), run('success'), run('success'), run('skipped'), run('skipped')] })
+  assert.equal(summary.all.skipped, 2, 'skipped has its own bucket, not other')
+  assert.equal(summary.all.other, 0, 'nothing was filed as other')
+  assert.equal(summary.denominator, 3, 'only the runs that produced an outcome divide the rate')
+  assert.equal(summary.successRate, 1)
+  assert.equal(formatRate(summary.all.success, summary.denominator), '3/3 = 100.0%')
+  // The same rule per event: a queue entry that measured nothing must not read as a queue failure.
+  assert.equal(summary.byEvent.pull_request.skipped, 2)
+  assert.equal(rates(summary.byEvent.pull_request).denominator, 3)
+  // unknown stays out too, and both can arrive on the same day.
+  assert.equal(rates({ success: 1, failure: 0, cancelled: 0, skipped: 4, other: 0, unknown: 9 }).denominator, 1)
+})
+
+test('a capped listing says it was capped, a short page does not', async () => {
+  // The cap is the only thing that can make a fetch wrong, and it is the one thing the API cannot say:
+  // a full page 20 means either "there is a page 21" or "exactly 2000", so both have to be marked.
+  const request = (sizes) => {
+    const calls = []
+    const fetchPage = async (url) => {
+      const page = Number(new URL(url, 'https://api.github.com').searchParams.get('page'))
+      calls.push(page)
+      return Array.from({ length: sizes[page - 1] ?? 0 }, (_, index) => ({ n: (page - 1) * 100 + index }))
+    }
+    return { fetchPage, calls }
+  }
+
+  const full = request(Array(MAX_PAGES).fill(100))
+  const capped = await allPages('/x', 't', (page) => page, full.fetchPage)
+  assert.equal(capped.items.length, 2000)
+  assert.equal(capped.truncated, true, 'a full last page means 2000 or more')
+  assert.equal(full.calls.length, MAX_PAGES, 'the cap is the request budget')
+
+  const short = request([...Array(MAX_PAGES - 1).fill(100), 99])
+  const nearly = await allPages('/x', 't', (page) => page, short.fetchPage)
+  assert.equal(nearly.items.length, 1999)
+  assert.equal(nearly.truncated, false, 'a short last page ends the listing, nothing was cut')
+
+  const early = request([100, 100, 12])
+  const done = await allPages('/x', 't', (page) => page, early.fetchPage)
+  assert.equal(done.truncated, false)
+  assert.equal(done.items.length, 212)
+  assert.equal(early.calls.length, 3, 'a short page stops the walk, it does not read on')
+  assert.equal(early.calls.includes(4), false)
+})
+
+test('the report carries the skipped column and marks a truncated repository', () => {
+  const summary = summarizeRuns({
+    runs: [
+      { status: 'completed', conclusion: 'success', event: 'pull_request' },
+      { status: 'completed', conclusion: 'skipped', event: 'pull_request' },
+    ],
+  })
+  const report = renderReport({
+    win: WIN, repos: ['o/r', 'o/quiet'], generatedAt: '2026-10-22T12:00:00.000Z',
+    throughputByRepo: {
+      'o/r': { issuesOpened: 2, issuesClosed: 0, prsOpened: 1, prsMerged: 0, prsClosedUnmerged: 0, netOpenIssues: 1, netOpenPulls: 0 },
+      'o/quiet': { issuesOpened: 0, issuesClosed: 0, prsOpened: 0, prsMerged: 0, prsClosedUnmerged: 0, netOpenIssues: 0, netOpenPulls: 0 },
+    },
+    runsByRepo: { 'o/r': { ...summary, urls: [] }, 'o/quiet': { ...summarizeRuns({ runs: [] }), urls: [] } },
+    truncatedByRepo: { 'o/r': { listing: true, runs: true }, 'o/quiet': { listing: false, runs: false } },
+  })
+  assert.match(report, /\| Repository \| Event \| Runs \| Success \| Failure \| Cancelled \| Skipped \| Other \| Unknown \| Success rate \|/)
+  assert.match(report, /\| `o\/r` \| pull_request \| 2 \| 1 \| 0 \| 0 \| 1 \|/, 'the skipped run has its own cell')
+  assert.match(report, /\| `o\/r` \| \*\*all\*\* \| 2 \| 1 \| 0 \| 0 \| 1 \| 0 \| 0 \| 1\/1 = 100\.0% \|/, 'skipped is out of the rate')
+  assert.match(report, /`skipped` and `unknown` do not/, 'the formula names the exclusion')
+  const markers = report.match(/at least 2000 (items|runs), possibly truncated/g) ?? []
+  assert.equal(markers.length, 2, 'one marker for the issue listing, one for the run listing')
+  assert.match(report, /`o\/r`: the issue\/PR listing stopped at the page cap/)
+  assert.match(report, /`o\/r`: the run listing stopped at the page cap/)
+  assert.doesNotMatch(report, /`o\/quiet`[^\n]*possibly truncated/, 'a short listing is a total, so no marker')
 })

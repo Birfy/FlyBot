@@ -1,7 +1,7 @@
 # RSI baseline — 2026-10-22
 
 Window: `2026-10-22T00:00:00.000Z` to `2026-10-23T00:00:00.000Z` (half-open, UTC; default UTC).
-Repositories: `ThinkFlowLab/FlyBot`, `Birfy/FlyBot`. Generated 2026-10-23T05:49:08.211Z from the GitHub REST API.
+Repositories: `ThinkFlowLab/FlyBot`, `Birfy/FlyBot`. Generated 2026-10-23T07:26:44.832Z from the GitHub REST API.
 
 This is a baseline record. It claims no improvement: it has no experiment, no comparison and no pass/fail threshold.
 
@@ -16,16 +16,16 @@ Formulas: a count is the number of those entities whose terminal timestamp falls
 
 ## 2. Daily CI outcomes
 
-| Repository | Event | Runs | Success | Failure | Cancelled | Other | Unknown | Success rate |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `ThinkFlowLab/FlyBot` | pull_request | 515 | 492 | 23 | 0 | 0 | 0 | 492/515 = 95.5% |
-| `ThinkFlowLab/FlyBot` | merge_group | 152 | 130 | 22 | 0 | 0 | 0 | 130/152 = 85.5% |
-| `ThinkFlowLab/FlyBot` | push | 66 | 59 | 7 | 0 | 0 | 0 | 59/66 = 89.4% |
-| `ThinkFlowLab/FlyBot` | other | 92 | 39 | 4 | 0 | 49 | 0 | 39/92 = 42.4% |
-| `ThinkFlowLab/FlyBot` | **all** | 825 | 720 | 56 | 0 | 49 | 0 | 720/825 = 87.3% |
-| `Birfy/FlyBot` | **all** | 0 | 0 | 0 | 0 | 0 | 0 | unknown/not available |
+| Repository | Event | Runs | Success | Failure | Cancelled | Skipped | Other | Unknown | Success rate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `ThinkFlowLab/FlyBot` | pull_request | 515 | 492 | 23 | 0 | 0 | 0 | 0 | 492/515 = 95.5% |
+| `ThinkFlowLab/FlyBot` | merge_group | 152 | 130 | 22 | 0 | 0 | 0 | 0 | 130/152 = 85.5% |
+| `ThinkFlowLab/FlyBot` | push | 66 | 59 | 7 | 0 | 0 | 0 | 0 | 59/66 = 89.4% |
+| `ThinkFlowLab/FlyBot` | other | 92 | 39 | 4 | 0 | 49 | 0 | 0 | 39/43 = 90.7% |
+| `ThinkFlowLab/FlyBot` | **all** | 825 | 720 | 56 | 0 | 49 | 0 | 0 | 720/776 = 92.8% |
+| `Birfy/FlyBot` | **all** | 0 | 0 | 0 | 0 | 0 | 0 | 0 | unknown/not available |
 
-Formulas: `runs` counts runs whose `created_at` is inside the window, not unique PRs, so a retried workflow is two runs; `unknown` is a completed run with no conclusion and `other` is any conclusion outside success/failure/cancelled; the denominator is `success + failure + cancelled + other` (cancelled runs stay in it); an empty denominator prints as unknown rather than 0%. `merge_group` runs are the queue, `pull_request` runs are the head; a green head run is not evidence about the queue.
+Formulas: `runs` counts runs whose `created_at` is inside the window, not unique PRs, so a retried workflow is two runs; `unknown` is a completed run with no conclusion, `skipped` is a run that measured nothing, and `other` is any conclusion outside success/failure/cancelled/skipped; the denominator is `success + failure + cancelled + other` (cancelled runs stay in it; `skipped` and `unknown` do not); an empty denominator prints as unknown rather than 0%. `merge_group` runs are the queue, `pull_request` runs are the head; a green head run is not evidence about the queue.
 
 ### Source runs
 
