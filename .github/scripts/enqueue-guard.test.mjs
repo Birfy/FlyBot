@@ -207,6 +207,14 @@ test('the bare Fixes #<n> spelling still counts next to the cross-repository one
   assert.equal(r.ok, true, r.reasons.join('; '))
 })
 
+// The space after the keyword was optional before the cross-repository form existed and stays optional:
+// widening the pattern must not quietly drop a spelling that used to count.
+test('a Fixes reference with no space before the hash still counts', () => {
+  const gh = fakeGh({ body: 'Fixes#801\n\nthe detail', labels: ['agent-pr'], files: [HOST_FILE], comments: [comment()] })
+  const r = main({ gh, env: { REVIEW_POLICY: POLICY, GH_REPO: 'ThinkFlowLab/FlyBot', PR: '566' }, repo: 'ThinkFlowLab/FlyBot', pr: 566 })
+  assert.equal(r.ok, true, r.reasons.join('; '))
+})
+
 // The number alone is not a reference: `Fixes 801` names no issue in either repository.
 test('a Fixes line without the hash is not an issue reference', () => {
   const r = run({ body: 'Fixes 801\n\nthe detail', comments: [comment()] })

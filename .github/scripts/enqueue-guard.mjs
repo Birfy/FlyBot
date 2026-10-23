@@ -49,7 +49,7 @@ const RECORD_ONLY = /^[\s>*+-]*(?:record only\s*[—–-]+\s*do not (?:merge|que
 // report, not this regex's job.
 // The rules only hold where the branch is ours: a fork is exempt, because we cannot push to its head
 // and the owner keeps their own workflow there (#711/#713).
-const ISSUE_REF = /^[\s>#-]*(?:fixes|closes)\s+(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#\d+/im
+const ISSUE_REF = /^[\s>#-]*(?:fixes|closes)\s*(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#\d+/im
 const short = (s) => String(s ?? '').slice(0, SHORT)
 const labelNames = (labels) => (labels ?? []).map((l) => String(typeof l === 'string' ? l : l?.name ?? '').toLowerCase())
 
